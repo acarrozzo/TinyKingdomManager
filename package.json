@@ -1,0 +1,21 @@
+{
+  "name": "tiny-kingdom-manager",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "A peaceful isometric kingdom simulation you can leave running on a side monitor.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "sim": "tsx scripts/simcheck.ts",
+    "roundtrip": "tsx scripts/roundtrip.ts",
+    "shot": "node scripts/shot.mjs"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.12",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.10"
+  }
+}
