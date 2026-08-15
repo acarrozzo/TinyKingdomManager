@@ -18,7 +18,7 @@ import {
   buildingById,
   buildingCentre,
   claim,
-  deposit,
+  deliver,
   homeCapacity,
   isClaimed,
   nearestStore,
@@ -62,7 +62,19 @@ function glutOf(g: GameState, res: ResourceId): boolean {
   return g.stock[res] > cap * 0.35;
 }
 
+/**
+ * Says once, quietly, that the stores are full. Work does not stop dead — the
+ * kingdom simply gathers no more of what it cannot put anywhere — but without
+ * a word the player just sees their woodcutters wander off for no reason.
+ */
+function noticeStoreFull(g: GameState): void {
+  if (g.storeFullNotice > 0) return;
+  g.storeFullNotice = 900;
+  toast(g, 'The stores are full — nobody is gathering more for now', '📦', 'warn');
+}
+
 export function updateVillagers(g: GameState, dt: number): void {
+  g.storeFullNotice = Math.max(0, g.storeFullNotice - dt);
   for (const v of g.villagers) updateVillager(g, v, dt);
   growCrops(g, dt);
   sweepDepletedNodes(g);
@@ -280,7 +292,7 @@ function doTake(g: GameState, v: Villager, step: Extract<Step, { t: 'take' }>): 
   if (v.carrying && v.carrying.res === step.res) v.carrying.qty += got;
   else if (!v.carrying) v.carrying = { res: step.res, qty: got };
   else {
-    deposit(g, v.carrying.res, v.carrying.qty);
+    deliver(g, v.carrying.res, v.carrying.qty);
     v.carrying = { res: step.res, qty: got };
   }
 }
@@ -289,8 +301,8 @@ function doGive(g: GameState, v: Villager, step: Extract<Step, { t: 'give' }>): 
   if (!v.carrying) return;
   const { res, qty } = v.carrying;
   if (step.to === 'store') {
-    const accepted = deposit(g, res, qty);
-    v.carrying = accepted >= qty ? null : { res, qty: qty - accepted };
+    deliver(g, res, qty);
+    v.carrying = null;
     return;
   }
   const b = buildingById(g, step.id ?? 0);
@@ -524,7 +536,7 @@ function think(g: GameState, v: Villager): void {
       planWalkTo(g, v, store, [{ t: 'give', to: 'store' }]);
       if (v.plan.length) return;
     }
-    deposit(g, v.carrying.res, v.carrying.qty);
+    deliver(g, v.carrying.res, v.carrying.qty);
     v.carrying = null;
   }
 
@@ -613,7 +625,10 @@ function planHarvestNode(
   prop: 'tree' | 'boulder',
   res: ResourceId,
 ): boolean {
-  if (storageFree(g) < 4) return planLeisureFallback(g, v, 'Nowhere to put it.');
+  if (storageFree(g) < 4) {
+    noticeStoreFull(g);
+    return planLeisureFallback(g, v, 'Nowhere to put it.');
+  }
   // Plenty of this already: lend a hand elsewhere rather than filling the barn.
   if (glutOf(g, res)) return planHelper(g, v);
 
@@ -834,7 +849,8 @@ function planHelper(g: GameState, v: Villager): boolean {
   }
 
   // 5. Gather by hand whatever the kingdom is shortest of.
-  if (storageFree(g) >= 6) {
+  if (storageFree(g) < 6) noticeStoreFull(g);
+  else {
     const wants: { res: ResourceId; prop: 'tree' | 'boulder'; deficit: number }[] = [];
     for (const res of ['wood', 'stone'] as ResourceId[]) {
       const target = GATHER_TARGET[res];

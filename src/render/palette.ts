@@ -17,8 +17,6 @@ const SPRING: TerrainPalette = {
   meadow: { c: ['#8bb85d', '#9dcb6c', '#739c4b', '#b5d97f'] },
   forest: { c: ['#5d8a45', '#6c9c51', '#4a7137', '#78a85c'] },
   rocky: { c: ['#9a9a94', '#adada6', '#7f7f7a', '#b8b8b0'] },
-  path: { c: ['#b09772', '#c2a882', '#96805e', '#c9b28e'] },
-  road: { c: ['#a8a49c', '#bab6ac', '#8e8a83', '#c4c0b6'] },
 };
 
 const SUMMER: TerrainPalette = {
@@ -29,8 +27,6 @@ const SUMMER: TerrainPalette = {
   meadow: { c: ['#84b352', '#97c661', '#6c9542', '#b2d874'] },
   forest: { c: ['#4f7d38', '#5d8f43', '#3e652c', '#6a9b4e'] },
   rocky: { c: ['#a09f96', '#b3b2a8', '#85847c', '#bdbcb2'] },
-  path: { c: ['#b59b74', '#c7ad85', '#9a8460', '#cdb691'] },
-  road: { c: ['#aca89e', '#beb9ae', '#928e86', '#c8c4b9'] },
 };
 
 const AUTUMN: TerrainPalette = {
@@ -41,8 +37,6 @@ const AUTUMN: TerrainPalette = {
   meadow: { c: ['#a5a04e', '#b7b25c', '#8a8541', '#c5bf6c'] },
   forest: { c: ['#8a6b30', '#9e7c39', '#6f5526', '#b08a44'] },
   rocky: { c: ['#96958f', '#a9a8a1', '#7b7a76', '#b3b2ab'] },
-  path: { c: ['#a88e69', '#ba9f79', '#8e7757', '#c2a985'] },
-  road: { c: ['#a29e96', '#b4b0a6', '#88847e', '#beb9af'] },
 };
 
 const WINTER: TerrainPalette = {
@@ -53,8 +47,6 @@ const WINTER: TerrainPalette = {
   meadow: { c: ['#cfd3cb', '#dfe3db', '#b3b7b0', '#eaede5'] },
   forest: { c: ['#8a9a90', '#9caca1', '#71807a', '#aebcb0'] },
   rocky: { c: ['#a8aaa8', '#babcb9', '#8c8e8c', '#c6c8c4'] },
-  path: { c: ['#b6ab99', '#c7bcaa', '#9a9080', '#cfc5b4'] },
-  road: { c: ['#b0aea8', '#c1bfb8', '#95938e', '#cbc9c1'] },
 };
 
 const TERRAIN: Record<Season, TerrainPalette> = {

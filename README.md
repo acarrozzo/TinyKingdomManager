@@ -32,14 +32,12 @@ someone you can click on.
 site with corner posts; villagers haul the materials over, then put in the
 labour, then it stands up. You can watch the whole thing.
 
-**Roads.** Dirt paths and stone roads are placed by dragging. They are
-substantially faster than open ground (1.45× and 1.95× against grass), and the
-pathfinder is weighted by the same numbers, so traffic genuinely re-routes onto
-a road you lay down.
-
 **Storage is physical.** Goods only exist in the shared store once somebody has
-carried them to a storage building. Where you put your storehouses decides how
-much of the day your workers spend walking.
+carried them to a storage building — at the start, the old chest beside the
+campfire. Where you put your storehouses decides how much of the day your
+workers spend walking. A full store stops people gathering more; it never stops
+someone putting down what they are already holding, so the meter can read a
+little over its limit while the last loads come in.
 
 **Jobs and experience.** Helper, Woodcutter, Stoneworker, Farmer, Miller, Baker.
 Experience accrues per profession, only from doing the work, and is kept
@@ -81,6 +79,12 @@ snow in winter and a real effect on how fast wheat grows (slow in winter, never
 fatal). Conifers hold their colour all year, which keeps autumn from turning
 into an undifferentiated orange field.
 
+**Everything is inspectable.** Click a person, an animal, a building — or bare
+ground, which tells you what the terrain is, what is standing on it, how much is
+left in it, and what you have seen living on ground like that. A small badge
+over each villager's head says what they are doing at that moment, and hovering
+a resource in the top bar says where it comes from and what it is for.
+
 **Clean viewing mode** (`H`). Hides the entire interface except a small time and
 season chip. This is the point of the whole thing.
 
@@ -108,19 +112,20 @@ unlocks, per-building job slots, the goal list — are all in place.
 
 | | |
 |---|---|
-| Drag | Pan |
-| Scroll | Zoom (four integer levels) |
-| Click | Select a villager, animal or building |
+| Drag · one finger | Pan |
+| Two-finger scroll | Pan (trackpad) |
+| Wheel · pinch | Zoom (four integer levels) |
+| Click | Select a villager, animal, building or tile |
 | Double-click | Follow someone with the camera |
 | **Build** | Pick a building, then click where it goes |
-| **Path** / **Road** | Drag across the map to lay a line of it |
-| **Remove** | Click a building, path or road to take it away |
+| **Remove** | Click a building to take it away |
 | `B` | Build menu |
 | `P` / `J` | People · Journal |
 | `H` | Clean viewing mode |
 | `Space` | Pause |
 | `1` `2` `3` | 1× · 2× · 4× |
 | `Esc` | Cancel the current tool, or close a panel |
+| Bottom-right pad | Zoom, recentre, follow and speed — the whole of the controls on a touchscreen |
 | Right-click | Cancel the current tool |
 
 ---

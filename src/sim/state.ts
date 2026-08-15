@@ -92,6 +92,48 @@ export function makeBuilding(g: GameState, def: BuildingId, x: number, y: number
   };
 }
 
+/**
+ * Drops the old chest on a free tile beside the fire and hands back the
+ * building. Shared with the save loader, which fits one to kingdoms that
+ * predate it — without a chest they would have no storage at all.
+ */
+export function placeChest(g: GameState, fire: Building, r: RNG): Building | null {
+  // Grid neighbours first: on an isometric map those sit diagonally beside the
+  // fire on screen, where a diagonal neighbour lands directly behind it and the
+  // two sprites merge into one confusing object.
+  const offsets: [number, number][] = [
+    [1, 0],
+    [0, 1],
+    [-1, 0],
+    [0, -1],
+    [1, -1],
+    [-1, 1],
+    [1, 1],
+    [-1, -1],
+  ];
+  for (let ring = 2; ring <= 4; ring++) {
+    for (let d = -ring; d <= ring; d++) {
+      offsets.push([d, -ring], [d, ring], [-ring, d], [ring, d]);
+    }
+  }
+
+  for (const [dx, dy] of offsets) {
+    const x = fire.x + dx;
+    const y = fire.y + dy;
+    const t = tileAt(g, x, y);
+    if (!t || t.building || t.plot) continue;
+    if (t.terrain === 'water' || t.terrain === 'shallow') continue;
+
+    const chest = makeBuilding(g, 'chest', x, y, r);
+    chest.stage = 'done';
+    g.buildings.push(chest);
+    t.building = chest.id;
+    t.prop = null;
+    return chest;
+  }
+  return null;
+}
+
 export function newGame(seed = Math.floor(Math.random() * 1e9)): GameState {
   const r = new RNG(seed);
   const map = generateMap(seed);
@@ -120,6 +162,7 @@ export function newGame(seed = Math.floor(Math.random() * 1e9)): GameState {
     unlocked: new Set<string>(),
     discovered: new Set(),
     toasts: [],
+    storeFullNotice: 0,
     arrivalTimer: DAY_LENGTH * 0.6,
     weather: 0,
     weatherTimer: 400,
@@ -131,7 +174,9 @@ export function newGame(seed = Math.floor(Math.random() * 1e9)): GameState {
   };
   g.goals = buildGoals();
 
-  // The campfire is the kingdom's first landmark: a scrap of storage and a bed.
+  // The campfire is the kingdom's first landmark: warmth and a bed. The chest
+  // beside it is where the kingdom's goods actually go until a storehouse
+  // stands, so the very first deliveries are something you can watch happen.
   const fire = makeBuilding(g, 'campfire', map.start.x, map.start.y, r);
   fire.stage = 'done';
   g.buildings.push(fire);
@@ -140,6 +185,7 @@ export function newGame(seed = Math.floor(Math.random() * 1e9)): GameState {
     ft.building = fire.id;
     ft.prop = null;
   }
+  placeChest(g, fire, r);
 
   const founder = makeVillager(g, r, map.start.x + 1, map.start.y + 1);
   founder.home = fire.id;
@@ -189,6 +235,22 @@ export function deposit(g: GameState, res: ResourceId, qty: number): number {
   const take = Math.min(qty, room);
   g.stock[res] += take;
   return take;
+}
+
+/**
+ * A villager setting down a load they are already carrying. Unlike `deposit`
+ * this never refuses, and that is the whole point: capacity decides when people
+ * stop fetching *more*, never whether something already in someone's arms can
+ * be put away. Refusing it deadlocks the kingdom — the planner will not make a
+ * new plan for anybody still holding goods, so a full store used to leave a
+ * villager walking to the barn and back forever, unable to build anything.
+ *
+ * The store therefore reads slightly over capacity while deliveries land. That
+ * is honest: the barn is full and there is still a load on its way in.
+ */
+export function deliver(g: GameState, res: ResourceId, qty: number): void {
+  if (qty <= 0) return;
+  g.stock[res] += qty;
 }
 
 /** Removes from the shared store. Returns the amount actually withdrawn. */

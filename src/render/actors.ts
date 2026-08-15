@@ -5,7 +5,7 @@
  */
 
 import type { Animal, GameState, Villager } from '../types';
-import { SPECIES } from '../sim/defs';
+import { BUILDINGS, SPECIES } from '../sim/defs';
 import { RESOURCE_META } from '../sim/defs';
 
 type Ctx = CanvasRenderingContext2D;
@@ -345,12 +345,150 @@ export function drawBubble(ctx: Ctx, sx: number, sy: number, text: string): void
   ctx.textBaseline = 'alphabetic';
 }
 
+// ---------------------------------------------------------------------------
+// Activity badges
+// ---------------------------------------------------------------------------
+
+/**
+ * 7×7 glyphs saying what somebody is up to. `X` is the glyph's own colour and
+ * `#` its shading; drawn as pixels rather than emoji so they sit in the art
+ * rather than on top of it.
+ */
+const GLYPHS: Record<string, string[]> = {
+  axe: ['.#####.', '.####..', '.###...', '..X....', '..X....', '..X....', '..X....'],
+  pick: ['##...##', '.#####.', '...X...', '...X...', '...X...', '...X...', '...X...'],
+  hammer: ['.#####.', '.#####.', '...X...', '...X...', '...X...', '...X...', '...X...'],
+  wheat: ['...X...', '..XXX..', '...X...', '..XXX..', '...X...', '..X#X..', '...#...'],
+  sprout: ['.......', '.X...X.', '.XX.XX.', '..X#X..', '...#...', '...#...', '...#...'],
+  sails: ['X.....X', '.X...X.', '..X.X..', '...X...', '..X.X..', '.X...X.', 'X.....X'],
+  bread: ['.......', '..XXX..', '.XXXXX.', 'XX#X#XX', 'XXXXXXX', '.XXXXX.', '.......'],
+  crate: ['.......', 'XXXXXXX', 'X#####X', 'XXXXXXX', 'X#####X', 'XXXXXXX', '.......'],
+  basket: ['..XXX..', '.X...X.', 'XXXXXXX', 'X#####X', 'X#####X', '.XXXXX.', '.......'],
+  zzz: ['XXXXXXX', '.....X.', '....X..', '...X...', '..X....', '.X.....', 'XXXXXXX'],
+  steps: ['.XX....', '.XXX...', '.XX....', '.......', '...XX..', '...XXX.', '...XX..'],
+  eye: ['.......', '..XXX..', '.XXXXX.', 'XX###XX', '.XXXXX.', '..XXX..', '.......'],
+  chat: ['.XXXXX.', 'XXXXXXX', 'X#X#X#X', 'XXXXXXX', '.XXXXX.', '..X....', '.......'],
+  bench: ['.......', '.......', 'XXXXXXX', 'XXXXXXX', '.#...#.', '.#...#.', '.......'],
+  fish: ['.......', '..XXX.X', '.XXXXXX', 'X#XXXXX', '.XXXXXX', '..XXX.X', '.......'],
+  star: ['...X...', '...X...', '..XXX..', 'XXXXXXX', '..XXX..', '...X...', '...X...'],
+};
+
+const GLYPH_COLORS: Record<string, [string, string]> = {
+  axe: ['#8a5b3a', '#c3cad2'],
+  pick: ['#8a5b3a', '#c3cad2'],
+  hammer: ['#8a5b3a', '#c3cad2'],
+  wheat: ['#e6c368', '#c9a95a'],
+  sprout: ['#8ecf6b', '#7ec463'],
+  sails: ['#e8dcc4', '#e8dcc4'],
+  bread: ['#d79a58', '#8a5a2c'],
+  crate: ['#c79a5c', '#8a6a3c'],
+  basket: ['#c79a5c', '#7d5c33'],
+  zzz: ['#dfe6ef', '#dfe6ef'],
+  steps: ['#e7dcc6', '#e7dcc6'],
+  eye: ['#f0ead8', '#3a3128'],
+  chat: ['#f5efe2', '#4a4038'],
+  bench: ['#c9a273', '#8a6a45'],
+  fish: ['#8fc0d2', '#2e3a42'],
+  star: ['#ffd77a', '#ffd77a'],
+};
+
+/** Villagers work at a building, so the tool they are holding comes from it. */
+function jobGlyph(g: GameState, v: Villager, fallback: string): string {
+  if (!v.workplace) return fallback;
+  for (const b of g.buildings) {
+    if (b.id !== v.workplace) continue;
+    switch (BUILDINGS[b.def].job) {
+      case 'woodcutter':
+        return 'axe';
+      case 'stoneworker':
+        return 'pick';
+      case 'farmer':
+        return 'wheat';
+      case 'miller':
+        return 'sails';
+      case 'baker':
+        return 'bread';
+      default:
+        return fallback;
+    }
+  }
+  return fallback;
+}
+
+/** Which badge, if any, belongs over this villager right now. */
+function activityGlyph(g: GameState, v: Villager): string | null {
+  switch (v.activity) {
+    case 'sleeping':
+      return 'zzz';
+    case 'walking':
+      return 'steps';
+    case 'hauling':
+      return 'crate';
+    case 'working':
+      return jobGlyph(g, v, 'hammer');
+    case 'gathering':
+      return jobGlyph(g, v, 'basket');
+    case 'building':
+      return 'hammer';
+    case 'planting':
+      return 'sprout';
+    case 'harvesting':
+      return 'wheat';
+    case 'eating':
+      return 'bread';
+    case 'resting':
+      return 'bench';
+    case 'chatting':
+      return 'chat';
+    case 'watching':
+      return 'eye';
+    case 'fishing':
+      return 'fish';
+    case 'arriving':
+      return 'star';
+    default:
+      return null;
+  }
+}
+
+/**
+ * Drawn after the lighting pass, so a badge stays readable once it is dark —
+ * the villager underneath still falls into shadow like everything else.
+ */
+export function drawActivityIcon(ctx: Ctx, g: GameState, v: Villager, sx: number, sy: number): void {
+  const key = activityGlyph(g, v);
+  if (!key) return;
+  const rows = GLYPHS[key];
+  const [main, shade] = GLYPH_COLORS[key];
+  // A carried load takes the colour of whatever is in the crate.
+  const primary = key === 'crate' && v.carrying ? RESOURCE_META[v.carrying.res].color : main;
+  const secondary = key === 'crate' && v.carrying ? 'rgba(40,32,24,0.5)' : shade;
+
+  const left = Math.round(sx) - 4;
+  const top = Math.round(sy) - 29;
+
+  // Backing plate, corners clipped so it reads as a rounded badge.
+  ctx.fillStyle = 'rgba(24,20,16,0.42)';
+  ctx.fillRect(left, top + 1, 9, 7);
+  ctx.fillRect(left + 1, top, 7, 9);
+
+  for (let r = 0; r < rows.length; r++) {
+    const row = rows[r];
+    for (let c = 0; c < row.length; c++) {
+      const ch = row[c];
+      if (ch === '.') continue;
+      px(ctx, left + 1 + c, top + 1 + r, ch === 'X' ? primary : secondary);
+    }
+  }
+}
+
 /** Tiny per-villager status pip: hungry, tired, or nothing at all. */
 export function drawMood(ctx: Ctx, g: GameState, v: Villager, sx: number, sy: number): void {
   if (v.activity === 'sleeping') return;
-  const y = Math.round(sy) - 22;
+  // Sits beside the activity badge rather than under it, so the two never stack.
+  const y = Math.round(sy) - 27;
   if (v.hunger > 0.85 && g.stock.bread <= 0) {
-    px(ctx, Math.round(sx) - 1, y, '#e8b45c', 3, 3);
-    px(ctx, Math.round(sx), y + 1, '#8a5a28', 1, 1);
+    px(ctx, Math.round(sx) + 6, y, '#e8b45c', 3, 3);
+    px(ctx, Math.round(sx) + 7, y + 1, '#8a5a28', 1, 1);
   }
 }

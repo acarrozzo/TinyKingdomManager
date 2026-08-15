@@ -12,7 +12,7 @@ import { updateWildlife } from '../src/sim/wildlife';
 import { updatePopulation } from '../src/sim/population';
 import { updateGoals } from '../src/sim/goals';
 import { updateTerrain, tileAt } from '../src/world/terrain';
-import { BUILDINGS, DAY_LENGTH } from '../src/sim/defs';
+import { BUILDINGS, CARRY_CAPACITY, DAY_LENGTH } from '../src/sim/defs';
 import { rng } from '../src/core/util';
 import type { BuildingId, GameState } from '../src/types';
 import { seasonForDay } from '../src/sim/state';
@@ -251,7 +251,19 @@ for (const k in g.stock) {
   if (!Number.isFinite(val)) problems.push(`non-finite ${k}`);
 }
 const used = ['wood', 'stone', 'wheat', 'flour', 'bread'].reduce((n, k) => n + g.stock[k as 'wood'], 0);
-if (used > storageCapacity(g) + 1) problems.push(`storage overflowed: ${Math.round(used)} > ${storageCapacity(g)}`);
+// A full store may be overshot by whatever was already in people's arms — loads
+// already carried are always allowed to land. Anything beyond that is a leak.
+const inFlight = g.villagers.length * CARRY_CAPACITY;
+if (used > storageCapacity(g) + inFlight + 1) {
+  problems.push(`storage overflowed: ${Math.round(used)} > ${storageCapacity(g)} (+${inFlight} in flight)`);
+}
+// The full-store deadlock: the planner will not give a new plan to anybody
+// holding goods, so a carrier who has run out of ideas is stuck for good.
+for (const v of g.villagers) {
+  if (v.carrying && v.activity === 'idle') {
+    problems.push(`${v.name} is stuck holding ${Math.round(v.carrying.qty)} ${v.carrying.res}`);
+  }
+}
 const idle = g.villagers.filter((v) => v.activity === 'idle').length;
 
 line(`\nIdle right now: ${idle}/${g.villagers.length}`);

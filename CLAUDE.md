@@ -79,6 +79,8 @@ npm run dev &
 node scripts/shot.mjs                                     # default view
 node scripts/shot.mjs http://localhost:5173/ out.png 6 "window.tkm.game.camera.zoomIndex = 3"
 PRELOAD=k.json node scripts/shot.mjs http://localhost:5173/ late.png
+DEVICE=390x844@3 node scripts/shot.mjs                    # as a phone, with touch
+DEVICE=768x1024@2 node scripts/shot.mjs                   # as a tablet
 ```
 
 Drives headless Chrome over DevTools, runs your JS in the page, captures a PNG,
@@ -93,6 +95,13 @@ in a screenshot.
 `PRELOAD` seeds a save and loads it through the game's own code path rather than
 reloading the page, because a reload lets the throwaway kingdom's
 autosave-on-unload clobber the seeded slot.
+
+`DEVICE=<w>x<h>[@dpr]` emulates a phone or tablet with touch input. Use it for
+anything touching layout or input: a 390px screen is where overlapping panels
+and blocked gestures show up, and neither is visible in a desktop window. In the
+page you can dispatch `PointerEvent`s with `pointerType: 'touch'` (two ids for a
+pinch) and assert on `window.tkm.game.camera` — that is how the pan, pinch and
+wheel behaviours are checked.
 
 ---
 
@@ -135,6 +144,11 @@ wildlife species with habitat weights and rarity, terrain movement speeds, the
 XP curve, day length and season length. Balance changes almost always belong
 here rather than in logic.
 
+It also holds the player-facing copy that describes the world rather than a
+building: `TERRAIN_META` and `PROP_META` (what the tile inspector says about
+ground and what is standing on it) and `RESOURCE_INFO` (the from/for lines in
+the top-bar hover). New descriptive copy of that kind goes here too.
+
 ---
 
 ## How the simulation works
@@ -164,6 +178,17 @@ keyed `farmId * 100 + slot`.
 exceeds 35% of storage capacity. Without it, woodcutters fill the barn and the
 food chain starves. This is the mechanism that makes "the kingdom stalls but
 never collapses" actually true.
+
+**Putting a load down never fails.** `deposit()` is clipped by capacity, but
+`deliver()` — what a villager carrying goods actually calls — always accepts the
+lot, so the store can briefly read over its limit while loads land. This is not
+sloppiness, it is the fix for a hard deadlock: `think()` refuses to make a new
+plan for anybody still holding something, so when a full store rejected a
+delivery the villager walked to the barn and back forever and the kingdom could
+never build again. Capacity governs when people stop *fetching more*
+(`storageFree(g) < 4` in the gathering planners); it must never govern whether
+something already in someone's arms can be set down. `simcheck` now fails on any
+villager left idle while carrying, which is what that deadlock looked like.
 
 **Wildlife.** `survey()` scores habitat across the map every 20 game-seconds from
 terrain, nearby props, farm plots and season. Spawn chance is `0.45 / rarity³`,
@@ -207,6 +232,42 @@ radial sources composited `lighter`, then the whole thing multiplied over the
 world. Anything that should glow at night must contribute to the light buffer;
 drawing it bright in the world buffer alone will just get darkened.
 
+**Activity badges are the one exception to the sorted pass.** The little glyph
+over each villager's head (`drawActivityIcon` in `actors.ts`, glyphs defined as
+7×7 character rows) is collected during the world pass and drawn in
+`drawBadges()` *after* lighting, so it stays readable in the dark — held back a
+little by `darkness` so it does not become the brightest thing at night. It is
+still pixel art in the world buffer, unlike the names and speech bubbles, which
+are screen-space text drawn after upscaling.
+
+---
+
+## Input and the view
+
+**Zoom is stepped and always will be.** `ZOOM_LEVELS = [1, 2, 3, 4]` feeds
+`round(zoom × dpr)`, and the pixel pipeline depends on that being an integer.
+There is no smooth zoom to add; what can be smoothed is the *input*.
+
+**Wheel gestures are locked to pan or zoom for their duration.** A trackpad
+fires dozens of wheel events per swipe, so stepping a zoom level per event blew
+through all four in one flick — the original bug. `handleWheel()` starts a new
+gesture after a 180ms gap, decides once whether it is a pan or a zoom, and holds
+that decision until the gesture ends. Trackpad scroll pans; a mouse wheel
+(`deltaMode !== 0`, or a lone vertical delta of 50+) zooms; pinch arrives as
+ctrl+wheel with tiny deltas and gets a shorter runway. Zoom accumulates delta
+against a threshold rather than stepping per event.
+
+**Touch is pointer events, not touch events.** One pointer drags, two pinch
+(`handlePinch`). Pinch needs a large ratio change (1.3×) before it clicks over a
+level, because the steps are coarse. `setPointerCapture` is wrapped in
+try/catch — it throws for pointers the browser will not capture, and an
+exception there used to abort the whole gesture.
+
+**The bottom-right view pad is the entire interface on a touchscreen**: zoom,
+recentre, follow and speed. It is a compact column on desktop and one centred
+row along the bottom on phones. Do not let panels overlap it — `.side.right`
+stops at `bottom: 132px` for exactly that reason.
+
 ---
 
 ## Gotchas that have already bitten
@@ -214,7 +275,12 @@ drawing it bright in the world buffer alone will just get darkened.
 - **`#ui > * { pointer-events: auto }` outranks a bare class selector.** A hidden
   overlay with `.thing { pointer-events: none }` stays clickable and silently
   eats clicks on whatever is beneath it. Scope such rules as `#ui .thing`. This
-  broke half the toolbar.
+  broke half the toolbar — and later the whole of mobile: `.side` is pinned
+  `top: 62px; bottom: 14px`, so on a 390px-wide phone the two empty panel
+  columns covered every pixel of the map and swallowed every drag. Any
+  full-height layout box that is usually empty must be `pointer-events: none`
+  with `auto` on its children. `document.elementFromPoint()` in a device-
+  emulated screenshot is the fastest way to catch it.
 - **Vite dev serves `index.html` for unknown paths.** You cannot get a
   same-origin "blank" page from the dev server to seed `localStorage`; the app
   boots and autosaves over you.
@@ -261,9 +327,27 @@ uses it), and `coin` has no sink beyond a single goal reward.
 
 ---
 
+## Deliberately removed
+
+**Roads and paths are gone, and are not coming back.** `DESIGN.md` specifies
+them at length — player-placed roads, a meaningful movement bonus — and that
+part of the brief has been dropped on purpose. There is no paint tool, no
+`road`/`path` terrain, and no built surface anyone can walk faster on. Terrain
+still has its own speeds (forest and rocky ground are slower), but the player
+cannot buy speed. Old saves containing paved tiles load with those tiles turned
+back to grass; see `deserialize` in `save/save.ts`.
+
+---
+
 ## Scale reference
 
 Map 40×40 · a day is 30 real minutes at 1× (20 day / 10 night) · 6 days a season,
 24 a year · population cap 100, arriving roughly one per game-day early on ·
 Master rank is ~10–15 real hours of dedicated work in one trade · storage is a
-single shared pool fed by storage buildings.
+single shared pool fed by storage buildings, starting at 80 in the old chest
+beside the campfire and +250 per storehouse.
+
+Per-resource shelf limits — one good never taking more than a share of the
+store — have been discussed and deliberately deferred. Any such limit has to
+clear the early costs (a Storehouse is 25 wood against an opening capacity of
+80) or it recreates the deadlock it was meant to prevent.

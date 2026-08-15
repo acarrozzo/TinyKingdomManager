@@ -9,7 +9,8 @@
 import type { GameState, SpeciesId, Villager } from '../types';
 import { emptyStock } from '../types';
 import { buildGoals } from '../sim/goals';
-import { restoreIdCounter } from '../sim/state';
+import { placeChest, restoreIdCounter } from '../sim/state';
+import { RNG } from '../core/util';
 import { resetWildlifeCache } from '../sim/wildlife';
 
 const SLOT_INDEX = 'tkm.slots';
@@ -33,6 +34,7 @@ export interface Settings {
   muted: boolean;
   showBubbles: boolean;
   showNames: boolean;
+  showActivity: boolean;
   lastSlot: string | null;
 }
 
@@ -41,6 +43,7 @@ export const DEFAULT_SETTINGS: Settings = {
   muted: false,
   showBubbles: true,
   showNames: true,
+  showActivity: true,
   lastSlot: null,
 };
 
@@ -292,8 +295,11 @@ export function deserialize(raw: unknown): GameState {
 
   const tiles = new Array(n);
   for (let i = 0; i < n; i++) {
+    // Kingdoms saved before roads were removed still carry paved tiles; they
+    // grass over rather than falling through to an unknown terrain sprite.
+    const ter = terrain[i] === 'road' || terrain[i] === 'path' ? 'grass' : terrain[i];
     tiles[i] = {
-      terrain: terrain[i] as GameState['tiles'][number]['terrain'],
+      terrain: ter as GameState['tiles'][number]['terrain'],
       prop: prop[i] ? (prop[i] as GameState['tiles'][number]['prop']) : null,
       variant: packed.variant[i] ?? 0,
       amount: packed.amount[i] ?? 0,
@@ -355,6 +361,7 @@ export function deserialize(raw: unknown): GameState {
     unlocked: new Set<string>(p.unlocked ?? []),
     discovered: new Set<SpeciesId>(p.discovered ?? []),
     toasts: [],
+    storeFullNotice: 0,
     arrivalTimer: p.arrivalTimer ?? 600,
     weather: p.weather ?? 0,
     weatherTimer: p.weatherTimer ?? 300,
@@ -366,6 +373,15 @@ export function deserialize(raw: unknown): GameState {
   };
 
   restoreIdCounter(g);
+
+  // Kingdoms saved before the chest existed kept their first goods in the
+  // campfire. The fire no longer stores anything, so fit them a chest beside it
+  // rather than leaving them short of the capacity they already filled.
+  if (!g.buildings.some((b) => b.def === 'chest')) {
+    const fire = g.buildings.find((b) => b.def === 'campfire');
+    if (fire) placeChest(g, fire, new RNG(g.seed));
+  }
+
   resetWildlifeCache();
   return g;
 }

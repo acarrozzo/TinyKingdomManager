@@ -5,16 +5,20 @@
  */
 
 import type { GameState, JobId, ResourceId, SpeciesId, Villager } from '../types';
-import { RESOURCE_ORDER } from '../types';
+import { RESOURCE_ORDER, STORED_RESOURCES } from '../types';
 import {
   BUILDINGS,
   BUILD_ORDER,
   CATEGORY_META,
   JOB_META,
+  PROP_META,
   RANK_COLOR,
+  RESOURCE_INFO,
   RESOURCE_META,
   SPECIES,
   SPECIES_ORDER,
+  TERRAIN_META,
+  TERRAIN_SPEED,
   TRAIT_META,
   rankOf,
 } from '../sim/defs';
@@ -34,6 +38,7 @@ import {
   renameSlot,
 } from '../save/save';
 import { newGame } from '../sim/state';
+import { ZOOM_LEVELS } from '../render/camera';
 
 type ModalKind = 'journal' | 'wildlife' | 'people' | 'kingdom' | 'settings' | null;
 
@@ -70,6 +75,7 @@ export class UI {
   private modalHost!: HTMLElement;
   private introHost!: HTMLElement;
   private speedHost!: HTMLElement;
+  private viewHost!: HTMLElement;
   private buttonsHost!: HTMLElement;
   private toolHost!: HTMLElement;
 
@@ -99,16 +105,25 @@ export class UI {
     for (const res of RESOURCE_ORDER) {
       const meta = RESOURCE_META[res];
       const wrap = el('span', 'res');
-      wrap.innerHTML = `<span class="icon">${meta.icon}</span><span class="val">0</span>`;
+      wrap.innerHTML = `<span class="icon">${meta.icon}</span><span class="val">0</span><span class="tip"></span>`;
+      // Filled on hover rather than every frame — six of these, sixty times a second.
+      const tip = wrap.querySelector('.tip') as HTMLElement;
+      wrap.addEventListener('pointerenter', () => {
+        tip.innerHTML = this.resourceTip(res);
+      });
       resPill.appendChild(wrap);
       this.resNodes.set(res, { wrap, val: wrap.querySelector('.val') as HTMLElement });
     }
     left.appendChild(resPill);
 
     const storePill = el('div', 'pill');
-    storePill.innerHTML = `<span class="storage"><span>Store</span><span class="bar"><i style="width:0%"></i></span><span class="txt">0/0</span></span>`;
+    storePill.innerHTML = `<span class="storage"><span>Store</span><span class="bar"><i style="width:0%"></i></span><span class="txt">0/0</span><span class="tip"></span></span>`;
     this.storageBar = storePill.querySelector('.bar') as HTMLElement;
     this.storageTxt = storePill.querySelector('.txt') as HTMLElement;
+    const storeTip = storePill.querySelector('.tip') as HTMLElement;
+    storePill.addEventListener('pointerenter', () => {
+      storeTip.innerHTML = this.storageTip();
+    });
     left.appendChild(storePill);
     topbar.appendChild(left);
 
@@ -118,9 +133,6 @@ export class UI {
     this.clockT = clockPill.querySelector('.t') as HTMLElement;
     this.clockS = clockPill.querySelector('.s') as HTMLElement;
     right.appendChild(clockPill);
-
-    this.speedHost = el('div', 'speed');
-    right.appendChild(this.speedHost);
 
     this.buttonsHost = el('div', 'cluster');
     right.appendChild(this.buttonsHost);
@@ -137,6 +149,12 @@ export class UI {
 
     this.toolHost = el('div', 'tool-hint-host');
     this.root.appendChild(this.toolHost);
+
+    // Everything you reach for while just watching, gathered in one corner and
+    // sized for a thumb: it is the only way to move the map on a touchscreen.
+    this.viewHost = el('div', 'viewpad hide-in-clean');
+    this.root.appendChild(this.viewHost);
+    this.speedHost = el('div', 'speed');
 
     this.toastHost = el('div', 'toasts');
     this.root.appendChild(this.toastHost);
@@ -245,6 +263,46 @@ export class UI {
     }
   }
 
+  /** Hover copy for a top-bar resource: how much, where from, where to. */
+  private resourceTip(res: ResourceId): string {
+    const g = this.g;
+    const meta = RESOURCE_META[res];
+    const info = RESOURCE_INFO[res];
+    const store = this.game.storageInfo();
+    const amount = Math.floor(g.stock[res]);
+    const share =
+      res === 'coin' || store.cap <= 0 ? null : Math.round((g.stock[res] / store.cap) * 100);
+
+    return `<span class="tip-head"><span class="tip-ic">${meta.icon}</span>${esc(meta.name)}
+        <b>${fmt(amount)}</b></span>
+      ${share === null ? '' : `<span class="tip-row"><span>Of the store</span><span>${share}%</span></span>`}
+      <span class="tip-line"><b>From</b> ${esc(info.from)}</span>
+      <span class="tip-line"><b>For</b> ${esc(info.used)}</span>`;
+  }
+
+  /** Hover copy for the store meter: what is actually taking up the room. */
+  private storageTip(): string {
+    const g = this.g;
+    const store = this.game.storageInfo();
+    const rows = STORED_RESOURCES.filter((res) => g.stock[res] > 0)
+      .sort((a, b) => g.stock[b] - g.stock[a])
+      .map(
+        (res) =>
+          `<span class="tip-row"><span>${RESOURCE_META[res].icon} ${esc(RESOURCE_META[res].name)}</span>
+            <span>${fmt(Math.floor(g.stock[res]))}</span></span>`,
+      )
+      .join('');
+    const room = Math.max(0, store.cap - store.used);
+
+    return `<span class="tip-head">The store <b>${fmt(store.used)}/${fmt(store.cap)}</b></span>
+      ${rows || '<span class="tip-line">Nothing in it yet.</span>'}
+      <span class="tip-line">${
+        room <= 0
+          ? 'Full, so nobody is gathering more. Anything already being carried still gets put away, which is why this can read over the limit. Build a storehouse to raise it.'
+          : `Room for ${fmt(room)} more. Storehouses raise the ceiling.`
+      }</span>`;
+  }
+
   private everSeen(res: ResourceId): boolean {
     // Once a resource has ever been produced its chip stays visible.
     const g = this.g;
@@ -258,7 +316,7 @@ export class UI {
   /** Full rebuild of everything structural. */
   refresh(): void {
     this.root.classList.toggle('clean', this.game.cleanMode);
-    this.renderSpeed();
+    this.renderViewPad();
     this.renderButtons();
     this.renderToolHint();
     this.refreshPanels();
@@ -278,6 +336,41 @@ export class UI {
   // -------------------------------------------------------------------------
   // Top bar
   // -------------------------------------------------------------------------
+
+  /**
+   * The bottom-right cluster: zoom, recentre, follow and speed. On a phone
+   * these buttons are the whole of the interface that matters, so they get
+   * proper tap targets rather than the toolbar's compact sizing.
+   */
+  private renderViewPad(): void {
+    const cam = this.game.camera;
+    const sel = this.game.selection;
+    const followable = sel.kind === 'villager' || sel.kind === 'animal';
+    const following = cam.followId !== 0;
+
+    const btn = (act: string, label: string, title: string, on = false, off = false, extra = '') =>
+      `<button class="vbtn ${on ? 'on' : ''}" data-act="${act}" ${off ? 'disabled' : ''} title="${esc(title)}" ${extra}>${label}</button>`;
+
+    this.viewHost.innerHTML = `
+      <div class="vgroup">
+        ${btn('zoom-out', '−', 'Zoom out', false, cam.zoomIndex <= 0)}
+        <span class="vlevel">${cam.zoom}×</span>
+        ${btn('zoom-in', '+', 'Zoom in', false, cam.zoomIndex >= ZOOM_LEVELS.length - 1)}
+      </div>
+      <div class="vgroup">
+        ${btn('recentre', '⌂', 'Back to the campfire')}
+        ${btn(
+          following ? 'unfollow' : 'follow-selected',
+          '⦿',
+          following ? 'Stop following' : 'Follow the selected villager (F)',
+          following,
+          !following && !followable,
+        )}
+      </div>`;
+
+    this.renderSpeed();
+    this.viewHost.appendChild(this.speedHost);
+  }
 
   private renderSpeed(): void {
     const g = this.g;
@@ -301,19 +394,7 @@ export class UI {
       `<button class="btn ${on ? 'on' : ''}" data-act="${act}" title="${esc(title)}">${label}</button>`;
     this.buttonsHost.innerHTML = [
       b('toggle-build', '🔨 Build', this.buildOpen, 'Buildings you can place (B)'),
-      b(
-        'tool-path',
-        '🚶 Path',
-        t.kind === 'paint' && t.terrain === 'path',
-        'Lay a dirt path — 1 wood a tile. Villagers walk noticeably faster on it.',
-      ),
-      b(
-        'tool-road',
-        '🧱 Road',
-        t.kind === 'paint' && t.terrain === 'road',
-        'Lay a stone road — 2 stone a tile. Almost twice open-ground speed.',
-      ),
-      b('tool-demolish', '⛏ Remove', t.kind === 'demolish', 'Take down a building, path or road'),
+      b('tool-demolish', '⛏ Remove', t.kind === 'demolish', 'Take down a building'),
       `<span class="divider"></span>`,
       b('modal-people', '👥', this.modal === 'people', 'People and jobs (P)'),
       b('modal-journal', '📖', this.modal === 'journal', 'Kingdom journal (J)'),
@@ -329,7 +410,6 @@ export class UI {
    */
   private renderToolHint(): void {
     const t = this.game.tool;
-    const g = this.g;
     let icon = '';
     let title = '';
     let body = '';
@@ -345,19 +425,10 @@ export class UI {
       body = short
         ? `Not enough in store right now — needs ${cost}.`
         : `Click a clear spot on the map. Costs ${cost || 'nothing'}; villagers will carry the materials over and build it.`;
-    } else if (t.kind === 'paint') {
-      const road = t.terrain === 'road';
-      icon = road ? '🧱' : '🚶';
-      title = road ? 'Laying stone road' : 'Laying dirt path';
-      body = `Click and drag across the map to lay a line of ${road ? 'road' : 'path'}. ${
-        road ? '2 stone' : '1 wood'
-      } a tile — you have ${Math.floor(road ? g.stock.stone : g.stock.wood)}. Villagers move ${
-        road ? 'almost twice' : 'about half again'
-      } as fast on it.`;
     } else if (t.kind === 'demolish') {
       icon = '⛏';
       title = 'Removing';
-      body = 'Click a building to take it down — half the materials come back. Click a path or road to clear it.';
+      body = 'Click a building to take it down — half the materials come back.';
     }
 
     if (!title) {
@@ -386,6 +457,9 @@ export class UI {
   // -------------------------------------------------------------------------
 
   private renderBuildPanel(): void {
+    // On a phone the panels share the bottom of the screen, so the stylesheet
+    // needs to know which one is open to keep them off each other.
+    this.root.classList.toggle('build-open', this.buildOpen);
     if (!this.buildOpen) {
       this.sideLeft.innerHTML = '';
       this.goalsHost.classList.remove('shifted');
@@ -424,7 +498,8 @@ export class UI {
     }
 
     this.sideLeft.innerHTML = `<div class="panel scroll" style="flex:1">
-      <h3>Build<span class="tiny muted">Esc to cancel</span></h3>${body}</div>`;
+      <h3>Build<span class="tiny muted esc-hint">Esc to cancel</span>
+        <button class="btn small sheet-close" data-act="toggle-build">Close</button></h3>${body}</div>`;
   }
 
   // -------------------------------------------------------------------------
@@ -441,6 +516,7 @@ export class UI {
     if (sel.kind === 'villager') html = this.villagerCard();
     else if (sel.kind === 'animal') html = this.animalCard();
     else if (sel.kind === 'building') html = this.buildingCard();
+    else if (sel.kind === 'tile') html = this.tileCard();
     this.sideRight.innerHTML = html
       ? `<div class="panel scroll" style="flex:0 1 auto;max-height:100%">${html}</div>`
       : '';
@@ -575,6 +651,82 @@ export class UI {
     </div>`;
   }
 
+  /**
+   * Bare ground is worth reading too — what it is, what is standing on it and
+   * what that is good for. Wildlife stays observational: no spawn numbers, and
+   * nothing named that the kingdom has not already met.
+   */
+  private tileCard(): string {
+    const g = this.g;
+    const sel = this.game.selectedTile();
+    if (!sel) return '';
+    const { tile, x, y } = sel;
+    const meta = TERRAIN_META[tile.terrain];
+    const speed = TERRAIN_SPEED[tile.terrain] ?? 1;
+    const buildable = tile.terrain !== 'water' && tile.terrain !== 'shallow';
+
+    let onIt = `<div class="tiny muted" style="line-height:1.55">Nothing standing on it.</div>`;
+    if (tile.prop) {
+      const prop = PROP_META[tile.prop];
+      const yields = prop.yields;
+      const rows: string[] = [];
+      if (yields && tile.amount > 0) {
+        rows.push(
+          `<div class="kv"><span class="k">${RESOURCE_META[yields].name} left</span>
+            <span class="v">${RESOURCE_META[yields].icon} ${Math.floor(tile.amount)}</span></div>`,
+        );
+      }
+      if (tile.regrow > 0) {
+        rows.push(
+          `<div class="kv"><span class="k">Coming back in</span><span class="v">${fmtDuration(tile.regrow)}</span></div>`,
+        );
+      }
+      onIt = `<div class="row" style="gap:5px;margin-bottom:7px"><span class="tag accent">${esc(prop.name)}</span></div>
+        <div class="tiny muted" style="line-height:1.55;margin-bottom:${rows.length ? '7px' : '0'}">${esc(prop.desc)}</div>
+        ${rows.join('')}`;
+    }
+
+    const going = speed <= 0 ? 'Impassable' : speed < 0.8 ? 'Slow going' : speed < 1 ? 'A little slow' : 'Easy walking';
+
+    // Only species the kingdom has actually met get named here.
+    const known = SPECIES_ORDER.filter((id) => g.discovered.has(id)).filter((id) => {
+      const def = SPECIES[id];
+      const habitat = def.habitat[tile.terrain] ?? 0;
+      const likes = tile.prop ? def.likesProps?.[tile.prop] ?? 0 : 0;
+      return habitat >= 0.7 || (habitat > 0 && likes >= 0.5);
+    });
+    const names = known.slice(0, 3).map((id) => SPECIES[id].plural.toLowerCase());
+    const seenLine =
+      names.length === 0 ? meta.feel : `You have seen ${listWords(names)} in and around ${meta.like}.`;
+
+    return `<div class="insp">
+      <div class="title"><b>${esc(meta.name)}</b></div>
+      <div class="sub">Tile ${x}, ${y}</div>
+
+      <div class="section">
+        <div class="tiny muted" style="line-height:1.55">${esc(meta.desc)}</div>
+      </div>
+
+      <div class="section">
+        <div class="h">On this tile</div>${onIt}
+      </div>
+
+      <div class="section">
+        <div class="kv"><span class="k">Going</span><span class="v">${going}</span></div>
+        <div class="kv"><span class="k">Building here</span><span class="v">${buildable ? 'Allowed' : 'Not on water'}</span></div>
+      </div>
+
+      <div class="section">
+        <div class="h">Noticed</div>
+        <div class="tiny muted" style="line-height:1.55">${esc(seenLine)}</div>
+      </div>
+
+      <div class="actions">
+        <button class="btn small" data-act="goto" data-x="${x}" data-y="${y}">Centre</button>
+      </div>
+    </div>`;
+  }
+
   private buildingCard(): string {
     const g = this.g;
     const b = this.game.selectedBuilding();
@@ -689,7 +841,7 @@ export class UI {
       <div class="actions">
         ${upgradeable ? `<button class="btn small ${canUp ? 'primary' : ''}" data-act="upgrade" data-id="${b.id}" ${canUp ? '' : 'disabled'}>⬆️ Improve ${upCost}</button>` : ''}
         <button class="btn small" data-act="goto" data-x="${b.x}" data-y="${b.y}">Centre</button>
-        ${b.def === 'campfire' ? '' : `<button class="btn small danger" data-act="demolish" data-id="${b.id}">Remove</button>`}
+        ${BUILDINGS[b.def].order < 0 ? '' : `<button class="btn small danger" data-act="demolish" data-id="${b.id}">Remove</button>`}
       </div>
       ${b.stage === 'done' && b.built ? `<div class="tiny muted" style="margin-top:9px">Built on day ${b.built}.</div>` : ''}
     </div>`;
@@ -872,6 +1024,7 @@ export class UI {
     const s = this.game.settings;
     return `<label class="check" style="margin-bottom:11px"><input type="checkbox" data-act="set-bubbles" ${s.showBubbles ? 'checked' : ''}> Show what villagers say</label>
       <label class="check" style="margin-bottom:11px"><input type="checkbox" data-act="set-names" ${s.showNames ? 'checked' : ''}> Show names over favourites</label>
+      <label class="check" style="margin-bottom:11px"><input type="checkbox" data-act="set-activity" ${s.showActivity ? 'checked' : ''}> Show what everyone is doing</label>
       <div class="hint">Clean viewing mode (<kbd>H</kbd>) hides the whole interface and leaves the kingdom running on its own. Double-click anyone to follow them about.</div>`;
   }
 
@@ -897,7 +1050,7 @@ export class UI {
       <p>There is one person here. Their name is <b>${esc(founder?.name ?? 'someone')}</b>, and they have already started gathering wood.<br><br>
       Give them somewhere to sleep, somewhere to put things, and see what the place becomes.</p>
       <button class="btn primary" data-act="dismiss-intro">Begin</button>
-      <div class="keys"><kbd>drag</kbd> pan · <kbd>scroll</kbd> zoom · <kbd>double-click</kbd> follow someone<br>
+      <div class="keys"><kbd>drag</kbd> pan · <kbd>scroll</kbd> or <kbd>pinch</kbd> · <kbd>double-click</kbd> follow someone<br>
       <kbd>B</kbd> build · <kbd>J</kbd> journal · <kbd>H</kbd> hide the interface · <kbd>space</kbd> pause</div>
     </div></div>`;
   }
@@ -931,14 +1084,6 @@ export class UI {
         break;
       case 'build':
         game.setTool({ kind: 'build', def: target.dataset.def as keyof typeof BUILDINGS });
-        this.refresh();
-        break;
-      case 'tool-path':
-        game.setTool(game.tool.kind === 'paint' && game.tool.terrain === 'path' ? { kind: 'none' } : { kind: 'paint', terrain: 'path' });
-        this.refresh();
-        break;
-      case 'tool-road':
-        game.setTool(game.tool.kind === 'paint' && game.tool.terrain === 'road' ? { kind: 'none' } : { kind: 'paint', terrain: 'road' });
         this.refresh();
         break;
       case 'tool-demolish':
@@ -993,6 +1138,22 @@ export class UI {
       case 'unfollow':
         game.stopFollowing();
         break;
+      case 'follow-selected': {
+        const sel = game.selection;
+        if (sel.kind === 'villager' || sel.kind === 'animal') game.follow(sel.kind, sel.id);
+        break;
+      }
+      case 'zoom-in':
+        game.zoomStep(1);
+        break;
+      case 'zoom-out':
+        game.zoomStep(-1);
+        break;
+      case 'recentre': {
+        const fire = game.state.buildings.find((b) => b.def === 'campfire') ?? game.state.buildings[0];
+        if (fire) game.centerOn(fire.x, fire.y);
+        break;
+      }
       case 'fav-villager':
         game.toggleFavorite('villager', id);
         break;
@@ -1090,6 +1251,9 @@ export class UI {
       case 'set-names':
         this.game.updateSettings({ showNames: target.checked });
         break;
+      case 'set-activity':
+        this.game.updateSettings({ showActivity: target.checked });
+        break;
       case 'set-volume':
         this.game.updateSettings({ volume: Number(target.value) });
         this.renderModal();
@@ -1148,6 +1312,12 @@ export class UI {
 
 function cap(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+/** "rabbits", "rabbits and deer", "rabbits, deer and sparrows". */
+function listWords(words: string[]): string {
+  if (words.length <= 1) return words[0] ?? '';
+  return `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`;
 }
 
 function animalStateLabel(state: string): string {

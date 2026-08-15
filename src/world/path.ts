@@ -1,4 +1,4 @@
-/** A* over the tile grid, weighted by terrain speed so roads genuinely pull traffic. */
+/** A* over the tile grid, weighted by terrain speed so open ground beats scrub. */
 
 import type { GameState } from '../types';
 import { tileSpeed, inBounds } from './terrain';

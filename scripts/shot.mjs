@@ -10,6 +10,7 @@
  *   npm run dev
  *   node scripts/shot.mjs                                   # default view
  *   node scripts/shot.mjs http://localhost:5173/ out.png 6 "window.tkm.game.camera.zoomIndex = 3"
+ *   DEVICE=390x844@3 node scripts/shot.mjs      # as a phone, with touch
  *
  * Load a mature kingdom instead of a fresh one (see `npm run sim`):
  *
@@ -99,6 +100,25 @@ try {
   await send('Runtime.enable');
   await send('Log.enable');
   await send('Page.enable');
+
+  // DEVICE=390x844 (optionally @3 for pixel ratio) emulates a phone or tablet,
+  // touch input included — the layout and the gestures both need checking at
+  // sizes the desktop window cannot show.
+  if (process.env.DEVICE) {
+    const m = /^(\d+)x(\d+)(?:@([\d.]+))?$/.exec(process.env.DEVICE);
+    if (!m) throw new Error('DEVICE should look like 390x844 or 390x844@3');
+    const [w, h, ratio] = [Number(m[1]), Number(m[2]), Number(m[3] ?? 2)];
+    await send('Emulation.setDeviceMetricsOverride', {
+      width: w,
+      height: h,
+      deviceScaleFactor: ratio,
+      mobile: true,
+    });
+    await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
+    await send('Emulation.setEmitTouchEventsForMouse', { enabled: true, configuration: 'mobile' });
+    console.log(`device → ${w}×${h} @${ratio}`);
+  }
+
   await sleep(3000);
 
   if (process.env.PRELOAD) {

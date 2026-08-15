@@ -1,6 +1,17 @@
 /** Static game data: buildings, jobs, traits, wildlife, ranks. */
 
-import type { BuildingDef, BuildingId, JobId, Rank, SpeciesDef, SpeciesId, TraitId } from '../types';
+import type {
+  BuildingDef,
+  BuildingId,
+  JobId,
+  PropId,
+  Rank,
+  ResourceId,
+  SpeciesDef,
+  SpeciesId,
+  TerrainId,
+  TraitId,
+} from '../types';
 
 export const CARRY_CAPACITY = 12;
 
@@ -16,6 +27,34 @@ export const RESOURCE_META: Record<string, { name: string; icon: string; color: 
   flour: { name: 'Flour', icon: '🥣', color: '#e8dcc4' },
   bread: { name: 'Bread', icon: '🍞', color: '#c98a4b' },
   coin: { name: 'Coins', icon: '🪙', color: '#f0c860' },
+};
+
+/** Where each resource comes from and where it goes, for the top-bar hover. */
+export const RESOURCE_INFO: Record<string, { from: string; used: string }> = {
+  wood: {
+    from: 'Woodcutters at the lodge, and helpers felling any tree by hand.',
+    used: 'Nearly every building, from a shelter at 20 up to a windmill at 50.',
+  },
+  stone: {
+    from: 'Stoneworkers at the quarry, and helpers breaking loose boulders.',
+    used: 'Cottages, wells, and the workshops further along the chain.',
+  },
+  wheat: {
+    from: 'Farmers sowing and reaping the plots around a wheat farm.',
+    used: 'Ground into flour at the windmill, three wheat at a time.',
+  },
+  flour: {
+    from: 'The windmill, two flour for every three wheat carried in.',
+    used: 'Baked into bread, two flour to a batch of three loaves.',
+  },
+  bread: {
+    from: 'The bakery, three loaves a batch.',
+    used: 'Eaten. It is the only thing anybody eats, so keep some in store.',
+  },
+  coin: {
+    from: 'Set aside now and then when the kingdom reaches something.',
+    used: 'Nothing yet. They sit in a tin and wait for a use.',
+  },
 };
 
 export const JOB_META: Record<JobId, { name: string; icon: string; desc: string }> = {
@@ -39,7 +78,7 @@ export const TRAIT_META: Record<TraitId, { name: string; icon: string; desc: str
   curious: { name: 'Curious', icon: '🔍', desc: 'Wanders further than most, and notices things.' },
   earlyRiser: { name: 'Early Riser', icon: '🌅', desc: 'Up before the rest of the kingdom.' },
   nightOwl: { name: 'Night Owl', icon: '🌙', desc: 'Often still out well after dark.' },
-  outdoorsy: { name: 'Outdoorsy', icon: '🥾', desc: 'Crosses rough ground as easily as a road.' },
+  outdoorsy: { name: 'Outdoorsy', icon: '🥾', desc: 'Crosses rough ground without slowing down much.' },
   steady: { name: 'Steady', icon: '🧭', desc: 'Never hurries, never stops. Tires more slowly.' },
 };
 
@@ -83,10 +122,23 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     labour: 0,
     maxLevel: 1,
     order: -1,
-    desc: 'Where the kingdom began. Holds a little of everything, and never quite goes out.',
-    storage: [60],
+    desc: 'Where the kingdom began. Somewhere warm to sleep, and it never quite goes out.',
     housing: [2],
     light: [{ x: 0.5, y: 0.5, radius: 46, color: '#ffb35c' }],
+    solid: false,
+  },
+  chest: {
+    id: 'chest',
+    name: 'Old Chest',
+    category: 'storage',
+    w: 1,
+    h: 1,
+    cost: {},
+    labour: 0,
+    maxLevel: 1,
+    order: -1,
+    desc: 'It was here before anyone was. Everything the kingdom owns goes into it until there is a proper storehouse to take over.',
+    storage: [80],
     solid: false,
   },
   shelter: {
@@ -309,8 +361,9 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
   },
 };
 
+// Negative order marks a landmark the player never places or removes.
 export const BUILD_ORDER: BuildingId[] = (Object.keys(BUILDINGS) as BuildingId[])
-  .filter((k) => k !== 'campfire')
+  .filter((k) => BUILDINGS[k].order >= 0)
   .sort((a, b) => BUILDINGS[a].order - BUILDINGS[b].order);
 
 export const CATEGORY_META: Record<string, { name: string; icon: string }> = {
@@ -322,8 +375,6 @@ export const CATEGORY_META: Record<string, { name: string; icon: string }> = {
 
 /** How fast a villager crosses each terrain, as a multiplier on base speed. */
 export const TERRAIN_SPEED: Record<string, number> = {
-  road: 1.95,
-  path: 1.45,
   grass: 1.0,
   meadow: 1.0,
   sand: 0.95,
@@ -331,6 +382,76 @@ export const TERRAIN_SPEED: Record<string, number> = {
   rocky: 0.72,
   shallow: 0.45,
   water: 0,
+};
+
+/**
+ * Ground as the player sees it. `feel` is the fallback line for the tile panel
+ * when nothing has been discovered here yet — a mood, never a spawn rule.
+ */
+export const TERRAIN_META: Record<TerrainId, { name: string; desc: string; like: string; feel: string }> = {
+  water: {
+    name: 'Open water',
+    desc: 'Too deep to cross and too deep to build on. It stays as it is.',
+    like: 'open water like this',
+    feel: 'Whatever lives out here comes and goes on its own terms.',
+  },
+  shallow: {
+    name: 'Shallows',
+    desc: 'Wadeable, slowly. Nothing can be built standing in it.',
+    like: 'shallows like this',
+    feel: 'The edge of the water is where most things stop to drink.',
+  },
+  sand: {
+    name: 'Sand',
+    desc: 'Loose underfoot, so a little slower to walk, but perfectly buildable.',
+    like: 'sandy ground like this',
+    feel: 'Quiet ground. Things pass through more than they settle.',
+  },
+  grass: {
+    name: 'Grass',
+    desc: 'Plain open ground. Easy to walk and the simplest place to build.',
+    like: 'open ground like this',
+    feel: 'Ordinary ground, which is to say almost anything might wander across it.',
+  },
+  meadow: {
+    name: 'Meadow',
+    desc: 'Long grass and wildflowers. Walks the same as plain grass.',
+    like: 'meadows like this',
+    feel: 'Meadows tend to be busier than they look if you sit still a while.',
+  },
+  forest: {
+    name: 'Woodland',
+    desc: 'Dense enough to slow a walk. Trees here can be felled for wood.',
+    like: 'woodland like this',
+    feel: 'Plenty of cover. Things watch from woodland before they cross it.',
+  },
+  rocky: {
+    name: 'Rocky ground',
+    desc: 'Awkward footing, so slower going. Boulders here can be worked for stone.',
+    like: 'rocky ground like this',
+    feel: 'Bare and exposed. What comes up here usually has a reason.',
+  },
+};
+
+/**
+ * What sits on a tile. `yields` is the resource a villager can take from it;
+ * props without one are scenery, and scenery is half the point.
+ */
+export const PROP_META: Record<
+  PropId,
+  { name: string; desc: string; yields?: ResourceId; regrowsFrom?: PropId }
+> = {
+  tree: { name: 'Tree', desc: 'A woodcutter or a helper can fell it for wood.', yields: 'wood' },
+  stump: { name: 'Stump', desc: 'Felled. Left alone, it will come back as a tree.', regrowsFrom: 'tree' },
+  boulder: { name: 'Boulder', desc: 'A stoneworker or a helper can break it for stone.', yields: 'stone' },
+  pebbles: {
+    name: 'Pebbles',
+    desc: 'Loose chippings. Where a boulder was worked, another gathers in time.',
+  },
+  bush: { name: 'Bush', desc: 'Scrub. Slows a walk slightly and gives small animals somewhere to hide.' },
+  flowers: { name: 'Wildflowers', desc: 'No use whatsoever. Some things are fonder of a tile for having them.' },
+  reeds: { name: 'Reeds', desc: 'Waterside growth. Good cover at the edge of the shallows.' },
+  lilypad: { name: 'Lily pads', desc: 'Floating on the water, going nowhere.' },
 };
 
 export const SPECIES: Record<SpeciesId, SpeciesDef> = {
@@ -370,7 +491,7 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     id: 'bird',
     name: 'Sparrow',
     plural: 'Sparrows',
-    habitat: { grass: 0.7, meadow: 0.8, forest: 0.8, path: 0.4, road: 0.4 },
+    habitat: { grass: 0.7, meadow: 0.8, forest: 0.8 },
     likesProps: { tree: 0.5 },
     active: [0.0, 0.7],
     density: 0.014,

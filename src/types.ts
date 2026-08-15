@@ -13,16 +13,7 @@ export function emptyStock(): Stock {
   return { wood: 0, stone: 0, wheat: 0, flour: 0, bread: 0, coin: 0 };
 }
 
-export type TerrainId =
-  | 'water'
-  | 'shallow'
-  | 'sand'
-  | 'grass'
-  | 'meadow'
-  | 'forest'
-  | 'rocky'
-  | 'path'
-  | 'road';
+export type TerrainId = 'water' | 'shallow' | 'sand' | 'grass' | 'meadow' | 'forest' | 'rocky';
 
 export type PropId = 'tree' | 'stump' | 'boulder' | 'pebbles' | 'bush' | 'flowers' | 'reeds' | 'lilypad';
 
@@ -70,6 +61,7 @@ export type TraitId =
 
 export type BuildingId =
   | 'campfire'
+  | 'chest'
   | 'shelter'
   | 'cottage'
   | 'storehouse'
@@ -354,6 +346,8 @@ export interface GameState {
   unlocked: Set<string>;
   discovered: Set<SpeciesId>;
   toasts: Toast[];
+  /** Transient: cooldown before saying again that the store has no room. */
+  storeFullNotice: number;
   /** Villager arrival pacing. */
   arrivalTimer: number;
   /** Weather: 0 = clear, rises toward 1 during rain/snow. */

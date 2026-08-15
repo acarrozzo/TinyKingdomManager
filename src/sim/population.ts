@@ -54,7 +54,7 @@ export function arrive(g: GameState): void {
   assignHome(g, v);
   g.stats.arrivals++;
 
-  v.history.push({ day: g.day, text: 'Walked in from the road and decided to stay.' });
+  v.history.push({ day: g.day, text: 'Walked in over the hill and decided to stay.' });
   journal(g, `${v.name} settled in the kingdom.`, '🚶');
   toast(g, `${v.name} has decided to settle here.`, '🚶', 'good');
   speak(v, 'Room for one more?');

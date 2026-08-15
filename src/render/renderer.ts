@@ -8,7 +8,7 @@
  */
 
 import { clamp, hash2 } from '../core/util';
-import type { Building, GameState, Season } from '../types';
+import type { Building, GameState, Season, Villager } from '../types';
 import { BUILDINGS } from '../sim/defs';
 import { HALF_H, HALF_W, toGridX, toGridY, toScreenX, toScreenY } from '../world/iso';
 import { Camera } from './camera';
@@ -26,18 +26,18 @@ import {
   type PropSheet,
   type TerrainSheet,
 } from './sprites';
-import { drawAnimal, drawAnimalTag, drawMood, drawVillager } from './actors';
+import { drawActivityIcon, drawAnimal, drawAnimalTag, drawMood, drawVillager } from './actors';
 
 export interface RenderOptions {
   showBubbles: boolean;
   showNames: boolean;
+  /** Badges over villagers saying what they are doing. */
+  showActivity: boolean;
   showGrid: boolean;
-  selection: { kind: 'villager' | 'animal' | 'building' | null; id: number };
+  selection: { kind: 'villager' | 'animal' | 'building' | 'tile' | null; id: number; x?: number; y?: number };
   hover: { x: number; y: number } | null;
   /** Active build ghost, if the player is placing something. */
   ghost: { def: keyof typeof BUILDINGS; x: number; y: number; valid: boolean } | null;
-  /** Tiles highlighted for a road/path drag. */
-  paint: { x: number; y: number; valid: boolean }[] | null;
   demolish: boolean;
 }
 
@@ -52,6 +52,12 @@ interface Label {
   sy: number;
   text: string;
   kind: 'bubble' | 'name';
+}
+
+interface Badge {
+  sx: number;
+  sy: number;
+  v: Villager;
 }
 
 export class Renderer {
@@ -82,6 +88,7 @@ export class Renderer {
   private offX = 0;
   private offY = 0;
   private labels: Label[] = [];
+  private badges: Badge[] = [];
   private time = 0;
   /** 0 in full daylight, 1 at the darkest point of the night. */
   private darkness = 0;
@@ -193,9 +200,11 @@ export class Renderer {
     );
 
     this.labels.length = 0;
+    this.badges.length = 0;
     this.drawWorld(g, opts);
     this.drawPlacement(g, opts);
     this.applyLighting(g);
+    this.drawBadges(g);
     this.drawWeather(g);
 
     // Blit the world buffer, upscaled with hard pixel edges.
@@ -366,6 +375,8 @@ export class Renderer {
         },
       });
       if (opts.showBubbles && v.say) this.labels.push({ sx, sy: sy - 26, text: v.say.text, kind: 'bubble' });
+      // A badge under a speech bubble is just clutter, so the bubble wins.
+      else if (opts.showActivity) this.badges.push({ sx, sy, v });
       if (opts.showNames && (selected || v.favorite)) {
         this.labels.push({ sx, sy: sy + 6, text: v.name, kind: 'name' });
       }
@@ -374,8 +385,13 @@ export class Renderer {
     list.sort((p, q) => p.depth - q.depth || p.order - q.order);
     for (const d of list) d.draw();
 
+    // A selected tile stays outlined so you can see what the panel is describing.
+    if (sel.kind === 'tile' && sel.x !== undefined && sel.y !== undefined) {
+      this.outlineFootprint(sel.x, sel.y, 1, 1, '#ffd77a');
+    }
+
     if (opts.showGrid) this.drawGrid(g, minX, maxX, minY, maxY);
-    if (opts.hover && !opts.ghost && !opts.paint) {
+    if (opts.hover && !opts.ghost) {
       this.outlineFootprint(opts.hover.x, opts.hover.y, 1, 1, opts.demolish ? '#ff9a7a' : 'rgba(255,255,255,0.5)');
     }
   }
@@ -488,13 +504,6 @@ export class Renderer {
   // -------------------------------------------------------------------------
 
   private drawPlacement(g: GameState, opts: RenderOptions): void {
-    if (opts.paint) {
-      for (const p of opts.paint) {
-        this.fillFootprint(p.x, p.y, 1, 1, p.valid ? 'rgba(255,238,182,0.6)' : 'rgba(255,110,84,0.5)');
-        this.outlineFootprint(p.x, p.y, 1, 1, p.valid ? '#ffe9a8' : '#ff8a72');
-      }
-      return;
-    }
     if (!opts.ghost) return;
     const def = BUILDINGS[opts.ghost.def];
     const { x, y, valid } = opts.ghost;
@@ -611,6 +620,20 @@ export class Renderer {
         b.fillRect(Math.round((x + this.bufW) % this.bufW), Math.round(y), 1, 1);
       }
     }
+  }
+
+  /**
+   * Activity badges go in after the lighting pass. Drawn with the world they
+   * would be multiplied down to nothing at night, which is exactly when you
+   * most want to know who is still up and what they are doing.
+   */
+  private drawBadges(g: GameState): void {
+    if (this.badges.length === 0) return;
+    // Held back a little after dark so they stay readable without becoming the
+    // brightest thing in a sleeping kingdom.
+    this.bctx.globalAlpha = 1 - this.darkness * 0.3;
+    for (const badge of this.badges) drawActivityIcon(this.bctx, g, badge.v, badge.sx, badge.sy);
+    this.bctx.globalAlpha = 1;
   }
 
   // -------------------------------------------------------------------------

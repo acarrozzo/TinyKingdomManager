@@ -59,7 +59,7 @@ const TERRAIN_VARIANTS = 4;
 
 export type TerrainSheet = Record<TerrainId, HTMLCanvasElement[]>;
 
-const TERRAIN_IDS: TerrainId[] = ['water', 'shallow', 'sand', 'grass', 'meadow', 'forest', 'rocky', 'path', 'road'];
+const TERRAIN_IDS: TerrainId[] = ['water', 'shallow', 'sand', 'grass', 'meadow', 'forest', 'rocky'];
 
 export function bakeTerrain(season: Season): TerrainSheet {
   const sheet = {} as TerrainSheet;
@@ -83,7 +83,7 @@ function bakeTile(season: Season, id: TerrainId, variant: number): HTMLCanvasEle
   }
 
   // Texture. Deliberately sparse — a busy ground plane is exhausting to look at.
-  const density = id === 'road' || id === 'path' ? 12 : id === 'rocky' ? 14 : 9;
+  const density = id === 'rocky' ? 14 : 9;
   for (let i = 0; i < density; i++) {
     const h = hash2(i * 31 + variant * 7, i * 17 + variant * 3, 991);
     const y = Math.floor(h * HALF_H * 2);
@@ -104,14 +104,6 @@ function bakeTile(season: Season, id: TerrainId, variant: number): HTMLCanvasEle
     }
   }
 
-  if (id === 'road') {
-    // Cobble edging so roads read as built rather than worn.
-    for (let y = 1; y < HALF_H * 2 - 1; y += 2) {
-      const { x0, width } = diamondRow(y);
-      px(ctx, x0 + 1, y, dark);
-      px(ctx, x0 + width - 2, y, dark);
-    }
-  }
   return c;
 }
 
@@ -614,6 +606,8 @@ function shapeFor(def: BuildingId, level: number): { wall: number; roof: number;
       return { wall: 0, roof: 0, ov: 0, extra: 22 };
     case 'campfire':
       return { wall: 0, roof: 0, ov: 0, extra: 16 };
+    case 'chest':
+      return { wall: 0, roof: 0, ov: 0, extra: 10 };
     case 'bench':
       return { wall: 0, roof: 0, ov: 0, extra: 13 };
     case 'sapling':
@@ -913,6 +907,30 @@ function drawFinished(
       px(ctx, bx - 3, baseY - 24, '#c8c7be', 3, 19);
       px(ctx, bx - 2, baseY - 27, '#a3a29a', 5, 4);
       px(ctx, bx - 5, baseY - 16, '#8f9c8a', 2, 3);
+      break;
+    }
+    case 'chest': {
+      // Low, wide and banded. It has to read as a chest at a glance next to a
+      // 16px villager, so it stays well under head height — anything taller
+      // starts looking like a little shed.
+      const body = snow ? '#9c7748' : '#a37f4e';
+      const lit = snow ? '#c6a06d' : '#c39a63';
+      const dark = '#6b4a2f';
+      const iron = '#5c5148';
+      px(ctx, bx - 8, baseY - 2, 'rgba(24,20,14,0.18)', 16, 2);
+      // Body.
+      px(ctx, bx - 7, baseY - 9, body, 14, 7);
+      px(ctx, bx - 7, baseY - 3, dark, 14, 1);
+      // Domed lid, two steps so the curve reads without antialiasing.
+      px(ctx, bx - 7, baseY - 12, body, 14, 3);
+      px(ctx, bx - 6, baseY - 14, body, 12, 2);
+      px(ctx, bx - 6, baseY - 14, snow ? '#e8e4dc' : lit, 12, 1);
+      px(ctx, bx - 7, baseY - 10, dark, 14, 1);
+      // Iron bands over lid and body, and a clasp at the front.
+      px(ctx, bx - 5, baseY - 14, iron, 1, 11);
+      px(ctx, bx + 4, baseY - 14, iron, 1, 11);
+      px(ctx, bx - 1, baseY - 11, iron, 3, 4);
+      px(ctx, bx - 1, baseY - 11, '#8a8078', 3, 1);
       break;
     }
     case 'campfire': {

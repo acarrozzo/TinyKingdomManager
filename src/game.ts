@@ -12,7 +12,7 @@ import type {
   GameState,
   ResourceId,
   Season,
-  TerrainId,
+  Tile,
   Villager,
 } from './types';
 import {
@@ -26,7 +26,6 @@ import {
   assignHome,
   assignJob,
   buildingById,
-  canAfford,
   deposit,
   jobSlots,
   makeBuilding,
@@ -34,7 +33,6 @@ import {
   seasonForDay,
   storageCapacity,
   villagerById,
-  withdraw,
 } from './sim/state';
 import { completeConstruction, siteNeeds, updateVillagers } from './sim/villager';
 import { updateWildlife, resetWildlifeCache } from './sim/wildlife';
@@ -56,22 +54,15 @@ import {
   saveToSlot,
 } from './save/save';
 
-export type Tool =
-  | { kind: 'none' }
-  | { kind: 'build'; def: BuildingId }
-  | { kind: 'paint'; terrain: 'path' | 'road' }
-  | { kind: 'erase' }
-  | { kind: 'demolish' };
+export type Tool = { kind: 'none' } | { kind: 'build'; def: BuildingId } | { kind: 'demolish' };
 
 export interface Selection {
-  kind: 'villager' | 'animal' | 'building' | null;
+  kind: 'villager' | 'animal' | 'building' | 'tile' | null;
   id: number;
+  /** Tile coordinates, only meaningful when kind is 'tile'. */
+  x?: number;
+  y?: number;
 }
-
-const PAINT_COST: Record<string, { res: ResourceId; qty: number }> = {
-  path: { res: 'wood', qty: 1 },
-  road: { res: 'stone', qty: 2 },
-};
 
 const AUTOSAVE_INTERVAL = 30;
 
@@ -94,7 +85,16 @@ export class Game {
   private dragging = false;
   private dragMoved = false;
   private lastPointer = { x: 0, y: 0 };
-  private painting: { x: number; y: number }[] | null = null;
+  /** Live touch/mouse points, so two fingers can be told from one. */
+  private pointers = new Map<number, { x: number; y: number }>();
+  private pinchDist = 0;
+  /**
+   * Wheel gestures are locked to pan or zoom for their duration. Deciding per
+   * event instead made a fast trackpad flick flip between the two mid-swipe.
+   */
+  private wheelMode: 'pan' | 'zoom' = 'zoom';
+  private wheelAt = 0;
+  private zoomAcc = 0;
   private autosaveTimer = AUTOSAVE_INTERVAL;
   private lastFrame = 0;
   private running = false;
@@ -316,27 +316,18 @@ export class Game {
     const opts: RenderOptions = {
       showBubbles: this.settings.showBubbles,
       showNames: this.settings.showNames && !this.cleanMode,
-      showGrid: this.tool.kind === 'build' || this.tool.kind === 'paint',
+      showActivity: this.settings.showActivity && !this.cleanMode,
+      showGrid: this.tool.kind === 'build',
       selection: this.selection,
       hover: this.hover,
       ghost: null,
-      paint: null,
-      demolish: this.tool.kind === 'demolish' || this.tool.kind === 'erase',
+      demolish: this.tool.kind === 'demolish',
     };
 
     if (this.tool.kind === 'build' && this.hover) {
-      const def = BUILDINGS[this.tool.def];
       const x = this.hover.x;
       const y = this.hover.y;
       opts.ghost = { def: this.tool.def, x, y, valid: this.canPlace(this.tool.def, x, y) };
-      void def;
-    } else if ((this.tool.kind === 'paint' || this.tool.kind === 'erase') && this.hover) {
-      const tiles = this.painting ?? [this.hover];
-      opts.paint = tiles.map((t) => ({
-        x: t.x,
-        y: t.y,
-        valid: this.tool.kind === 'erase' ? this.canErase(t.x, t.y) : this.canPaint(t.x, t.y),
-      }));
     }
 
     this.renderer.render(this.state, this.camera, opts, realDt);
@@ -349,7 +340,13 @@ export class Game {
   private attachInput(canvas: HTMLCanvasElement): void {
     canvas.addEventListener('pointerdown', (e) => {
       audio.ensure();
-      canvas.setPointerCapture(e.pointerId);
+      this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      // Capture can refuse the pointer; losing it must not abort the gesture.
+      try {
+        canvas.setPointerCapture(e.pointerId);
+      } catch {
+        /* not capturable — dragging still works, it just ends at the edge */
+      }
       this.lastPointer = { x: e.clientX, y: e.clientY };
       this.dragMoved = false;
 
@@ -357,25 +354,28 @@ export class Game {
         this.cancelTool();
         return;
       }
-      if (this.tool.kind === 'paint' || this.tool.kind === 'erase') {
-        const t = this.tileUnder(e.clientX, e.clientY);
-        this.painting = t ? [t] : [];
+      if (this.pointers.size >= 2) {
+        // Second finger down: this is a pinch, not a drag and not a tap.
+        this.dragging = false;
+        this.dragMoved = true;
+        this.pinchDist = this.spanOfPointers();
         return;
       }
       this.dragging = true;
     });
 
     canvas.addEventListener('pointermove', (e) => {
+      if (this.pointers.has(e.pointerId)) this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+      if (this.pointers.size >= 2) {
+        this.handlePinch();
+        return;
+      }
+
       const dx = e.clientX - this.lastPointer.x;
       const dy = e.clientY - this.lastPointer.y;
       this.hover = this.tileUnder(e.clientX, e.clientY);
 
-      if (this.painting) {
-        const t = this.hover;
-        if (t && !this.painting.some((p) => p.x === t.x && p.y === t.y)) this.painting.push(t);
-        this.lastPointer = { x: e.clientX, y: e.clientY };
-        return;
-      }
       if (this.dragging && (Math.abs(dx) > 1 || Math.abs(dy) > 1)) {
         this.dragMoved = true;
         const k = this.renderer.dpr / this.renderer.scale;
@@ -384,17 +384,26 @@ export class Game {
       this.lastPointer = { x: e.clientX, y: e.clientY };
     });
 
+    const endPointer = (e: PointerEvent): void => {
+      this.pointers.delete(e.pointerId);
+      if (this.pointers.size < 2) this.pinchDist = 0;
+      // Lifting one finger of a pinch must not make the other one jump.
+      const rest = this.pointers.values().next().value;
+      if (rest) this.lastPointer = { x: rest.x, y: rest.y };
+    };
+
     canvas.addEventListener('pointerup', (e) => {
-      if (this.painting) {
-        this.commitPaint();
-        this.painting = null;
-        this.notify();
-        return;
-      }
       const wasDragging = this.dragging;
+      const moved = this.dragMoved;
+      endPointer(e);
       this.dragging = false;
-      if (!wasDragging || this.dragMoved || e.button !== 0) return;
+      if (!wasDragging || moved || e.button !== 0) return;
       this.handleClick(e.clientX, e.clientY);
+    });
+
+    canvas.addEventListener('pointercancel', (e) => {
+      endPointer(e);
+      this.dragging = false;
     });
 
     canvas.addEventListener('pointerleave', () => {
@@ -403,16 +412,7 @@ export class Game {
 
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
-    canvas.addEventListener(
-      'wheel',
-      (e) => {
-        e.preventDefault();
-        const anchor = this.worldUnder(e.clientX, e.clientY);
-        this.camera.zoomBy(e.deltaY < 0 ? 1 : -1, anchor);
-        this.notify();
-      },
-      { passive: false },
-    );
+    canvas.addEventListener('wheel', (e) => this.handleWheel(e), { passive: false });
 
     canvas.addEventListener('dblclick', (e) => {
       const hit = this.pickEntity(e.clientX, e.clientY);
@@ -420,6 +420,94 @@ export class Game {
       else if (hit.kind === 'animal') this.camera.follow('animal', hit.id);
       this.notify();
     });
+  }
+
+  // -------------------------------------------------------------------------
+  // Zoom and pan gestures
+  // -------------------------------------------------------------------------
+
+  private spanOfPointers(): number {
+    const pts = [...this.pointers.values()];
+    if (pts.length < 2) return 0;
+    return Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+  }
+
+  private midpointOfPointers(): { x: number; y: number } {
+    const pts = [...this.pointers.values()];
+    return { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+  }
+
+  /** Two fingers: drag the midpoint to pan, spread or squeeze to change zoom. */
+  private handlePinch(): void {
+    const mid = this.midpointOfPointers();
+    const span = this.spanOfPointers();
+
+    const dx = mid.x - this.lastPointer.x;
+    const dy = mid.y - this.lastPointer.y;
+    if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) {
+      const k = this.renderer.dpr / this.renderer.scale;
+      this.camera.pan(-dx * k, -dy * k);
+    }
+    this.lastPointer = mid;
+
+    // Zoom is stepped, so a pinch has to travel a good way before it clicks
+    // over — otherwise the world jumps about while you are still settling.
+    if (this.pinchDist > 0 && span > 0) {
+      const ratio = span / this.pinchDist;
+      if (ratio > 1.3 || ratio < 0.77) {
+        this.camera.zoomBy(ratio > 1 ? 1 : -1, this.worldUnder(mid.x, mid.y));
+        this.pinchDist = span;
+        this.notify();
+      }
+    }
+  }
+
+  /**
+   * A trackpad emits a stream of small pixel deltas, often with a horizontal
+   * component; a mouse wheel emits rare, large, quantised notches. Telling them
+   * apart is what lets a two-finger swipe pan the map while a wheel still
+   * zooms, which is what everyone expects of their own device.
+   */
+  private handleWheel(e: WheelEvent): void {
+    e.preventDefault();
+    const now = performance.now();
+    // A gap means a new gesture; mid-gesture the mode is locked, so a fast
+    // flick cannot flip from panning to zooming halfway through.
+    if (now - this.wheelAt > 180) {
+      this.zoomAcc = 0;
+      const looksLikeWheel = e.deltaMode !== 0 || (e.deltaX === 0 && Math.abs(e.deltaY) >= 50);
+      this.wheelMode = e.ctrlKey || looksLikeWheel ? 'zoom' : 'pan';
+    }
+    this.wheelAt = now;
+
+    // Line and page modes report in rows and screens rather than pixels.
+    const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1;
+    const dx = e.deltaX * unit;
+    const dy = e.deltaY * unit;
+
+    if (this.wheelMode === 'pan') {
+      const k = this.renderer.dpr / this.renderer.scale;
+      this.camera.pan(dx * k, dy * k);
+      this.hover = this.tileUnder(e.clientX, e.clientY);
+      return;
+    }
+
+    // Pinch-to-zoom on a trackpad arrives as ctrl+wheel with tiny deltas, so it
+    // needs a much shorter runway than a mouse wheel's 100-pixel notches.
+    const step = e.ctrlKey ? 24 : 100;
+    this.zoomAcc += dy;
+    while (Math.abs(this.zoomAcc) >= step) {
+      const dir = this.zoomAcc < 0 ? 1 : -1;
+      this.zoomAcc -= this.zoomAcc < 0 ? -step : step;
+      this.camera.zoomBy(dir, this.worldUnder(e.clientX, e.clientY));
+      this.notify();
+    }
+  }
+
+  /** Zoom a step from the interface, anchored on the middle of the view. */
+  zoomStep(delta: number): void {
+    this.camera.zoomBy(delta);
+    this.notify();
   }
 
   private handleClick(cssX: number, cssY: number): void {
@@ -435,7 +523,8 @@ export class Game {
     }
     const hit = this.pickEntity(cssX, cssY);
     this.selection = hit;
-    if (hit.kind === null) this.camera.stopFollowing();
+    // Clicking anything that is not a person or an animal breaks the follow.
+    if (hit.kind !== 'villager' && hit.kind !== 'animal') this.camera.stopFollowing();
     audio.tick();
     this.notify();
   }
@@ -494,6 +583,8 @@ export class Game {
       const tile = tileAt(this.state, t.x, t.y);
       if (tile?.building) return { kind: 'building', id: tile.building };
       if (tile?.plot) return { kind: 'building', id: tile.plot };
+      // Bare ground is still worth reading, so it selects rather than clearing.
+      if (tile) return { kind: 'tile', id: 0, x: t.x, y: t.y };
     }
     return { kind: null, id: 0 };
   }
@@ -587,20 +678,15 @@ export class Game {
     const t = tileAt(g, x, y);
     if (!t) return;
 
-    if (!t.building) {
-      // Roads and paths are removed by the same tool.
-      if (t.terrain === 'path' || t.terrain === 'road') {
-        t.terrain = 'grass';
-        this.renderer.invalidateGround();
-        audio.thud(0.9, 0.03);
-        this.notify();
-      }
-      return;
-    }
+    if (!t.building) return;
     const b = buildingById(g, t.building);
     if (!b) return;
     if (b.def === 'campfire') {
       toast(g, 'The first fire stays lit.', '🔥', 'warn');
+      return;
+    }
+    if (b.def === 'chest') {
+      toast(g, 'The old chest stays where it is.', '🧰', 'warn');
       return;
     }
     this.removeBuilding(b, true);
@@ -652,71 +738,6 @@ export class Game {
   }
 
   // -------------------------------------------------------------------------
-  // Roads
-  // -------------------------------------------------------------------------
-
-  canPaint(x: number, y: number): boolean {
-    if (this.tool.kind !== 'paint') return false;
-    const t = tileAt(this.state, x, y);
-    if (!t) return false;
-    if (t.building || t.plot) return false;
-    if (t.terrain === 'water' || t.terrain === 'shallow') return false;
-    if (t.terrain === this.tool.terrain) return false;
-    return true;
-  }
-
-  canErase(x: number, y: number): boolean {
-    const t = tileAt(this.state, x, y);
-    return !!t && (t.terrain === 'path' || t.terrain === 'road');
-  }
-
-  private commitPaint(): void {
-    if (!this.painting || this.painting.length === 0) return;
-    const g = this.state;
-
-    if (this.tool.kind === 'erase') {
-      let n = 0;
-      for (const p of this.painting) {
-        if (!this.canErase(p.x, p.y)) continue;
-        const t = tileAt(g, p.x, p.y)!;
-        t.terrain = 'grass';
-        n++;
-      }
-      if (n) {
-        this.renderer.invalidateGround();
-        audio.thud(0.8, 0.04);
-      }
-      return;
-    }
-    if (this.tool.kind !== 'paint') return;
-
-    const terrain = this.tool.terrain as TerrainId;
-    const cost = PAINT_COST[this.tool.terrain];
-    let laid = 0;
-    for (const p of this.painting) {
-      if (!this.canPaint(p.x, p.y)) continue;
-      if (!canAfford(g, { [cost.res]: cost.qty })) {
-        toast(g, `Not enough ${cost.res}`, '⚠️', 'warn');
-        break;
-      }
-      withdraw(g, cost.res, cost.qty);
-      const t = tileAt(g, p.x, p.y)!;
-      // Clearing the way returns part of whatever was standing there.
-      if (t.prop === 'tree' && t.amount > 0) deposit(g, 'wood', Math.floor(t.amount * 0.4));
-      if (t.prop === 'boulder' && t.amount > 0) deposit(g, 'stone', Math.floor(t.amount * 0.4));
-      t.terrain = terrain;
-      t.prop = null;
-      t.amount = 0;
-      t.regrow = 0;
-      laid++;
-    }
-    if (laid) {
-      this.renderer.invalidateGround();
-      audio.thud(1.1, 0.04);
-    }
-  }
-
-  // -------------------------------------------------------------------------
   // Operations the interface calls
   // -------------------------------------------------------------------------
 
@@ -729,7 +750,6 @@ export class Game {
 
   cancelTool(): void {
     this.tool = { kind: 'none' };
-    this.painting = null;
     this.syncCursor();
     this.notify();
   }
@@ -921,6 +941,13 @@ export class Game {
     return this.selection.kind === 'animal'
       ? this.state.animals.find((a) => a.id === this.selection.id) ?? null
       : null;
+  }
+
+  selectedTile(): { tile: Tile; x: number; y: number } | null {
+    const s = this.selection;
+    if (s.kind !== 'tile' || s.x === undefined || s.y === undefined) return null;
+    const tile = tileAt(this.state, s.x, s.y);
+    return tile ? { tile, x: s.x, y: s.y } : null;
   }
 
   /** Time of day as a friendly 24-hour clock. Day-fraction 0 is first light. */
