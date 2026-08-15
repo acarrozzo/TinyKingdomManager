@@ -63,6 +63,24 @@ body {
   inset: 0;
   pointer-events: none;
   font-size: 13px;
+  /*
+   * `manipulation` keeps taps and scrolling but switches off double-tap-to-
+   * zoom, which otherwise fires whenever you press the same button twice
+   * quickly and blows up the whole interface. iOS ignores `user-scalable=no`,
+   * so this is the only thing that actually stops it.
+   */
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+/* Repeated taps would otherwise start selecting button labels. */
+#ui button,
+#ui .vwrap,
+#ui .res,
+#ui .storage,
+#ui h3,
+#ui .label {
+  user-select: none;
+  -webkit-user-select: none;
 }
 #ui > * {
   pointer-events: auto;
@@ -310,14 +328,12 @@ button {
 }
 
 .speed {
-  display: flex;
+  display: inline-flex;
   gap: 2px;
-  background: var(--panel);
+  background: rgba(255, 255, 255, 0.05);
   border: 1px solid var(--edge);
   border-radius: 10px;
   padding: 3px;
-  backdrop-filter: blur(8px);
-  box-shadow: var(--shadow);
 }
 .speed button {
   padding: 4px 9px;
@@ -336,48 +352,67 @@ button {
   bottom: 12px;
   z-index: 20;
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
+  align-items: center;
   gap: 6px;
 }
-.vgroup {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 3px;
-  border: 1px solid var(--edge);
+.vwrap {
+  position: relative;
+  display: inline-flex;
+}
+.vbtn {
+  width: 38px;
+  height: 38px;
   border-radius: 10px;
+  border: 1px solid var(--edge);
   background: var(--panel);
   backdrop-filter: blur(8px);
   box-shadow: var(--shadow);
-}
-.vbtn {
-  min-width: 34px;
-  height: 30px;
-  border-radius: 7px;
   color: var(--dim);
-  font-size: 14px;
+  font-size: 16px;
   line-height: 1;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+/* So the wrapper still gets the hover and can explain why it is off. */
+.vbtn:disabled {
+  pointer-events: none;
+}
+
+/* To the left of the pad, not above it: the pad lives in the corner, so a tip
+   above one row would cover the row of buttons it sits under. */
+#ui .vtip {
+  position: absolute;
+  right: calc(100% + 9px);
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 40;
+  display: none;
+  width: max-content;
+  max-width: 190px;
+  padding: 6px 9px;
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  background: var(--panel-solid);
+  box-shadow: var(--shadow);
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--dim);
+  white-space: normal;
+  pointer-events: none;
+}
+#ui .vwrap:hover .vtip {
+  display: block;
 }
 .vbtn:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.07);
+  background: rgba(48, 41, 33, 0.94);
+  border-color: var(--edge-strong);
   color: var(--ink);
 }
-.vbtn.on {
-  background: var(--accent-dim);
-  color: var(--accent);
+.vbtn:active:not(:disabled) {
+  transform: translateY(1px);
 }
 .vbtn:disabled {
   opacity: 0.32;
   cursor: default;
-}
-.vlevel {
-  text-align: center;
-  font-size: 10.5px;
-  font-weight: 700;
-  color: var(--faint);
-  font-variant-numeric: tabular-nums;
-  min-width: 22px;
 }
 .speed button.on {
   background: var(--accent-dim);
@@ -385,6 +420,16 @@ button {
 }
 .speed button:hover:not(.on) {
   background: rgba(255, 255, 255, 0.06);
+}
+
+/* Removing lives at the foot of the build list: the same place you go to put
+   something up, and rarer than putting up. */
+.build-remove {
+  padding: 11px 13px 13px;
+}
+.build-remove .btn {
+  width: 100%;
+  justify-content: center;
 }
 
 /* ---------------------------------------------------------------- panels */
@@ -454,7 +499,7 @@ button {
   right: 10px;
   width: 274px;
   /* Clears the view controls in the corner below. */
-  bottom: 132px;
+  bottom: 62px;
 }
 
 .scroll {
@@ -1235,18 +1280,9 @@ kbd {
     gap: 5px;
   }
   .vbtn {
-    min-width: 38px;
-    height: 34px;
-    font-size: 15px;
-  }
-  .vlevel {
-    padding: 0 4px;
-    font-size: 11px;
-  }
-  .speed button {
-    min-width: 34px;
-    padding: 8px 8px;
-    font-size: 12px;
+    width: 44px;
+    height: 44px;
+    font-size: 18px;
   }
 
   /* Panels rise from the bottom, above the view controls. */
@@ -1289,7 +1325,8 @@ kbd {
   .modal .body {
     padding: 12px 14px 16px;
   }
-  #ui .tip {
+  #ui .tip,
+  #ui .vtip {
     display: none !important;
   }
 }

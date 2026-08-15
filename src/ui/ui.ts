@@ -74,7 +74,6 @@ export class UI {
   private goalsHost!: HTMLElement;
   private modalHost!: HTMLElement;
   private introHost!: HTMLElement;
-  private speedHost!: HTMLElement;
   private viewHost!: HTMLElement;
   private buttonsHost!: HTMLElement;
   private toolHost!: HTMLElement;
@@ -154,7 +153,6 @@ export class UI {
     // sized for a thumb: it is the only way to move the map on a touchscreen.
     this.viewHost = el('div', 'viewpad hide-in-clean');
     this.root.appendChild(this.viewHost);
-    this.speedHost = el('div', 'speed');
 
     this.toastHost = el('div', 'toasts');
     this.root.appendChild(this.toastHost);
@@ -344,57 +342,51 @@ export class UI {
    */
   private renderViewPad(): void {
     const cam = this.game.camera;
-    const sel = this.game.selection;
-    const followable = sel.kind === 'villager' || sel.kind === 'animal';
-    const following = cam.followId !== 0;
 
-    const btn = (act: string, label: string, title: string, on = false, off = false, extra = '') =>
-      `<button class="vbtn ${on ? 'on' : ''}" data-act="${act}" ${off ? 'disabled' : ''} title="${esc(title)}" ${extra}>${label}</button>`;
+    /*
+     * The label lives on the wrapper, not the button: a disabled button takes
+     * no pointer events, so a tooltip on it would never appear — and a button
+     * that is greyed out with no explanation is the one you most want to ask
+     * about.
+     */
+    const btn = (act: string, label: string, tip: string, off = false) =>
+      `<span class="vwrap">
+        <button class="vbtn" data-act="${act}" ${off ? 'disabled' : ''} aria-label="${esc(tip)}">${label}</button>
+        <span class="vtip">${esc(tip)}</span>
+      </span>`;
 
-    this.viewHost.innerHTML = `
-      <div class="vgroup">
-        ${btn('zoom-out', '−', 'Zoom out', false, cam.zoomIndex <= 0)}
-        <span class="vlevel">${cam.zoom}×</span>
-        ${btn('zoom-in', '+', 'Zoom in', false, cam.zoomIndex >= ZOOM_LEVELS.length - 1)}
-      </div>
-      <div class="vgroup">
-        ${btn('recentre', '⌂', 'Back to the campfire')}
-        ${btn(
-          following ? 'unfollow' : 'follow-selected',
-          '⦿',
-          following ? 'Stop following' : 'Follow the selected villager (F)',
-          following,
-          !following && !followable,
-        )}
-      </div>`;
-
-    this.renderSpeed();
-    this.viewHost.appendChild(this.speedHost);
+    const last = ZOOM_LEVELS.length - 1;
+    this.viewHost.innerHTML = [
+      btn('zoom-out', '−', `Zoom out (now ${cam.zoom}×)`, cam.zoomIndex <= 0),
+      btn('zoom-in', '+', `Zoom in (now ${cam.zoom}×)`, cam.zoomIndex >= last),
+      btn('recentre', '⌂', 'Back to the campfire'),
+    ].join('');
   }
 
-  private renderSpeed(): void {
+  /** Speed lives in the settings panel; the keys are the quick way to it. */
+  private speedControl(): string {
     const g = this.g;
-    const opts: { label: string; speed: number }[] = [
-      { label: '❚❚', speed: 0 },
-      { label: '1×', speed: 1 },
-      { label: '2×', speed: 2 },
-      { label: '4×', speed: 4 },
+    const opts: { label: string; speed: number; tip: string }[] = [
+      { label: '❚❚', speed: 0, tip: 'Pause (space)' },
+      { label: '1×', speed: 1, tip: 'Normal speed (1)' },
+      { label: '2×', speed: 2, tip: 'Double speed (2)' },
+      { label: '4×', speed: 4, tip: 'Four times speed (3)' },
     ];
-    this.speedHost.innerHTML = opts
+    const buttons = opts
       .map((o) => {
         const on = o.speed === 0 ? g.paused : !g.paused && g.speed === o.speed;
-        return `<button data-act="speed" data-speed="${o.speed}" class="${on ? 'on' : ''}">${o.label}</button>`;
+        return `<button data-act="speed" data-speed="${o.speed}" class="${on ? 'on' : ''}"
+          title="${esc(o.tip)}">${o.label}</button>`;
       })
       .join('');
+    return `<div class="speed">${buttons}</div>`;
   }
 
   private renderButtons(): void {
-    const t = this.game.tool;
     const b = (act: string, label: string, on = false, title = '') =>
       `<button class="btn ${on ? 'on' : ''}" data-act="${act}" title="${esc(title)}">${label}</button>`;
     this.buttonsHost.innerHTML = [
       b('toggle-build', '🔨 Build', this.buildOpen, 'Buildings you can place (B)'),
-      b('tool-demolish', '⛏ Remove', t.kind === 'demolish', 'Take down a building'),
       `<span class="divider"></span>`,
       b('modal-people', '👥', this.modal === 'people', 'People and jobs (P)'),
       b('modal-journal', '📖', this.modal === 'journal', 'Kingdom journal (J)'),
@@ -496,6 +488,15 @@ export class UI {
     if (locked > 0) {
       body += `<div class="build-group"><div class="label" style="padding-bottom:0">${locked} more unlock as the kingdom grows</div></div>`;
     }
+
+    // Taking things down belongs with putting them up, and it is the rarer of
+    // the two — a building's own panel has a Remove button as well.
+    const removing = tool.kind === 'demolish';
+    body += `<div class="build-group build-remove">
+      <button class="btn small ${removing ? 'on' : ''}" data-act="tool-demolish">
+        ⛏ ${removing ? 'Removing — click a building' : 'Remove a building'}</button>
+      <div class="tiny muted" style="margin-top:7px;line-height:1.5">Half the materials come back. You can also remove one from its own panel.</div>
+    </div>`;
 
     this.sideLeft.innerHTML = `<div class="panel scroll" style="flex:1">
       <h3>Build<span class="tiny muted esc-hint">Esc to cancel</span>
@@ -1022,7 +1023,11 @@ export class UI {
 
   private viewBody(): string {
     const s = this.game.settings;
-    return `<label class="check" style="margin-bottom:11px"><input type="checkbox" data-act="set-bubbles" ${s.showBubbles ? 'checked' : ''}> Show what villagers say</label>
+    return `<div class="row" style="margin-bottom:14px;gap:10px">
+        <span style="width:64px">Speed</span>${this.speedControl()}
+        <span class="tiny muted"><kbd>space</kbd> pauses · <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> set the rate</span>
+      </div>
+      <label class="check" style="margin-bottom:11px"><input type="checkbox" data-act="set-bubbles" ${s.showBubbles ? 'checked' : ''}> Show what villagers say</label>
       <label class="check" style="margin-bottom:11px"><input type="checkbox" data-act="set-names" ${s.showNames ? 'checked' : ''}> Show names over favourites</label>
       <label class="check" style="margin-bottom:11px"><input type="checkbox" data-act="set-activity" ${s.showActivity ? 'checked' : ''}> Show what everyone is doing</label>
       <div class="hint">Clean viewing mode (<kbd>H</kbd>) hides the whole interface and leaves the kingdom running on its own. Double-click anyone to follow them about.</div>`;
@@ -1075,6 +1080,8 @@ export class UI {
           game.state.paused = false;
           game.setSpeed(s);
         }
+        // The buttons live in the settings panel now, so redraw it in place.
+        this.renderModal();
         break;
       }
       case 'toggle-build':

@@ -244,18 +244,24 @@ are screen-space text drawn after upscaling.
 
 ## Input and the view
 
-**Zoom is stepped and always will be.** `ZOOM_LEVELS = [1, 2, 3, 4]` feeds
+**Zoom is stepped and always will be.** `ZOOM_LEVELS = [1, 2, 3, 4, 6]` feeds
 `round(zoom × dpr)`, and the pixel pipeline depends on that being an integer.
 There is no smooth zoom to add; what can be smoothed is the *input*.
 
-**Wheel gestures are locked to pan or zoom for their duration.** A trackpad
-fires dozens of wheel events per swipe, so stepping a zoom level per event blew
-through all four in one flick — the original bug. `handleWheel()` starts a new
-gesture after a 180ms gap, decides once whether it is a pan or a zoom, and holds
-that decision until the gesture ends. Trackpad scroll pans; a mouse wheel
-(`deltaMode !== 0`, or a lone vertical delta of 50+) zooms; pinch arrives as
-ctrl+wheel with tiny deltas and gets a shorter runway. Zoom accumulates delta
-against a threshold rather than stepping per event.
+**Scrolling always zooms; what varies is the runway.** A trackpad fires dozens
+of wheel events per swipe, so stepping a level per event blew through every
+level in one flick — the original bug. `handleWheel()` classifies the gesture
+once, after a 180ms gap, and holds that classification until it ends:
+
+- **wheel** (`deltaMode !== 0`, or a lone vertical delta of 50+) — one notch is
+  one level, ignoring delta size, because mice disagree wildly about it (120 on
+  a Mac, 53 on some Windows mice). A fast spin is simply more notches.
+- **trackpad** — accumulate against a 90-pixel threshold, so a normal swipe is
+  about one level.
+- **pinch** (ctrl+wheel, tiny deltas) — same accumulator, 24-pixel threshold.
+
+Panning is drag-only, by deliberate choice: the player asked for scroll to zoom
+after trying scroll-to-pan.
 
 **Touch is pointer events, not touch events.** One pointer drags, two pinch
 (`handlePinch`). Pinch needs a large ratio change (1.3×) before it clicks over a
@@ -263,10 +269,25 @@ level, because the steps are coarse. `setPointerCapture` is wrapped in
 try/catch — it throws for pointers the browser will not capture, and an
 exception there used to abort the whole gesture.
 
-**The bottom-right view pad is the entire interface on a touchscreen**: zoom,
-recentre, follow and speed. It is a compact column on desktop and one centred
-row along the bottom on phones. Do not let panels overlap it — `.side.right`
-stops at `bottom: 132px` for exactly that reason.
+**The bottom-right view pad is the entire interface on a touchscreen**: zoom out,
+zoom in, recentre — three separate buttons, no group chrome. It is a row in the
+corner on desktop and a centred row along the bottom on phones. Do not let
+panels overlap it; `.side.right` stops short for exactly that reason.
+
+Its hover labels live on a `.vwrap` wrapper rather than on the button, because a
+`disabled` button takes no pointer events and so can never show a tooltip — and
+the greyed-out one is precisely the button people need explained. The zoom
+buttons disable at each end of the ladder and say the current level.
+
+**Speed lives in Settings → Viewing**, not on the map, along with `space` and
+`1`/`2`/`3`. **Removing a building lives at the foot of the build panel**, not in
+the top bar; a building's own panel also has a Remove button. Both were moved
+out of the way deliberately — do not put them back on the map chrome.
+
+**`touch-action: manipulation` on `#ui` is load-bearing.** Without it, tapping
+the same button twice quickly triggers the browser's double-tap-to-zoom and
+wrecks the layout. iOS ignores `user-scalable=no` in the viewport meta, so this
+declaration is the only thing that actually prevents it.
 
 ---
 

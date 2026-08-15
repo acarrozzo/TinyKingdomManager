@@ -3,7 +3,12 @@
 import { clamp, lerp } from '../core/util';
 import { HALF_H, HALF_W, toScreenX, toScreenY } from '../world/iso';
 
-export const ZOOM_LEVELS = [1, 2, 3, 4];
+/**
+ * Integer only — the pixel pipeline scales by `round(zoom × dpr)`. 5× is
+ * deliberately skipped: it sits too close to both its neighbours to be worth a
+ * stop on the way up.
+ */
+export const ZOOM_LEVELS = [1, 2, 3, 4, 6];
 
 export class Camera {
   /** Centre of view, in world pixels. */

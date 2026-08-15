@@ -113,19 +113,17 @@ unlocks, per-building job slots, the goal list — are all in place.
 | | |
 |---|---|
 | Drag · one finger | Pan |
-| Two-finger scroll | Pan (trackpad) |
-| Wheel · pinch | Zoom (four integer levels) |
+| Scroll · wheel · pinch | Zoom (1×, 2×, 3×, 4×, 6×) |
 | Click | Select a villager, animal, building or tile |
 | Double-click | Follow someone with the camera |
-| **Build** | Pick a building, then click where it goes |
-| **Remove** | Click a building to take it away |
+| **Build** | Pick a building, then click where it goes; removing is at the foot of the same panel |
 | `B` | Build menu |
 | `P` / `J` | People · Journal |
 | `H` | Clean viewing mode |
 | `Space` | Pause |
-| `1` `2` `3` | 1× · 2× · 4× |
+| `1` `2` `3` | 1× · 2× · 4× (also in Settings → Viewing) |
 | `Esc` | Cancel the current tool, or close a panel |
-| Bottom-right pad | Zoom, recentre, follow and speed — the whole of the controls on a touchscreen |
+| Bottom-right pad | Zoom out, zoom in, recentre — the whole of the controls on a touchscreen |
 | Right-click | Cancel the current tool |
 
 ---

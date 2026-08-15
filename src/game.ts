@@ -88,11 +88,8 @@ export class Game {
   /** Live touch/mouse points, so two fingers can be told from one. */
   private pointers = new Map<number, { x: number; y: number }>();
   private pinchDist = 0;
-  /**
-   * Wheel gestures are locked to pan or zoom for their duration. Deciding per
-   * event instead made a fast trackpad flick flip between the two mid-swipe.
-   */
-  private wheelMode: 'pan' | 'zoom' = 'zoom';
+  /** What kind of device the current wheel gesture came from, locked while it runs. */
+  private wheelMode: 'wheel' | 'trackpad' | 'pinch' = 'wheel';
   private wheelAt = 0;
   private zoomAcc = 0;
   private autosaveTimer = AUTOSAVE_INTERVAL;
@@ -463,45 +460,51 @@ export class Game {
   }
 
   /**
-   * A trackpad emits a stream of small pixel deltas, often with a horizontal
-   * component; a mouse wheel emits rare, large, quantised notches. Telling them
-   * apart is what lets a two-finger swipe pan the map while a wheel still
-   * zooms, which is what everyone expects of their own device.
+   * Scrolling zooms, on every device. What changes per device is how far the
+   * gesture has to travel for one step: a mouse wheel emits rare, large,
+   * quantised notches and should move a level each time, while a trackpad emits
+   * a stream of small deltas and would otherwise blow through every level in
+   * one flick. So the delta is accumulated against a threshold picked from what
+   * the gesture looks like, and the threshold is locked in for its duration —
+   * deciding per event let a single swipe change its mind halfway through.
    */
   private handleWheel(e: WheelEvent): void {
     e.preventDefault();
     const now = performance.now();
-    // A gap means a new gesture; mid-gesture the mode is locked, so a fast
-    // flick cannot flip from panning to zooming halfway through.
     if (now - this.wheelAt > 180) {
       this.zoomAcc = 0;
-      const looksLikeWheel = e.deltaMode !== 0 || (e.deltaX === 0 && Math.abs(e.deltaY) >= 50);
-      this.wheelMode = e.ctrlKey || looksLikeWheel ? 'zoom' : 'pan';
+      // Pinch arrives as ctrl+wheel with very small deltas; a real wheel comes
+      // in line mode or as a lone vertical jump of 50 pixels or more.
+      this.wheelMode = e.ctrlKey ? 'pinch' : e.deltaMode !== 0 || Math.abs(e.deltaY) >= 50 ? 'wheel' : 'trackpad';
     }
     this.wheelAt = now;
 
-    // Line and page modes report in rows and screens rather than pixels.
-    const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1;
-    const dx = e.deltaX * unit;
-    const dy = e.deltaY * unit;
+    const anchor = this.worldUnder(e.clientX, e.clientY);
 
-    if (this.wheelMode === 'pan') {
-      const k = this.renderer.dpr / this.renderer.scale;
-      this.camera.pan(dx * k, dy * k);
+    if (this.wheelMode === 'wheel') {
+      // One notch is one level, whatever size delta this particular mouse
+      // reports — 120 on a Mac, 53 on some Windows mice. Spinning fast still
+      // moves fast, because a fast spin is simply more notches.
+      if (e.deltaY !== 0) {
+        this.camera.zoomBy(e.deltaY < 0 ? 1 : -1, anchor);
+        this.notify();
+      }
       this.hover = this.tileUnder(e.clientX, e.clientY);
       return;
     }
 
-    // Pinch-to-zoom on a trackpad arrives as ctrl+wheel with tiny deltas, so it
-    // needs a much shorter runway than a mouse wheel's 100-pixel notches.
-    const step = e.ctrlKey ? 24 : 100;
-    this.zoomAcc += dy;
+    // Line and page modes report in rows and screens rather than pixels.
+    const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1;
+    const step = this.wheelMode === 'pinch' ? 24 : 90;
+
+    this.zoomAcc += e.deltaY * unit;
     while (Math.abs(this.zoomAcc) >= step) {
       const dir = this.zoomAcc < 0 ? 1 : -1;
       this.zoomAcc -= this.zoomAcc < 0 ? -step : step;
-      this.camera.zoomBy(dir, this.worldUnder(e.clientX, e.clientY));
+      this.camera.zoomBy(dir, anchor);
       this.notify();
     }
+    this.hover = this.tileUnder(e.clientX, e.clientY);
   }
 
   /** Zoom a step from the interface, anchored on the middle of the view. */

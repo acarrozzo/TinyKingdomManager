@@ -53,7 +53,7 @@ export const CHATTER = {
     'Bit of a walk, this.',
     'Right then.',
     'Something smells good.',
-    'Who moved the path?',
+    'Long way round.',
   ],
   night: [
     'Getting late.',
