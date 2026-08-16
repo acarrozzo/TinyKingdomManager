@@ -336,7 +336,7 @@ export class UI {
   // -------------------------------------------------------------------------
 
   /**
-   * The bottom-right cluster: zoom, recentre, follow and speed. On a phone
+   * The bottom-right cluster: recentre, then the two zoom steps. On a phone
    * these buttons are the whole of the interface that matters, so they get
    * proper tap targets rather than the toolbar's compact sizing.
    */
@@ -357,9 +357,9 @@ export class UI {
 
     const last = ZOOM_LEVELS.length - 1;
     this.viewHost.innerHTML = [
+      btn('recentre', '⌂', 'Back to the campfire'),
       btn('zoom-out', '−', `Zoom out (now ${cam.zoom}×)`, cam.zoomIndex <= 0),
       btn('zoom-in', '+', `Zoom in (now ${cam.zoom}×)`, cam.zoomIndex >= last),
-      btn('recentre', '⌂', 'Back to the campfire'),
     ].join('');
   }
 

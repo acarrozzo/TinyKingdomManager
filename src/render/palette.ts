@@ -85,6 +85,15 @@ export const FLOWER_COLORS: Record<Season, string[]> = {
   winter: ['#dfe6ea'],
 };
 
+/** Slightly lighten or darken a hex colour. */
+export function shade(hex: string, mul: number): string {
+  const n = parseInt(hex.slice(1), 16);
+  const r = Math.min(255, Math.round(((n >> 16) & 255) * mul));
+  const g = Math.min(255, Math.round(((n >> 8) & 255) * mul));
+  const b = Math.min(255, Math.round((n & 255) * mul));
+  return `rgb(${r},${g},${b})`;
+}
+
 /** Ambient light tint by time of day, multiplied over the finished frame. */
 export function ambientTint(dayT: number, season: Season): { r: number; g: number; b: number } {
   // Key colours through the day.

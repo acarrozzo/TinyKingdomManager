@@ -412,7 +412,10 @@ export class Renderer {
     b.save();
     b.globalAlpha = Math.min(1, this.darkness * 1.5);
     b.fillStyle = '#ffce7a';
-    for (const wdw of sprite.windows) b.fillRect(dx + wdw.x, dy + wdw.y, wdw.w, wdw.h);
+    // Column by column: the panes are parallelograms in the wall, so a single
+    // rectangle would light a shape the frame around it does not have.
+    for (const wdw of sprite.windows)
+      for (let i = 0; i < wdw.w; i++) b.fillRect(dx + wdw.x + i, dy + wdw.y + wdw.dy[i], 1, wdw.h);
     b.restore();
   }
 
@@ -550,7 +553,7 @@ export class Renderer {
         const topY = toScreenY(bd.x, bd.y) - HALF_H - sprite.rise - this.viewY;
         for (const wdw of sprite.windows) {
           const sx = leftX + wdw.x + wdw.w / 2;
-          const sy = topY + wdw.y + wdw.h / 2;
+          const sy = topY + wdw.y + wdw.dy[wdw.w >> 1] + wdw.h / 2;
           if (sx < -16 || sy < -16 || sx > this.bufW + 16 || sy > this.bufH + 16) continue;
           const grad = l.createRadialGradient(sx, sy, 0, sx, sy, 13);
           grad.addColorStop(0, applyAlpha('#ffce7a', 1.0 * darkness));

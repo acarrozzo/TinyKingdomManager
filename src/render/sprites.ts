@@ -10,7 +10,7 @@
 import { hash2 } from '../core/util';
 import type { BuildingId, PropId, Season, TerrainId } from '../types';
 import { HALF_H, HALF_W } from '../world/iso';
-import { BLOSSOM, FLOWER_COLORS, FOLIAGE, TRUNK, terrainRamp } from './palette';
+import { BLOSSOM, FLOWER_COLORS, FOLIAGE, TRUNK, shade, terrainRamp } from './palette';
 
 export function mkCanvas(w: number, h: number): HTMLCanvasElement {
   const c = document.createElement('canvas');
@@ -389,8 +389,12 @@ export interface BuildingSprite {
   rise: number;
   /** Horizontal padding, so roof overhangs are not clipped. */
   padX: number;
-  /** Warm rectangles lit from inside after dark. */
-  windows: { x: number; y: number; w: number; h: number }[];
+  /**
+   * Glass lit from inside after dark. `dy` carries each column's step down the
+   * wall, so whatever fills these panes is sheared the same way the art is —
+   * a plain rectangle would sit askew on the frame.
+   */
+  windows: { x: number; y: number; w: number; h: number; dy: number[] }[];
   /** Where a moving part attaches, in sprite-local pixels (windmill sails). */
   anchor: { x: number; y: number } | null;
 }
@@ -736,6 +740,10 @@ function drawFinished(
   const s = shapeFor(def, level);
   const g = diamond(ox, baseY, w, h, 0, 0);
   const bx = g.S.x;
+  // Middle of the near-left face — the front, and where doors go. Everything
+  // set into a wall is positioned off this and `wallTopY`, never off a fixed
+  // screen row, because the face it sits on climbs away from the near corner.
+  const front = Math.round((g.L.x + bx) / 2);
 
   // Roof palettes, whitened in winter.
   const thatch: RoofColors = snow
@@ -755,40 +763,42 @@ function drawFinished(
     case 'shelter': {
       isoWalls(ctx, ox, baseY, w, h, s.wall, { left: M.plankL, right: M.plankR }, 2);
       gableRoof(ctx, ox, baseY, w, h, s.wall, s.roof, s.ov, thatch);
-      addDoor(ctx, bx, baseY, s.wall, M.door);
-      addWindow(ctx, bx - 11, baseY - s.wall + 3, windows, M.window);
-      if (level > 1) addWindow(ctx, bx + 7, baseY - s.wall + 3, windows, M.window);
+      addDoor(ctx, bx, baseY, front, 7, s.wall - 2, M.door);
+      addWindow(ctx, bx, baseY, front - 11, s.wall, 3, windows, M.window);
+      if (level > 1) addWindow(ctx, bx, baseY, front + 9, s.wall, 3, windows, M.window);
       break;
     }
     case 'cottage': {
       isoWalls(ctx, ox, baseY, w, h, 5, { left: M.stoneL, right: M.stoneR }, 1);
       isoWalls(ctx, ox, baseY - 5, w, h, s.wall - 5, { left: M.plasterL, right: M.plasterR }, 2);
       const roof = gableRoof(ctx, ox, baseY, w, h, s.wall, s.roof, s.ov, tile);
-      addDoor(ctx, bx, baseY, s.wall, M.door);
-      addWindow(ctx, bx - 12, baseY - s.wall + 4, windows, M.window);
-      addWindow(ctx, bx + 8, baseY - s.wall + 4, windows, M.window);
+      // Window, door, window along the front, and one on the gable end.
+      addDoor(ctx, bx, baseY, front, 7, s.wall - 2, M.door);
+      addWindow(ctx, bx, baseY, front - 11, s.wall, 4, windows, M.window);
+      addWindow(ctx, bx, baseY, front + 9, s.wall, 4, windows, M.window);
+      addWindow(ctx, bx, baseY, bx + 12, s.wall, 4, windows, M.window);
       chimney(ctx, roof.ridgeA.x + 5, roof.ridgeA.y - 1, 9, snow);
       break;
     }
     case 'storehouse': {
       isoWalls(ctx, ox, baseY, w, h, s.wall, { left: M.plankL, right: M.plankR }, 1);
       gableRoof(ctx, ox, baseY, w, h, s.wall, s.roof, s.ov, slate);
-      // Big double doors on the near corner — the point of the building.
-      px(ctx, bx - 6, baseY - s.wall + 2, '#6b4a2c', 12, s.wall - 2);
-      px(ctx, bx - 6, baseY - s.wall + 2, '#7d5936', 12, 1);
-      px(ctx, bx, baseY - s.wall + 3, '#4a3320', 1, s.wall - 4);
-      crate(ctx, g.L.x + 6, g.L.y + 6, seed);
+      // Big double doors across the front — the point of the building.
+      addDoor(ctx, bx, baseY, front, 15, s.wall - 2, '#6b4a2c');
+      // The gap where the two leaves meet, running down with the wall.
+      px(ctx, front, wallFootY(bx, baseY, front) - s.wall + 3, '#4a3320', 1, s.wall - 4);
+      crate(ctx, g.L.x + 1, g.L.y + 6, seed);
       if (level > 1) crate(ctx, g.R.x - 12, g.R.y + 7, seed + 1);
       break;
     }
     case 'lodge': {
       isoWalls(ctx, ox, baseY, w, h, s.wall, { left: '#8a6b41', right: '#6d5334' }, 2);
       gableRoof(ctx, ox, baseY, w, h, s.wall, s.roof, s.ov, moss);
-      addDoor(ctx, bx, baseY, s.wall, M.door);
+      addDoor(ctx, bx, baseY, front, 7, s.wall - 2, M.door);
       // Log pile and an axe left in a stump.
-      px(ctx, g.L.x + 5, g.L.y + 4, '#8a6b41', 9, 4);
-      px(ctx, g.L.x + 5, g.L.y + 4, '#a5824f', 9, 1);
-      px(ctx, g.L.x + 6, g.L.y + 1, '#8a6b41', 7, 3);
+      px(ctx, g.L.x + 2, g.L.y + 4, '#8a6b41', 9, 4);
+      px(ctx, g.L.x + 2, g.L.y + 4, '#a5824f', 9, 1);
+      px(ctx, g.L.x + 3, g.L.y + 1, '#8a6b41', 7, 3);
       px(ctx, g.R.x - 11, g.R.y + 5, '#6b4a2f', 6, 4);
       px(ctx, g.R.x - 9, g.R.y, '#8a8f96', 2, 5);
       px(ctx, g.R.x - 10, g.R.y - 1, '#c8ccd2', 4, 2);
@@ -812,8 +822,8 @@ function drawFinished(
       const barnOx = ox + (h - 1) * HALF_W;
       isoWalls(ctx, barnOx, barnBaseY, 1, 1, s.wall, { left: '#a55f42', right: '#83492f' }, 0);
       gableRoof(ctx, barnOx, barnBaseY, 1, 1, s.wall, s.roof, s.ov, slate);
-      px(ctx, barnOx + 13, barnBaseY - s.wall + 2, '#4f3520', 6, s.wall - 2);
-      px(ctx, barnOx + 13, barnBaseY - s.wall + 2, '#65442a', 6, 1);
+      const barnBx = barnOx + HALF_W;
+      addDoor(ctx, barnBx, barnBaseY, barnBx - 8, 7, s.wall - 2, '#4f3520');
       // Low fence posts around the near edges of the plot.
       for (let i = 1; i < (w + h) * 2; i++) {
         const t = i / ((w + h) * 2);
@@ -828,8 +838,9 @@ function drawFinished(
       isoWalls(ctx, ox, baseY, w, h, 6, { left: M.stoneL, right: M.stoneR }, 1);
       isoWalls(ctx, ox, baseY - 6, w, h, s.wall - 6, { left: '#dccdaf', right: '#b8a68a' }, 6);
       const roof = gableRoof(ctx, ox, baseY, w, h, s.wall, s.roof, s.ov, slate);
-      addWindow(ctx, bx - 4, baseY - s.wall + 6, windows, M.window);
-      addWindow(ctx, bx - 4, baseY - s.wall + 18, windows, M.window);
+      // Stacked up the front of the tower, not wrapped round its corner.
+      addWindow(ctx, bx, baseY, front, s.wall, 6, windows, M.window);
+      addWindow(ctx, bx, baseY, front, s.wall, 18, windows, M.window);
       // Hub the sails turn on; the renderer draws the moving blades.
       const hub = { x: roof.apex.x, y: roof.apex.y - 3 };
       px(ctx, hub.x - 2, hub.y - 2, '#6b5334', 4, 4);
@@ -840,16 +851,22 @@ function drawFinished(
       isoWalls(ctx, ox, baseY, w, h, 4, { left: M.stoneL, right: M.stoneR }, 1);
       isoWalls(ctx, ox, baseY - 4, w, h, s.wall - 4, { left: '#ecdcbb', right: '#cbb894' }, 2);
       const roof = gableRoof(ctx, ox, baseY, w, h, s.wall, s.roof, s.ov, tile);
-      addDoor(ctx, bx, baseY, s.wall, '#7a4f2c');
-      addWindow(ctx, bx - 12, baseY - s.wall + 4, windows, M.window);
-      addWindow(ctx, bx + 8, baseY - s.wall + 4, windows, M.window);
+      addDoor(ctx, bx, baseY, front, 7, s.wall - 2, '#7a4f2c');
+      addWindow(ctx, bx, baseY, front - 11, s.wall, 4, windows, M.window);
+      addWindow(ctx, bx, baseY, bx + 12, s.wall, 4, windows, M.window);
       chimney(ctx, roof.ridgeA.x - 1, roof.ridgeA.y - 2, 12, snow);
-      // Awning and a board of loaves out front.
-      px(ctx, bx - 7, baseY - s.wall - 1, '#c9603f', 15, 2);
-      px(ctx, bx - 7, baseY - s.wall + 1, '#8e4630', 15, 1);
-      px(ctx, bx - 5, baseY - 7, '#8a6b41', 11, 2);
-      px(ctx, bx - 4, baseY - 9, '#d09a5c', 4, 2);
-      px(ctx, bx + 1, baseY - 9, '#c98a4b', 4, 2);
+      // A serving counter beside the door, awning above it, loaves out on the
+      // shelf — all of it running with the wall rather than square to the
+      // screen, and clear of the doorway so you can still read it as a door.
+      for (let dx = 6; dx <= 15; dx++) {
+        const ax = front + dx;
+        const ay = wallTopY(bx, baseY, ax, s.wall) + 1;
+        px(ctx, ax, ay, '#c9603f', 1, 2);
+        px(ctx, ax, ay + 2, '#8e4630', 1, 1);
+        px(ctx, ax, wallFootY(bx, baseY, ax) - 6, '#8a6b41', 1, 2);
+      }
+      px(ctx, front + 7, wallFootY(bx, baseY, front + 7) - 8, '#d09a5c', 4, 2);
+      px(ctx, front + 12, wallFootY(bx, baseY, front + 12) - 8, '#c98a4b', 4, 2);
       break;
     }
     case 'well': {
@@ -965,23 +982,88 @@ function crate(ctx: CanvasRenderingContext2D, x: number, y: number, seed: number
   }
 }
 
-function addDoor(ctx: CanvasRenderingContext2D, bx: number, baseY: number, wallH: number, color: string): void {
-  px(ctx, bx - 3, baseY - wallH + 2, color, 7, wallH - 2);
-  px(ctx, bx - 3, baseY - wallH + 2, '#3d2b1a', 7, 1);
-  px(ctx, bx + 2, baseY - wallH + 6, '#d8b06a');
+/**
+ * Where a wall's bottom edge sits in column `x`. Both near faces lie on the
+ * same pair of lines through the near corner at the iso 2:1 slope, so one
+ * formula covers either — and it samples the way `fillPoly` rasterises the
+ * faces themselves, so anything standing on a wall lines up with it pixel for
+ * pixel. The wall inset does not matter: an inset face is a shorter piece of
+ * the same line.
+ */
+function wallFootY(bx: number, baseY: number, x: number): number {
+  return Math.round(baseY - Math.abs(x + 0.5 - bx) / 2);
 }
 
+/** The wall top in column `x`, which is the foot lifted by the wall height. */
+function wallTopY(bx: number, baseY: number, x: number, wallH: number): number {
+  return wallFootY(bx, baseY, x) - wallH;
+}
+
+/**
+ * A door set into one wall face, centred on it, sheared to that face's slope.
+ *
+ * Doors used to be flat rectangles straddling the near corner, which folded a
+ * single door over two walls at once and left its square foot hanging below a
+ * base that slopes away in both directions. A door belongs on one face, and on
+ * an isometric wall its jambs are the only vertical part of it: head and
+ * threshold run with the wall. The near-left face gets the door because the
+ * roof's near slope overhangs that side, so it sits under the eaves.
+ */
+function addDoor(
+  ctx: CanvasRenderingContext2D,
+  bx: number,
+  baseY: number,
+  cx: number,
+  w: number,
+  h: number,
+  color: string,
+): void {
+  const half = w >> 1;
+  const frame = shade(color, 0.55);
+  for (let dx = -half; dx < w - half; dx++) {
+    const x = cx + dx;
+    const head = wallFootY(bx, baseY, x) - h;
+    const jamb = dx === -half || dx === w - half - 1;
+    // The jambs run full height; between them the frame is just the lintel.
+    px(ctx, x, head, frame, 1, jamb ? h : 1);
+    if (!jamb) px(ctx, x, head + 1, color, 1, h - 1);
+  }
+  const hx = cx + w - half - 3;
+  px(ctx, hx, wallFootY(bx, baseY, hx) - Math.round(h * 0.45), '#d8b06a');
+}
+
+/**
+ * A window set into a wall face, `drop` pixels below the wall top at its centre
+ * column. Like a door it is a parallelogram, not a rectangle: each column steps
+ * down with the face, so the frame lies in the wall instead of being pasted
+ * across it at a screen-flat angle.
+ */
 function addWindow(
   ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
+  bx: number,
+  baseY: number,
+  cx: number,
+  wallH: number,
+  drop: number,
   windows: BuildingSprite['windows'],
   color: string,
 ): void {
-  px(ctx, x - 1, y - 1, '#8a7a62', 7, 6);
-  px(ctx, x, y, color, 5, 4);
-  px(ctx, x + 2, y, '#8a7a62', 1, 4);
-  windows.push({ x, y, w: 5, h: 4 });
+  const top = wallTopY(bx, baseY, cx, wallH) + drop;
+  const ref = wallFootY(bx, baseY, cx);
+  const dy: number[] = [];
+  for (let i = -1; i <= 5; i++) {
+    const off = wallFootY(bx, baseY, cx + i) - ref;
+    const y = top + off;
+    if (i < 0 || i > 4) {
+      px(ctx, cx + i, y - 1, '#8a7a62', 1, 6);
+      continue;
+    }
+    px(ctx, cx + i, y - 1, '#8a7a62', 1, 1);
+    px(ctx, cx + i, y, i === 2 ? '#8a7a62' : color, 1, 4);
+    px(ctx, cx + i, y + 4, '#8a7a62', 1, 1);
+    dy.push(off);
+  }
+  windows.push({ x: cx, y: top, w: 5, h: 4, dy });
 }
 
 // ---------------------------------------------------------------------------

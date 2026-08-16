@@ -7,6 +7,7 @@
 import type { Animal, GameState, Villager } from '../types';
 import { BUILDINGS, SPECIES } from '../sim/defs';
 import { RESOURCE_META } from '../sim/defs';
+import { shade } from './palette';
 
 type Ctx = CanvasRenderingContext2D;
 
@@ -170,15 +171,6 @@ function selectionRing(ctx: Ctx, sx: number, sy: number, color: string): void {
   ctx.fillRect(x + 5, y, 1, 1);
   ctx.fillRect(x - 5, y + 1, 3, 1);
   ctx.fillRect(x + 2, y + 1, 3, 1);
-}
-
-/** Slightly lighten or darken a hex colour. */
-function shade(hex: string, mul: number): string {
-  const n = parseInt(hex.slice(1), 16);
-  const r = Math.min(255, Math.round(((n >> 16) & 255) * mul));
-  const g = Math.min(255, Math.round(((n >> 8) & 255) * mul));
-  const b = Math.min(255, Math.round((n & 255) * mul));
-  return `rgb(${r},${g},${b})`;
 }
 
 // ---------------------------------------------------------------------------
