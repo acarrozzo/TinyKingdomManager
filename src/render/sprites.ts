@@ -120,7 +120,17 @@ export interface PropSprite {
 
 export type PropSheet = Record<PropId, PropSprite[]>;
 
-const PROP_IDS: PropId[] = ['tree', 'stump', 'boulder', 'pebbles', 'bush', 'flowers', 'reeds', 'lilypad'];
+const PROP_IDS: PropId[] = [
+  'tree',
+  'stump',
+  'boulder',
+  'pebbles',
+  'branches',
+  'bush',
+  'flowers',
+  'reeds',
+  'lilypad',
+];
 
 export function bakeProps(season: Season): PropSheet {
   const sheet = {} as PropSheet;
@@ -141,6 +151,8 @@ function bakeProp(season: Season, id: PropId, v: number): PropSprite {
       return bakeBoulder(v, false);
     case 'pebbles':
       return bakeBoulder(v, true);
+    case 'branches':
+      return bakeBranches(v);
     case 'bush':
       return bakeBush(season, v);
     case 'flowers':
@@ -312,6 +324,36 @@ function bakeBoulder(v: number, small: boolean): PropSprite {
     px(ctx, cx + 1, cy - 2, dark, 2, 1);
   }
   return { canvas: c, ox: -w / 2, oy: -(h - 2) };
+}
+
+/**
+ * Deadfall: two or three sticks lying where they fell. It has to read as
+ * something you would pick up rather than something growing, so it stays flat
+ * to the ground with no upright piece at all.
+ */
+function bakeBranches(v: number): PropSprite {
+  const c = mkCanvas(16, 9);
+  const ctx = ctxOf(c);
+  const bark = '#7a5a38';
+  const lit = '#9c7748';
+  const dark = '#523c26';
+  groundShadow(ctx, 8, 8, 12);
+
+  const lay = [
+    [2, 5, 11, 1],
+    [4, 3, 8, 1],
+    [6, 6, 7, 1],
+    [3, 4, 6, 1],
+  ];
+  for (let i = 0; i < 3; i++) {
+    const [x, y, w] = lay[(i + v) % lay.length];
+    px(ctx, x, y + (i % 2), i === 1 ? lit : bark, w, 1);
+    px(ctx, x, y + 1 + (i % 2), dark, w, 1);
+  }
+  // A couple of twigs off the ends, so it is not three neat planks.
+  px(ctx, 12, 3, bark, 2, 1);
+  px(ctx, 3, 7, bark, 2, 1);
+  return { canvas: c, ox: -8, oy: -7 };
 }
 
 function bakeBush(season: Season, v: number): PropSprite {
@@ -631,6 +673,8 @@ function shapeFor(def: BuildingId, level: number): { wall: number; roof: number;
       return { wall: 0, roof: 0, ov: 0, extra: 16 };
     case 'chest':
       return { wall: 0, roof: 0, ov: 0, extra: 10 };
+    case 'woodpile':
+      return { wall: 0, roof: 0, ov: 0, extra: 14 };
     case 'bench':
       return { wall: 0, roof: 0, ov: 0, extra: 13 };
     case 'sapling':
@@ -967,6 +1011,33 @@ function drawFinished(
       px(ctx, bx + 4, baseY - 14, iron, 1, 11);
       px(ctx, bx - 1, baseY - 11, iron, 3, 4);
       px(ctx, bx - 1, baseY - 11, '#8a8078', 3, 1);
+      break;
+    }
+    case 'woodpile': {
+      // Cut ends facing out, stacked between two stakes driven into the ground.
+      // Scattered deadfall lies flat and grey-brown; this has to read as
+      // somebody's doing from across the map, without reading as a building.
+      const bark = snow ? '#8a6a44' : '#7a5a38';
+      const lit = snow ? '#b89468' : '#a37f4e';
+      const cut = snow ? '#d0ab7a' : '#c39a63';
+      const dark = '#4f3a24';
+      px(ctx, bx - 9, baseY - 2, 'rgba(24,20,14,0.18)', 18, 2);
+      // Two stakes holding the stack in.
+      px(ctx, bx - 9, baseY - 13, dark, 2, 12);
+      px(ctx, bx + 7, baseY - 13, dark, 2, 12);
+      // Three courses of logs, each a little shorter than the one below.
+      const rows: [number, number, number][] = [
+        [-8, 4, 16],
+        [-7, 8, 14],
+        [-5, 11, 10],
+      ];
+      for (const [x0, up, w] of rows) {
+        px(ctx, bx + x0, baseY - up, bark, w, 3);
+        px(ctx, bx + x0, baseY - up, lit, w, 1);
+        // The sawn ends catch the light along the near side of each course.
+        for (let i = 1; i < w - 1; i += 3) px(ctx, bx + x0 + i, baseY - up + 1, cut, 2, 1);
+      }
+      if (snow) px(ctx, bx - 5, baseY - 12, '#e8e4dc', 10, 1);
       break;
     }
     case 'campfire': {

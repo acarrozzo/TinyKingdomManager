@@ -24,7 +24,8 @@ import {
 } from '../sim/defs';
 import { buildingById, homeCapacity, jobSlots, villagerById, xpOf } from '../sim/state';
 import { labourNeeded, siteNeeds } from '../sim/villager';
-import { isUnlocked } from '../sim/goals';
+import { availableToBuild, isUnlocked } from '../sim/goals';
+import { foundingDone } from '../sim/founding';
 import { fmt, fmtDuration } from '../core/util';
 import type { Game } from '../game';
 import { audio } from '../audio/audio';
@@ -428,17 +429,30 @@ export class UI {
       icon = '⛏';
       title = 'Removing';
       body = 'Click a building to take it down — half the materials come back.';
+    } else if (t.kind === 'camp') {
+      icon = '📍';
+      title = 'Choose a campsite';
+      body = 'Click a clear patch of grass near the middle of the island. Your founder will walk over and make camp there.';
     }
 
     if (!title) {
       this.toolHost.innerHTML = '';
+      this.root.style.setProperty('--hint-h', '0px');
       return;
     }
+    // The campsite marker has no Done button: there is nothing else to be doing
+    // yet, so offering to put it away would only be a way of getting stuck.
+    const cancel =
+      t.kind === 'camp' ? '' : `<button class="btn small" data-act="cancel-tool">Done <kbd>Esc</kbd></button>`;
     this.toolHost.innerHTML = `<div class="toolbar-hint">
       <span class="ic">${icon}</span>
       <span class="txt"><b>${esc(title)}</b><span>${esc(body)}</span></span>
-      <button class="btn small" data-act="cancel-tool">Done <kbd>Esc</kbd></button>
+      ${cancel}
     </div>`;
+    // Toasts stack above this, so they need to know how tall it came out —
+    // a three-line hint on a narrow screen is otherwise written straight over.
+    const box = this.toolHost.firstElementChild as HTMLElement | null;
+    this.root.style.setProperty('--hint-h', `${box ? Math.round(box.getBoundingClientRect().height) : 0}px`);
   }
 
   private renderToasts(): void {
@@ -471,7 +485,7 @@ export class UI {
     const groups = new Map<string, string[]>();
     for (const id of BUILD_ORDER) {
       const def = BUILDINGS[id];
-      if (!isUnlocked(g, def.unlock)) continue;
+      if (!availableToBuild(g, id)) continue;
       const affordable = this.game.canAffordNew(id);
       const cost = Object.entries(def.cost)
         .map(([res, qty]) => `${RESOURCE_META[res].icon}${qty}`)
@@ -491,19 +505,29 @@ export class UI {
       const meta = CATEGORY_META[cat];
       body += `<div class="build-group"><div class="label">${meta.icon} ${meta.name}</div>${items.join('')}</div>`;
     }
-    const locked = BUILD_ORDER.filter((id) => !isUnlocked(g, BUILDINGS[id].unlock)).length;
-    if (locked > 0) {
-      body += `<div class="build-group"><div class="label" style="padding-bottom:0">${locked} more unlock as the kingdom grows</div></div>`;
-    }
+    if (!foundingDone(g)) {
+      // Nothing else is on offer yet, and saying why is kinder than an empty
+      // panel — the answer is always "there is nowhere to put anything".
+      body += `<div class="build-group"><div class="tiny muted" style="line-height:1.55">${
+        body
+          ? 'Everything else waits until the kingdom has a chest to keep things in.'
+          : 'Nothing can be built yet. Your founder needs somewhere to stop and a few armfuls of wood first.'
+      }</div></div>`;
+    } else {
+      const locked = BUILD_ORDER.filter((id) => !isUnlocked(g, BUILDINGS[id].unlock)).length;
+      if (locked > 0) {
+        body += `<div class="build-group"><div class="label" style="padding-bottom:0">${locked} more unlock as the kingdom grows</div></div>`;
+      }
 
-    // Taking things down belongs with putting them up, and it is the rarer of
-    // the two — a building's own panel has a Remove button as well.
-    const removing = tool.kind === 'demolish';
-    body += `<div class="build-group build-remove">
-      <button class="btn small ${removing ? 'on' : ''}" data-act="tool-demolish">
-        ⛏ ${removing ? 'Removing — click a building' : 'Remove a building'}</button>
-      <div class="tiny muted" style="margin-top:7px;line-height:1.5">Half the materials come back. You can also remove one from its own panel.</div>
-    </div>`;
+      // Taking things down belongs with putting them up, and it is the rarer of
+      // the two — a building's own panel has a Remove button as well.
+      const removing = tool.kind === 'demolish';
+      body += `<div class="build-group build-remove">
+        <button class="btn small ${removing ? 'on' : ''}" data-act="tool-demolish">
+          ⛏ ${removing ? 'Removing — click a building' : 'Remove a building'}</button>
+        <div class="tiny muted" style="margin-top:7px;line-height:1.5">Half the materials come back. You can also remove one from its own panel.</div>
+      </div>`;
+    }
 
     this.sideLeft.innerHTML = `<div class="panel scroll" style="flex:1">
       <h3>Build<span class="tiny muted esc-hint">Esc to cancel</span>
@@ -1455,8 +1479,8 @@ export class UI {
     const founder = g.villagers[0];
     this.introHost.innerHTML = `<div class="intro"><div class="card2">
       <h1>Tiny Kingdom Manager</h1>
-      <p>There is one person here. Their name is <b>${esc(founder?.name ?? 'someone')}</b>, and they have already started gathering wood.<br><br>
-      Give them somewhere to sleep, somewhere to put things, and see what the place becomes.</p>
+      <p>There is one person here. Their name is <b>${esc(founder?.name ?? 'someone')}</b>, and they have just walked up the beach with nothing at all.<br><br>
+      Watch where they stop, tell them this will do, and see what the place becomes.</p>
       <button class="btn primary" data-act="dismiss-intro">Begin</button>
       <div class="keys"><kbd>drag</kbd> pan · <kbd>scroll</kbd> or <kbd>pinch</kbd> · <kbd>double-click</kbd> follow someone<br>
       <kbd>B</kbd> build · <kbd>J</kbd> journal · <kbd>H</kbd> hide the interface · <kbd>space</kbd> pause</div>
@@ -1559,11 +1583,9 @@ export class UI {
       case 'zoom-out':
         game.zoomStep(-1);
         break;
-      case 'recentre': {
-        const fire = game.state.buildings.find((b) => b.def === 'campfire') ?? game.state.buildings[0];
-        if (fire) game.centerOn(fire.x, fire.y);
+      case 'recentre':
+        game.recentre();
         break;
-      }
       case 'fav-villager':
         game.toggleFavorite('villager', id);
         break;

@@ -3,11 +3,12 @@
  * build menu, so the player is never shown a wall of buildings on day one.
  */
 
-import type { GameState, Goal } from '../types';
-import { BUILDINGS } from './defs';
+import type { BuildingId, GameState, Goal } from '../types';
+import { BUILDINGS, FOUNDING_BUILDS } from './defs';
 import { journal, toast } from './journal';
 import { deposit } from './state';
 import { rankOf } from './defs';
+import { foundingDone } from './founding';
 
 function has(g: GameState, def: string, minLevel = 1): boolean {
   return g.buildings.some((b) => b.def === def && b.stage === 'done' && b.level >= minLevel);
@@ -19,11 +20,34 @@ function staffed(g: GameState, def: string): boolean {
 export function buildGoals(): Goal[] {
   return [
     {
-      id: 'wood',
-      title: 'Gather the first wood',
-      desc: 'Your founder will collect wood by hand from nearby trees. Give them a moment.',
+      id: 'begin',
+      title: 'Choose a place to begin',
+      desc: 'Your founder is looking for somewhere to stop. Click a clear patch of grass near the middle of the island.',
       done: false,
-      check: (g) => g.stock.wood >= 20,
+      check: (g) => g.founding.stage !== 'arriving' && g.founding.stage !== 'choosing',
+    },
+    {
+      id: 'branches',
+      title: 'Gather a few fallen branches',
+      desc: 'There is deadfall lying about. Your founder will pick it up by hand and stack it. Give them a moment.',
+      done: false,
+      check: (g) => g.stock.wood >= 5,
+      unlocks: 'campfire',
+    },
+    {
+      id: 'fire',
+      title: 'Light the first fire',
+      desc: 'Open the Build menu and put a campfire near the woodpile. Warmth, light, and somewhere to sleep until there is a roof.',
+      done: false,
+      check: (g) => has(g, 'campfire'),
+      unlocks: 'chest',
+    },
+    {
+      id: 'chest',
+      title: 'Build a rough chest',
+      desc: 'The woodpile holds twelve. A chest from the Build menu takes its place and holds fifty.',
+      done: false,
+      check: (g) => has(g, 'chest'),
     },
     {
       id: 'shelter',
@@ -37,7 +61,7 @@ export function buildGoals(): Goal[] {
     {
       id: 'store',
       title: 'Build a Storehouse',
-      desc: 'The campfire can only hold so much. A storehouse gives the kingdom real capacity.',
+      desc: 'A chest can only hold so much. A storehouse gives the kingdom real capacity.',
       done: false,
       check: (g) => has(g, 'storehouse'),
       unlocks: 'farm',
@@ -154,6 +178,23 @@ export function isUnlocked(g: GameState, key?: string): boolean {
   if (!key) return true;
   return g.unlocked.has(key);
 }
+
+/**
+ * What the build menu may offer right now. Beyond the usual unlock key there are
+ * two rules: the fire and the chest leave the menu once they stand, and nothing
+ * else appears until the kingdom has somewhere to keep what it gathers. A
+ * shelter costs twenty wood against a woodpile that holds twelve, so offering it
+ * during founding would only be a way of saying no four times.
+ */
+export function availableToBuild(g: GameState, id: BuildingId): boolean {
+  const def = BUILDINGS[id];
+  if (!isUnlocked(g, def.unlock)) return false;
+  if (def.once && g.buildings.some((b) => b.def === id)) return false;
+  return foundingDone(g) || FOUNDING_BUILDS.has(id);
+}
+
+/** Goals the founding sequence completes; already-founded saves start them done. */
+export const FOUNDING_GOALS = ['begin', 'branches', 'fire', 'chest'];
 
 /** Highest rank anyone in the kingdom currently holds — shown on the goals panel. */
 export function topRank(g: GameState): string {

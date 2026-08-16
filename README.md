@@ -1,8 +1,9 @@
 # Tiny Kingdom Manager
 
 A peaceful, isometric kingdom simulation for the browser. You start with one
-person and nothing else. They begin gathering wood. Everything after that is up
-to you — and to them.
+person walking up a beach with nothing at all. You choose where they stop; they
+gather the first armfuls of wood, you place the first fire. Everything after that
+is up to you — and to them.
 
 There is no win condition, no threat, and no failure state. If you stop paying
 attention the kingdom slows down; it never collapses.
@@ -23,7 +24,8 @@ headless simulator (see [Development tools](#development-tools)).
 rocky ground, a pond, and a beach. Trees and boulders are real resource nodes
 that deplete, leave stumps and rubble, and slowly grow back.
 
-**The loop.** One villager → gather wood by hand → Shelter → Storehouse →
+**The loop.** One villager → choose a campsite → gather fallen branches →
+Campfire → Rough Chest → Shelter → Storehouse →
 Woodcutter's Lodge → Quarry → Wheat Farm → Windmill → Bakery. Wheat becomes
 flour becomes bread, and every step of that is carried across the map on foot by
 someone you can click on.
@@ -33,9 +35,9 @@ site with corner posts; villagers haul the materials over, then put in the
 labour, then it stands up. You can watch the whole thing.
 
 **Storage is physical.** Goods only exist in the shared store once somebody has
-carried them to a storage building — at the start, the old chest beside the
-campfire. Where you put your storehouses decides how much of the day your
-workers spend walking. A full store stops people gathering more; it never stops
+carried them to a storage building — at the start, a woodpile on the bare ground
+and then the chest that replaces it. Where you put your storehouses decides how
+much of the day your workers spend walking. A full store stops people gathering more; it never stops
 someone putting down what they are already holding, so the meter can read a
 little over its limit while the last loads come in.
 

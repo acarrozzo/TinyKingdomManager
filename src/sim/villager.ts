@@ -9,7 +9,7 @@
  */
 
 import { RNG, clamp, dist, rng } from '../core/util';
-import type { Building, GameState, JobId, ResourceId, Step, Villager } from '../types';
+import type { Building, GameState, JobId, PropId, ResourceId, Step, Villager } from '../types';
 import { BUILDINGS, CARRY_CAPACITY, TERRAIN_SPEED, skillMul, xpGain } from './defs';
 import {
   abandonPlan,
@@ -32,6 +32,14 @@ import { BOULDER_REGROW, TREE_REGROW, findNode, isWalkable, tileAt } from '../wo
 import { findPath, footprintApproach } from '../world/path';
 import { CHATTER } from './names';
 import { journal, note, toast } from './journal';
+import {
+  FOUNDING_WOOD,
+  foundingActive,
+  markArrived,
+  markSettled,
+  onFoundingBuild,
+  suggestCamp,
+} from './founding';
 
 const BASE_SPEED = 1.15; // tiles per second on plain grass
 const INPUT_CAP = 14;
@@ -40,6 +48,9 @@ const CHOP_SECONDS = 4.5;
 const CHOP_YIELD = 3;
 const MINE_SECONDS = 5.5;
 const MINE_YIELD = 2;
+/** Deadfall: quicker than felling, because it is already on the ground. */
+const BRANCH_SECONDS = 3.2;
+const BRANCH_YIELD = 3;
 const PLANT_SECONDS = 3.5;
 const HARVEST_SECONDS = 3.5;
 const HARVEST_YIELD = 3;
@@ -47,6 +58,20 @@ const PLOT_GROW_SECONDS = 200;
 
 /** Hand-gathering stops once the kingdom has comfortably enough of something. */
 const GATHER_TARGET: Record<string, number> = { wood: 120, stone: 90 };
+/**
+ * …and no more than this share of whatever the kingdom can actually hold. With
+ * a storehouse up these never bind, but the opening chest holds fifty, and
+ * without a ceiling helpers cheerfully fill it with stone nothing yet needs and
+ * leave the kingdom unable to afford the very storehouse that would fix it.
+ * Wood gets the larger share because every early building is made of it.
+ */
+const GATHER_SHARE: Record<string, number> = { wood: 0.5, stone: 0.32 };
+
+function gatherTarget(g: GameState, res: ResourceId): number {
+  const cap = storageCapacity(g);
+  if (cap <= 0) return GATHER_TARGET[res];
+  return Math.min(GATHER_TARGET[res], Math.max(12, cap * GATHER_SHARE[res]));
+}
 
 /** Seasons change how fast wheat comes on. Winter is slow, never fatal. */
 const SEASON_GROWTH: Record<string, number> = { spring: 1.1, summer: 1.3, autumn: 0.9, winter: 0.35 };
@@ -314,6 +339,12 @@ function doGive(g: GameState, v: Villager, step: Extract<Step, { t: 'give' }>): 
 
 function doEffect(g: GameState, v: Villager, step: Extract<Step, { t: 'effect' }>): void {
   switch (step.kind) {
+    case 'arrived':
+      markArrived(g);
+      break;
+    case 'settled':
+      markSettled(g);
+      break;
     case 'eat': {
       if (v.carrying?.res === 'bread' && v.carrying.qty > 0) {
         v.carrying.qty -= 1;
@@ -442,8 +473,16 @@ export function completeConstruction(g: GameState, b: Building): void {
     journal(g, `The ${def.name.toLowerCase()} was improved.`, '⬆️');
   } else {
     if (def.plots) makePlots(g, b);
-    toast(g, `${def.name} finished`, '🏗️', 'good');
-    journal(g, firstOfKind ? `The first ${def.name.toLowerCase()} was completed.` : `A new ${def.name.toLowerCase()} was completed.`, '🏗️');
+    // The fire and the chest are the two buildings that deserve better words
+    // than "Campfire finished", and finishing them moves the kingdom on.
+    const founded = onFoundingBuild(g, b);
+    if (founded) {
+      toast(g, founded.toast, founded.icon, 'good');
+      journal(g, founded.journal, founded.icon);
+    } else {
+      toast(g, `${def.name} finished`, '🏗️', 'good');
+      journal(g, firstOfKind ? `The first ${def.name.toLowerCase()} was completed.` : `A new ${def.name.toLowerCase()} was completed.`, '🏗️');
+    }
   }
 
   // A finished house takes in anyone still sleeping by the fire.
@@ -550,9 +589,81 @@ function think(g: GameState, v: Villager): void {
   if (v.hunger > 0.7 && g.stock.bread >= 1) {
     if (planEat(g, v)) return;
   }
+  // Founding comes ahead of ordinary work and is not held to work hours: the
+  // walk up the beach is the first thing that happens, whatever the clock says.
+  if (foundingActive(g) && planFounding(g, v)) return;
   if (isWorkTime(g, v) && planWork(g, v)) return;
 
   planLeisure(g, v);
+}
+
+/**
+ * The founder's opening. Each stage is a plan ending in an `effect` step, so the
+ * kingdom only moves on at the exact moment the action that earns it finishes —
+ * the same reason batches and harvests work that way.
+ */
+function planFounding(g: GameState, v: Villager): boolean {
+  if (v.id !== g.founderId) return false;
+
+  switch (g.founding.stage) {
+    case 'arriving': {
+      const inland = suggestCamp(g);
+      v.plan = [
+        { t: 'move', x: inland.x, y: inland.y },
+        { t: 'act', dur: 5, kind: 'watching' },
+        { t: 'say', text: 'This seems like a good place to begin.' },
+        { t: 'effect', kind: 'arrived' },
+      ];
+      return true;
+    }
+    case 'choosing':
+      // Waiting to be told where. They stay put and look at things rather than
+      // wandering off, so the player's marker never has to chase them.
+      planLoiter(g, v);
+      return true;
+    case 'settling': {
+      const { x, y } = g.founding;
+      v.plan = [
+        { t: 'move', x, y },
+        { t: 'act', dur: 6, kind: 'watching' },
+        { t: 'say', text: 'Flat enough, and out of the wind.' },
+        { t: 'effect', kind: 'settled' },
+      ];
+      return true;
+    }
+    case 'camp':
+      // The fire and the chest are built like anything else, so ordinary helper
+      // work comes first — but not its gathering ladder, which would have the
+      // founder filling a twelve-stick woodpile with stone nothing needs yet.
+      // Wood, then, and when there is enough of that, they simply wait about.
+      if (planHelper(g, v, false)) return true;
+      if (g.stock.wood < FOUNDING_WOOD && planGatherWood(g, v, 'helper')) return true;
+      planLeisure(g, v);
+      return true;
+  }
+  return false;
+}
+
+/** Small circles near where they are standing. Not leisure — waiting. */
+function planLoiter(g: GameState, v: Villager): void {
+  const r = rng;
+  for (let i = 0; i < 8; i++) {
+    const a = r.range(0, Math.PI * 2);
+    const d = r.range(1, 3);
+    const x = Math.round(v.x + Math.cos(a) * d);
+    const y = Math.round(v.y + Math.sin(a) * d);
+    if (!isWalkable(g, x, y)) continue;
+    // Dry land only. The shallows are wadeable, but somebody standing in a pond
+    // deciding where to found a kingdom is not the picture this moment wants.
+    const t = tileAt(g, x, y);
+    if (!t || t.terrain === 'shallow' || t.terrain === 'water') continue;
+    v.plan = [
+      { t: 'move', x, y },
+      { t: 'act', dur: r.range(5, 11), kind: 'watching' },
+    ];
+    return;
+  }
+  v.plan = [{ t: 'act', dur: 7, kind: 'watching' }];
 }
 
 function approachSteps(g: GameState, b: Building): Extract<Step, { t: 'move' }> {
@@ -655,6 +766,55 @@ function planHarvestNode(
   if (store) steps.push(...storeLeg(g, store));
   v.plan = steps;
   return true;
+}
+
+/** What one kind of node gives up, and how long a go at it takes. */
+const NODE_WORK: Partial<Record<PropId, { res: ResourceId; per: number; seconds: number }>> = {
+  branches: { res: 'wood', per: BRANCH_YIELD, seconds: BRANCH_SECONDS },
+  tree: { res: 'wood', per: CHOP_YIELD, seconds: CHOP_SECONDS },
+  boulder: { res: 'stone', per: MINE_YIELD, seconds: MINE_SECONDS },
+};
+
+/**
+ * Hand-gathering: walk to the nearest node of a kind, work it until an armful
+ * is up, and haul that to the nearest store. `slow` is the untrained penalty —
+ * it does not apply to deadfall, because picking sticks up off the ground is
+ * not a skill anybody is short of.
+ */
+function planGatherNode(
+  g: GameState,
+  v: Villager,
+  prop: PropId,
+  radius: number,
+  xp: JobId,
+  slow: boolean,
+): boolean {
+  const work = NODE_WORK[prop];
+  if (!work) return false;
+  const node = findNode(g, v.x, v.y, prop, radius);
+  if (!node) return false;
+  const goals = neighbours(g, node.x, node.y);
+  if (goals.length === 0) return false;
+  const store = nearestStore(g, node.x, node.y);
+  if (!store) return false;
+
+  claim(g, v, 'node', node.y * g.w + node.x, node.x, node.y);
+  // Never swing at a node for longer than it has left in it.
+  const left = tileAt(g, node.x, node.y)?.amount ?? 0;
+  const trips = clamp(Math.min(Math.floor(CARRY_CAPACITY / work.per), Math.ceil(left / work.per)), 1, 4);
+  const steps: Step[] = [{ t: 'move', x: node.x, y: node.y, goals }];
+  for (let i = 0; i < trips; i++) {
+    steps.push({ t: 'act', dur: work.seconds * (slow ? 1.25 : 1), kind: 'gathering', xp });
+    steps.push({ t: 'take', res: work.res, qty: work.per, from: 'tile', x: node.x, y: node.y });
+  }
+  steps.push(...storeLeg(g, store));
+  v.plan = steps;
+  return true;
+}
+
+/** Deadfall first: quicker, nearer at the start, and it clears itself away. */
+function planGatherWood(g: GameState, v: Villager, xp: JobId): boolean {
+  return planGatherNode(g, v, 'branches', 18, xp, false) || planGatherNode(g, v, 'tree', 22, xp, true);
 }
 
 function neighbours(g: GameState, x: number, y: number): { x: number; y: number }[] {
@@ -772,8 +932,11 @@ function planProduce(g: GameState, v: Villager, b: Building): boolean {
   return planHelper(g, v);
 }
 
-/** Everything nobody else is doing, in rough order of urgency. */
-function planHelper(g: GameState, v: Villager): boolean {
+/**
+ * Everything nobody else is doing, in rough order of urgency. `gather` is off
+ * only during founding, where what to pick up is decided elsewhere.
+ */
+function planHelper(g: GameState, v: Villager, gather = true): boolean {
   // 1. Construction sites short of materials.
   for (const b of g.buildings) {
     if (b.stage !== 'building') continue;
@@ -851,33 +1014,22 @@ function planHelper(g: GameState, v: Villager): boolean {
   }
 
   // 5. Gather by hand whatever the kingdom is shortest of.
+  if (!gather) return false;
   if (storageFree(g) < 6) noticeStoreFull(g);
   else {
-    const wants: { res: ResourceId; prop: 'tree' | 'boulder'; deficit: number }[] = [];
+    const wants: { res: ResourceId; deficit: number }[] = [];
     for (const res of ['wood', 'stone'] as ResourceId[]) {
-      const target = GATHER_TARGET[res];
+      const target = gatherTarget(g, res);
       const deficit = (target - g.stock[res]) / target;
-      if (deficit > 0.02) wants.push({ res, prop: res === 'wood' ? 'tree' : 'boulder', deficit });
+      if (deficit > 0.02) wants.push({ res, deficit });
     }
     wants.sort((a, b) => b.deficit - a.deficit);
     for (const want of wants) {
-      const node = findNode(g, v.x, v.y, want.prop, 22);
-      if (!node) continue;
-      const goals = neighbours(g, node.x, node.y);
-      if (goals.length === 0) continue;
-      claim(g, v, 'node', node.y * g.w + node.x, node.x, node.y);
-      const isTree = want.prop === 'tree';
-      const per = isTree ? CHOP_YIELD : MINE_YIELD;
-      const steps: Step[] = [{ t: 'move', x: node.x, y: node.y, goals }];
-      const trips = clamp(Math.floor(CARRY_CAPACITY / per), 1, 4);
-      for (let i = 0; i < trips; i++) {
-        steps.push({ t: 'act', dur: (isTree ? CHOP_SECONDS : MINE_SECONDS) * 1.25, kind: 'gathering', xp: 'helper' });
-        steps.push({ t: 'take', res: want.res, qty: per, from: 'tile', x: node.x, y: node.y });
-      }
-      const store = nearestStore(g, node.x, node.y);
-      if (store) steps.push(...storeLeg(g, store));
-      v.plan = steps;
-      return true;
+      const got =
+        want.res === 'wood'
+          ? planGatherWood(g, v, 'helper')
+          : planGatherNode(g, v, 'boulder', 22, 'helper', true);
+      if (got) return true;
     }
   }
 
@@ -1093,6 +1245,10 @@ function sweepDepletedNodes(g: GameState): void {
     } else if (t.prop === 'boulder') {
       t.prop = 'pebbles';
       t.regrow = BOULDER_REGROW;
+      t.claimed = 0;
+    } else if (t.prop === 'branches') {
+      // Deadfall leaves nothing behind and does not come back.
+      t.prop = null;
       t.claimed = 0;
     }
   }

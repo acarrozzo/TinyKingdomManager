@@ -32,7 +32,7 @@ export const RESOURCE_META: Record<string, { name: string; icon: string; color: 
 /** Where each resource comes from and where it goes, for the top-bar hover. */
 export const RESOURCE_INFO: Record<string, { from: string; used: string }> = {
   wood: {
-    from: 'Woodcutters at the lodge, and helpers felling any tree by hand.',
+    from: 'Woodcutters at the lodge, helpers felling any tree by hand, and fallen branches picked up off the ground.',
     used: 'Nearly every building, from a shelter at 20 up to a windmill at 50.',
   },
   stone: {
@@ -115,22 +115,24 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
   campfire: {
     id: 'campfire',
     name: 'Campfire',
-    category: 'storage',
+    category: 'housing',
     w: 1,
     h: 1,
-    cost: {},
-    labour: 0,
+    cost: { wood: 5 },
+    labour: 12,
     maxLevel: 1,
-    order: -1,
-    desc: 'Where the kingdom began. Somewhere warm to sleep, and it never quite goes out.',
-    how: 'Two people can sleep beside it. Nobody chooses a fire over a roof, so the moment a house is finished with a free bed, whoever is still out here moves in — unless you have put them here yourself, in which case they stay. It cannot be taken down.',
+    order: 2,
+    once: true,
+    unlock: 'campfire',
+    desc: 'Five armfuls of wood and somebody willing to kneel in the grass with them. Where the kingdom begins.',
+    how: 'Warmth, light, and two people can sleep beside it. It holds nothing — that is what the chest is for. Nobody chooses a fire over a roof, so the moment a house is finished with a free bed, whoever is still out here moves in, unless you have put them here yourself. Once lit it cannot be taken down.',
     housing: [2],
     light: [{ x: 0.5, y: 0.5, radius: 46, color: '#ffb35c' }],
     solid: false,
   },
-  chest: {
-    id: 'chest',
-    name: 'Old Chest',
+  woodpile: {
+    id: 'woodpile',
+    name: 'Woodpile',
     category: 'storage',
     w: 1,
     h: 1,
@@ -138,9 +140,26 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     labour: 0,
     maxLevel: 1,
     order: -1,
-    desc: 'It was here before anyone was. Everything the kingdom owns goes into it until there is a proper storehouse to take over.',
-    how: 'The kingdom keeps one shared pool of goods, and this holds the first eighty of it. Storehouses do not hold their own separate piles; they raise the ceiling on this same pool. When it is full, gatherers stop fetching more rather than waste the walk, but anything already in somebody\'s arms still gets put away.',
-    storage: [80],
+    desc: 'Branches stacked on the bare ground, because there is nowhere else to put them.',
+    how: 'It holds twelve of anything and it is not really a building. The founder starts one the moment they choose their ground, and it goes when the first chest is finished — everything in it simply carries on being the kingdom\'s.',
+    storage: [12],
+    solid: false,
+  },
+  chest: {
+    id: 'chest',
+    name: 'Rough Chest',
+    category: 'storage',
+    w: 1,
+    h: 1,
+    cost: { wood: 10 },
+    labour: 10,
+    maxLevel: 1,
+    order: 9,
+    once: true,
+    unlock: 'chest',
+    desc: 'Planks, and a lid that mostly shuts. Everything the kingdom owns goes in it until there is a storehouse.',
+    how: 'The kingdom keeps one shared pool of goods, and this holds the first fifty of it. It takes the place of the woodpile the moment it is finished. Storehouses do not hold their own separate piles; they raise the ceiling on this same pool. When it is full, gatherers stop fetching more rather than waste the walk, but anything already in somebody\'s arms still gets put away.',
+    storage: [50],
     solid: false,
   },
   shelter: {
@@ -382,6 +401,9 @@ export const BUILD_ORDER: BuildingId[] = (Object.keys(BUILDINGS) as BuildingId[]
   .filter((k) => BUILDINGS[k].order >= 0)
   .sort((a, b) => BUILDINGS[a].order - BUILDINGS[b].order);
 
+/** The two things that can be built before the kingdom has anywhere to keep goods. */
+export const FOUNDING_BUILDS = new Set<BuildingId>(['campfire', 'chest']);
+
 export const CATEGORY_META: Record<string, { name: string; icon: string }> = {
   housing: { name: 'Housing', icon: '🏠' },
   storage: { name: 'Storage', icon: '📦' },
@@ -463,6 +485,11 @@ export const PROP_META: Record<
   pebbles: {
     name: 'Pebbles',
     desc: 'Loose chippings. Where a boulder was worked, another gathers in time.',
+  },
+  branches: {
+    name: 'Fallen branches',
+    desc: 'Deadfall. Anyone can gather it by hand, which is how the first fire got lit. It does not come back.',
+    yields: 'wood',
   },
   bush: { name: 'Bush', desc: 'Scrub. Slows a walk slightly and gives small animals somewhere to hide.' },
   flowers: { name: 'Wildflowers', desc: 'No use whatsoever. Some things are fonder of a tile for having them.' },

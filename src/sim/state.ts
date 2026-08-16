@@ -94,9 +94,10 @@ export function makeBuilding(g: GameState, def: BuildingId, x: number, y: number
 }
 
 /**
- * Drops the old chest on a free tile beside the fire and hands back the
- * building. Shared with the save loader, which fits one to kingdoms that
- * predate it — without a chest they would have no storage at all.
+ * Drops a chest on a free tile beside the fire and hands back the building.
+ * Only the save loader calls this now, fitting one to kingdoms that predate the
+ * chest — without it they would have no storage at all. A new kingdom's chest is
+ * built by hand, like everything else.
  */
 export function placeChest(g: GameState, fire: Building, r: RNG): Building | null {
   // Grid neighbours first: on an isometric map those sit diagonally beside the
@@ -170,29 +171,19 @@ export function newGame(seed = Math.floor(Math.random() * 1e9)): GameState {
     weatherKind: 'clear',
     claims: new Map(),
     founderId: 0,
+    founding: { stage: 'arriving', x: map.start.x, y: map.start.y },
     stats: { built: 0, harvested: 0, baked: 0, arrivals: 1 },
     nameSeq: 0,
   };
   g.goals = buildGoals();
 
-  // The campfire is the kingdom's first landmark: warmth and a bed. The chest
-  // beside it is where the kingdom's goods actually go until a storehouse
-  // stands, so the very first deliveries are something you can watch happen.
-  const fire = makeBuilding(g, 'campfire', map.start.x, map.start.y, r);
-  fire.stage = 'done';
-  g.buildings.push(fire);
-  const ft = tileAt(g, fire.x, fire.y);
-  if (ft) {
-    ft.building = fire.id;
-    ft.prop = null;
-  }
-  placeChest(g, fire, r);
-
-  const founder = makeVillager(g, r, map.start.x + 1, map.start.y + 1);
-  founder.home = fire.id;
+  // Nothing is here yet — no fire, no store, no bed. The founder walks up the
+  // beach with empty hands and the player decides where they stop; see
+  // `sim/founding.ts` for what that turns into.
+  const founder = makeVillager(g, r, map.arrival.x, map.arrival.y);
   founder.favorite = true;
-  founder.history.push({ day: 1, text: 'Arrived, alone, and decided this would do.' });
-  fire.residents.push(founder.id);
+  founder.activity = 'arriving';
+  founder.history.push({ day: 1, text: 'Walked up the beach with nothing at all.' });
   g.villagers.push(founder);
   g.founderId = founder.id;
 
@@ -283,6 +274,38 @@ export function villagerById(g: GameState, id: number): Villager | null {
   if (!id) return null;
   for (const v of g.villagers) if (v.id === id) return v;
   return null;
+}
+
+/**
+ * Takes a building off the map: tiles freed, staff and sleepers turned loose,
+ * everybody made to think again. Refunds are the player's business and stay in
+ * `Game.removeBuilding`; this is the part the simulation needs too, for the
+ * chest quietly replacing the woodpile it grew out of.
+ */
+export function removeBuilding(g: GameState, b: Building): void {
+  const def = BUILDINGS[b.def];
+  for (let dy = 0; dy < def.h; dy++)
+    for (let dx = 0; dx < def.w; dx++) {
+      const t = tileAt(g, b.x + dx, b.y + dy);
+      if (!t) continue;
+      if (t.building === b.id) {
+        t.building = 0;
+        t.blocked = false;
+      }
+      if (t.plot === b.id) t.plot = 0;
+    }
+
+  for (const v of g.villagers) {
+    if (v.workplace === b.id) assignJob(g, v, 0);
+    if (v.home === b.id) {
+      v.home = 0;
+      // The bed you chose for them no longer exists, so the choice goes with it.
+      v.homeFixed = false;
+      assignHome(g, v);
+    }
+    abandonPlan(g, v);
+  }
+  g.buildings = g.buildings.filter((x) => x.id !== b.id);
 }
 
 export function buildingCentre(b: Building): { x: number; y: number } {

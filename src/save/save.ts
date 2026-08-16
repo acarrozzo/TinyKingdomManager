@@ -8,7 +8,7 @@
 
 import type { GameState, SpeciesId, Villager } from '../types';
 import { emptyStock } from '../types';
-import { buildGoals } from '../sim/goals';
+import { FOUNDING_GOALS, buildGoals } from '../sim/goals';
 import { placeChest, restoreIdCounter } from '../sim/state';
 import { RNG } from '../core/util';
 import { resetWildlifeCache } from '../sim/wildlife';
@@ -223,6 +223,7 @@ export function serialize(g: GameState): SavePayload {
     weatherTimer: g.weatherTimer,
     weatherKind: g.weatherKind,
     founderId: g.founderId,
+    founding: g.founding,
     stats: g.stats,
   };
 }
@@ -316,6 +317,16 @@ export function deserialize(raw: unknown): GameState {
   const doneIds: string[] = p.goalsDone ?? [];
   for (const goal of goals) if (doneIds.includes(goal.id)) goal.done = true;
 
+  // Kingdoms saved before founding existed already have a fire and a chest, so
+  // they are founded by definition — and their opening goals are long past,
+  // which is worth marking before the goal checker toasts all four at once.
+  const founding = (p.founding as GameState['founding']) ?? {
+    stage: 'done' as const,
+    x: Math.round(p.w / 2),
+    y: Math.round(p.h / 2),
+  };
+  if (founding.stage === 'done') for (const goal of goals) if (FOUNDING_GOALS.includes(goal.id)) goal.done = true;
+
   const g: GameState = {
     seed: p.seed ?? 1,
     clock: p.clock ?? 0,
@@ -369,6 +380,7 @@ export function deserialize(raw: unknown): GameState {
     weatherKind: p.weatherKind ?? 'clear',
     claims: new Map(),
     founderId: p.founderId ?? 0,
+    founding,
     stats: p.stats ?? { built: 0, harvested: 0, baked: 0, arrivals: 1 },
     nameSeq: 0,
   };
@@ -377,8 +389,9 @@ export function deserialize(raw: unknown): GameState {
 
   // Kingdoms saved before the chest existed kept their first goods in the
   // campfire. The fire no longer stores anything, so fit them a chest beside it
-  // rather than leaving them short of the capacity they already filled.
-  if (!g.buildings.some((b) => b.def === 'chest')) {
+  // rather than leaving them short of the capacity they already filled. A
+  // kingdom still being founded is exempt: its chest is the player's to build.
+  if (g.founding.stage === 'done' && !g.buildings.some((b) => b.def === 'chest')) {
     const fire = g.buildings.find((b) => b.def === 'campfire');
     if (fire) placeChest(g, fire, new RNG(g.seed));
   }

@@ -15,7 +15,16 @@ export function emptyStock(): Stock {
 
 export type TerrainId = 'water' | 'shallow' | 'sand' | 'grass' | 'meadow' | 'forest' | 'rocky';
 
-export type PropId = 'tree' | 'stump' | 'boulder' | 'pebbles' | 'bush' | 'flowers' | 'reeds' | 'lilypad';
+export type PropId =
+  | 'tree'
+  | 'stump'
+  | 'boulder'
+  | 'pebbles'
+  | 'branches'
+  | 'bush'
+  | 'flowers'
+  | 'reeds'
+  | 'lilypad';
 
 export interface Tile {
   terrain: TerrainId;
@@ -61,6 +70,7 @@ export type TraitId =
 
 export type BuildingId =
   | 'campfire'
+  | 'woodpile'
   | 'chest'
   | 'shelter'
   | 'cottage'
@@ -120,6 +130,8 @@ export interface BuildingDef {
   solid?: boolean;
   /** Requires research/milestone unlock before appearing in the build menu. */
   unlock?: string;
+  /** The kingdom only ever has one; it leaves the menu once it stands. */
+  once?: boolean;
   /** Sort weight in the build menu. */
   order: number;
 }
@@ -195,7 +207,12 @@ export type Step =
   | { t: 'sleep' }
   | { t: 'say'; text: string }
   /** Deferred consequence, applied the instant the preceding action finishes. */
-  | { t: 'effect'; kind: 'eat' | 'sow' | 'reap' | 'batch'; id?: number; slot?: number };
+  | {
+      t: 'effect';
+      kind: 'eat' | 'sow' | 'reap' | 'batch' | 'arrived' | 'settled';
+      id?: number;
+      slot?: number;
+    };
 
 export interface Villager {
   id: number;
@@ -325,6 +342,21 @@ export interface Toast {
   tone: 'info' | 'good' | 'warn';
 }
 
+/**
+ * How far through founding the kingdom is. `arriving` is the founder walking up
+ * the beach, `choosing` is the player picking the ground, `settling` is the walk
+ * out to it, `camp` is everything between the first armful of branches and the
+ * chest that replaces the woodpile.
+ */
+export type FoundingStage = 'arriving' | 'choosing' | 'settling' | 'camp' | 'done';
+
+export interface Founding {
+  stage: FoundingStage;
+  /** The chosen ground. Meaningless until the stage is past `choosing`. */
+  x: number;
+  y: number;
+}
+
 export interface GameState {
   seed: number;
   /** Total elapsed game seconds since founding. */
@@ -361,6 +393,7 @@ export interface GameState {
   /** Task reservations keyed by "kind:id" → villager id. */
   claims: Map<string, number>;
   founderId: number;
+  founding: Founding;
   stats: {
     built: number;
     harvested: number;

@@ -870,8 +870,14 @@ button {
 
 /* --------------------------------------------------------------- toasts */
 
+/*
+ * Toasts stack above the active-tool hint, and how far above depends on how
+ * tall that hint actually is — the campsite hint runs to four lines on a phone,
+ * where a fixed offset put a toast straight across its title. `--hint-h` is
+ * measured and set whenever the hint is rendered.
+ */
 .tool-hint-host:not(:empty) ~ .toasts {
-  bottom: 86px;
+  bottom: calc(24px + var(--hint-h, 62px));
 }
 
 .toasts {
@@ -1452,7 +1458,7 @@ kbd {
     bottom: 62px;
   }
   .tool-hint-host:not(:empty) ~ .toasts {
-    bottom: 132px;
+    bottom: calc(70px + var(--hint-h, 62px));
   }
   /* No Esc key on a phone, so the sheet gets a real way out. */
   .esc-hint {

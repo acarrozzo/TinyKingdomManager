@@ -11,6 +11,7 @@ import { completeConstruction, updateVillagers } from '../src/sim/villager';
 import { updateWildlife } from '../src/sim/wildlife';
 import { updatePopulation } from '../src/sim/population';
 import { updateGoals } from '../src/sim/goals';
+import { chooseCamp, suggestCamp } from '../src/sim/founding';
 import { updateTerrain, tileAt } from '../src/world/terrain';
 import { BUILDINGS, CARRY_CAPACITY, DAY_LENGTH } from '../src/sim/defs';
 import { rng } from '../src/core/util';
@@ -75,14 +76,25 @@ function usedStorage(state: GameState): number {
 }
 
 function autoplay(state: GameState): void {
-  const fire = state.buildings[0];
+  // The founding sequence: the player's only job is to say where, and then to
+  // place the fire and the chest once there is wood for them.
+  if (state.founding.stage === 'arriving' || state.founding.stage === 'settling') return;
+  if (state.founding.stage === 'choosing') {
+    const spot = suggestCamp(state);
+    chooseCamp(state, spot.x, spot.y);
+    return;
+  }
+
+  const fire = state.buildings.find((b) => b.def === 'campfire') ?? { x: state.founding.x, y: state.founding.y };
   const has = (def: BuildingId) => state.buildings.some((b) => b.def === def);
   const done = (def: BuildingId) => state.buildings.some((b) => b.def === def && b.stage === 'done');
   const building = state.buildings.some((b) => b.stage === 'building');
   if (building) return;
 
   const wants: BuildingId[] = [];
-  if (!has('shelter')) wants.push('shelter');
+  if (!has('campfire')) wants.push('campfire');
+  else if (!has('chest')) wants.push('chest');
+  else if (!has('shelter')) wants.push('shelter');
   else if (!has('storehouse')) wants.push('storehouse');
   else if (!has('lodge')) wants.push('lodge');
   else if (!has('quarry') && state.unlocked.has('quarry')) wants.push('quarry');
@@ -124,7 +136,10 @@ function autoplay(state: GameState): void {
         }
       if (best) near = best;
     }
-    const spot = findSpot(def, near, def === 'lodge' || def === 'quarry' ? 2 : 3);
+    // The fire and the chest go right beside the woodpile; everything else
+    // needs elbow room.
+    const minR = def === 'campfire' || def === 'chest' ? 1 : def === 'lodge' || def === 'quarry' ? 2 : 3;
+    const spot = findSpot(def, near, minR);
     if (spot) place(def, spot.x, spot.y);
     break;
   }

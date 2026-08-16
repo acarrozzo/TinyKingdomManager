@@ -118,6 +118,7 @@ src/
   sim/
     defs.ts           ALL game data and tuning — see below
     state.ts          GameState construction, storage, buildings, claims
+    founding.ts       the opening: campsite rules and the stages after it
     villager.ts       needs, schedule, the planner — the heart of the sim
     wildlife.ts       habitat model, spawning, animal behaviour
     population.ts     arrival pacing
@@ -164,16 +165,45 @@ of concrete steps — `move`, `act`, `take`, `give`, `labour`, `sleep`, `effect`
 Every economic action is therefore something you can watch happen on the map.
 
 Priority order: put down anything carried → sleep if it is their bedtime → eat if
-hungry and bread exists → job work if it is work hours → leisure. Helpers fall
-through a task ladder: supply construction sites, then build them, then restock
-workshops, then clear finished goods, then hand-gather whatever is scarcest.
+hungry and bread exists → the founding sequence if one is running → job work if
+it is work hours → leisure. Helpers fall through a task ladder: supply
+construction sites, then build them, then restock workshops, then clear finished
+goods, then hand-gather whatever is scarcest.
 
 **Plans are transient and never serialised.** They can hold closures and derived
 data freely. After a load everyone simply re-decides. Do not try to save them.
 
 **Deferred consequences use `effect` steps**, not callbacks — `{ t: 'effect',
-kind: 'batch' | 'sow' | 'reap' | 'eat' }`. That keeps steps plain data and
-consequences exactly aligned with the end of the action that caused them.
+kind: 'batch' | 'sow' | 'reap' | 'eat' | 'arrived' | 'settled' }`. That keeps
+steps plain data and consequences exactly aligned with the end of the action that
+caused them.
+
+**The kingdom is founded, not handed over.** A new game has no fire, no store and
+no bed: one person walks up a beach and the player chooses where they stop.
+`sim/founding.ts` owns the stages — `arriving`, `choosing`, `settling`, `camp`,
+`done` — and the plans that carry them out live in the planner with everything
+else. The beats are: walk inland and look around → the player clicks clear grass
+within nine tiles of the island's middle (`campProblem` is the rule and the
+wording the player reads) → the founder walks there, stands a moment, and starts
+a **woodpile**, a 12-capacity store that is not really a building → they gather
+fallen branches by hand → the player places the **campfire** (5 wood) and they
+lay and light it → then the **rough chest** (10 wood, holds 50), which quietly
+removes the woodpile and opens the rest of the build menu.
+
+Three things about that are load-bearing. The woodpile has to exist *before*
+anybody sets off to gather, because wood with no store to land in goes nowhere
+watchable. During founding the helper ladder runs with its gathering step
+switched off (`planHelper(g, v, false)`) and wood is fetched to a flat target
+instead — the ordinary rules stop gathering with more room free than a
+twelve-stick pile has, which would strand the founder unable to afford the chest
+that fixes it. And `availableToBuild()` in `goals.ts`, not `isUnlocked()`, is
+what the build menu and `canPlace` ask: it also hides the fire and the chest once
+they stand (`once` on the def) and everything else until the chest does.
+
+**Fallen branches** (`branches`) are deadfall scattered near the middle at map
+generation: six wood, no axe needed, gone for good once picked up, and preferred
+over trees by every hand-gatherer. They are why the opening does not require a
+woodcutter's lodge to get started.
 
 **Beds are automatic until the player says otherwise.** `assignHome()` puts
 somebody in the nearest free bed, and a finished house collects anyone still
@@ -191,6 +221,15 @@ keyed `farmId * 100 + slot`.
 exceeds 35% of storage capacity. Without it, woodcutters fill the barn and the
 food chain starves. This is the mechanism that makes "the kingdom stalls but
 never collapses" actually true.
+
+Hand-gathering has the same idea in `gatherTarget()`: the flat targets (120 wood,
+90 stone) are additionally capped at a share of what the kingdom can actually
+hold. With a storehouse up this never binds. It exists for the opening chest,
+which holds fifty: without it helpers cheerfully fill that with stone nothing
+needs yet and leave the kingdom unable to afford the 25-wood storehouse that
+would fix it — a stall with no way out, which is worse than a slow kingdom. This
+is the same trap `DESIGN.md`-style per-resource shelf limits keep falling into,
+and the reason any future version of them has to clear the early costs.
 
 **Putting a load down never fails.** `deposit()` is clipped by capacity, but
 `deliver()` — what a villager carrying goods actually calls — always accepts the
@@ -291,6 +330,13 @@ Its hover labels live on a `.vwrap` wrapper rather than on the button, because a
 `disabled` button takes no pointer events and so can never show a tooltip — and
 the greyed-out one is precisely the button people need explained. The zoom
 buttons disable at each end of the ladder and say the current level.
+
+**The campsite marker is the one tool that arms itself.** `Game.syncCampTool()`
+puts it on the cursor while founding is at `choosing` and takes it off the moment
+the ground is picked; `cancelTool()` deliberately re-arms it rather than clearing
+it, and its toolbar hint has no Done button. At that moment it is the only thing
+the player can do, so an interface that let them put it away would only be a way
+of getting stuck with nothing on screen to explain why.
 
 **Speed lives in Settings → Viewing**, not on the map, along with `space` and
 `1`/`2`/`3`. **Removing a building lives at the foot of the build panel**, not in
@@ -418,10 +464,13 @@ back to grass; see `deserialize` in `save/save.ts`.
 Map 40×40 · a day is 30 real minutes at 1× (20 day / 10 night) · 6 days a season,
 24 a year · population cap 100, arriving roughly one per game-day early on ·
 Master rank is ~10–15 real hours of dedicated work in one trade · storage is a
-single shared pool fed by storage buildings, starting at 80 in the old chest
-beside the campfire and +250 per storehouse.
+single shared pool fed by storage buildings: 12 in the founding woodpile, 50 in
+the chest that replaces it, +250 per storehouse. Founding itself is four or five
+real minutes at 1×.
 
 Per-resource shelf limits — one good never taking more than a share of the
 store — have been discussed and deliberately deferred. Any such limit has to
 clear the early costs (a Storehouse is 25 wood against an opening capacity of
-80) or it recreates the deadlock it was meant to prevent.
+50) or it recreates the deadlock it was meant to prevent. `gatherTarget()` is
+the nearest thing to one that survived, and only because it caps *fetching*
+rather than storing.

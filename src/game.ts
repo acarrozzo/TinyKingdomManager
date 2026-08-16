@@ -23,22 +23,23 @@ import {
 } from './sim/defs';
 import {
   abandonPlan,
-  assignHome,
   assignJob,
   buildingById,
   deposit,
   jobSlots,
   makeBuilding,
   newGame,
+  removeBuilding as removeBuildingFromMap,
   seasonForDay,
   setHome as setVillagerHome,
   storageCapacity,
   villagerById,
 } from './sim/state';
 import { completeConstruction, siteNeeds, updateVillagers } from './sim/villager';
+import { canChooseCamp, chooseCamp, protectedBuilding } from './sim/founding';
 import { updateWildlife, resetWildlifeCache } from './sim/wildlife';
 import { updatePopulation } from './sim/population';
-import { updateGoals, isUnlocked } from './sim/goals';
+import { updateGoals, availableToBuild } from './sim/goals';
 import { journal, toast, updateToasts } from './sim/journal';
 import { tileAt, updateTerrain } from './world/terrain';
 import { toScreenX, toScreenY } from './world/iso';
@@ -55,7 +56,12 @@ import {
   saveToSlot,
 } from './save/save';
 
-export type Tool = { kind: 'none' } | { kind: 'build'; def: BuildingId } | { kind: 'demolish' };
+export type Tool =
+  | { kind: 'none' }
+  | { kind: 'build'; def: BuildingId }
+  | { kind: 'demolish' }
+  /** Only ever armed during founding: the player choosing where it all starts. */
+  | { kind: 'camp' };
 
 export interface Selection {
   kind: 'villager' | 'animal' | 'building' | 'tile' | null;
@@ -111,15 +117,38 @@ export class Game {
     this.slotName = slotName ?? 'Tiny Kingdom';
     this.settings = loadSettings();
 
-    const fire = this.state.buildings[0];
-    this.camera.centerOnTile(fire ? fire.x : this.state.w / 2, fire ? fire.y : this.state.h / 2);
+    this.centerOnHeart();
     this.camera.zoomIndex = 1;
     this.rebuildTileFlags();
     this.attachInput(canvas);
 
-    if (this.state.journal.length === 0) {
-      journal(this.state, 'A traveller stopped walking, looked around, and stayed.', '✦');
+    // Before there is anything to look at, the person is the view — and the
+    // opening is a walk, so the camera goes with them.
+    if (this.state.founding.stage === 'arriving' && this.state.founderId) {
+      this.camera.follow('villager', this.state.founderId);
     }
+
+    if (this.state.journal.length === 0) {
+      journal(this.state, 'A traveller came ashore with nothing, and did not leave.', '✦');
+    }
+  }
+
+  /**
+   * Wherever the kingdom's middle is today. Before the fire is lit there is no
+   * landmark at all, so it falls back to the founder — who is, at that point,
+   * the only thing worth looking at.
+   */
+  private centerOnHeart(glide = false): void {
+    const g = this.state;
+    const fire = g.buildings.find((b) => b.def === 'campfire') ?? g.buildings[0];
+    const founder = villagerById(g, g.founderId) ?? g.villagers[0];
+    const spot = fire
+      ? { x: fire.x, y: fire.y }
+      : founder
+        ? { x: Math.round(founder.x), y: Math.round(founder.y) }
+        : { x: g.w / 2, y: g.h / 2 };
+    if (glide) this.centerOn(spot.x, spot.y);
+    else this.camera.centerOnTile(spot.x, spot.y);
   }
 
   // -------------------------------------------------------------------------
@@ -148,8 +177,10 @@ export class Game {
     resetWildlifeCache();
     this.rebuildTileFlags();
     this.renderer.invalidateGround();
-    const fire = state.buildings.find((b) => b.def === 'campfire') ?? state.buildings[0];
-    this.camera.centerOnTile(fire ? fire.x : state.w / 2, fire ? fire.y : state.h / 2);
+    this.centerOnHeart();
+    if (state.founding.stage === 'arriving' && state.founderId) {
+      this.camera.follow('villager', state.founderId);
+    }
     this.notify();
   }
 
@@ -218,8 +249,20 @@ export class Game {
       }
     }
 
+    this.syncCampTool();
     this.camera.update(realDt, this.followTarget(), g.w, g.h);
     this.updateAudio(realDt);
+  }
+
+  /**
+   * The campsite marker arms itself, because at that moment it is the only
+   * thing the player can do — and disarms itself the instant the ground is
+   * chosen, so nothing is left hanging on the cursor.
+   */
+  private syncCampTool(): void {
+    const choosing = this.state.founding.stage === 'choosing';
+    if (choosing && this.tool.kind !== 'camp') this.setTool({ kind: 'camp' });
+    else if (!choosing && this.tool.kind === 'camp') this.cancelTool();
   }
 
   private simulate(dt: number): void {
@@ -321,10 +364,11 @@ export class Game {
       showBubbles: this.settings.showBubbles,
       showNames: this.settings.showNames && !this.cleanMode,
       showActivity: this.settings.showActivity && !this.cleanMode,
-      showGrid: this.tool.kind === 'build',
+      showGrid: this.tool.kind === 'build' || this.tool.kind === 'camp',
       selection: this.selection,
       hover: this.hover,
       ghost: null,
+      marker: null,
       demolish: this.tool.kind === 'demolish',
     };
 
@@ -332,6 +376,10 @@ export class Game {
       const x = this.hover.x;
       const y = this.hover.y;
       opts.ghost = { def: this.tool.def, x, y, valid: this.canPlace(this.tool.def, x, y) };
+    }
+    if (this.tool.kind === 'camp' && this.hover) {
+      const { x, y } = this.hover;
+      opts.marker = { x, y, valid: canChooseCamp(this.state, x, y) };
     }
 
     this.renderer.render(this.state, this.camera, opts, realDt);
@@ -521,6 +569,19 @@ export class Game {
   }
 
   private handleClick(cssX: number, cssY: number): void {
+    if (this.tool.kind === 'camp') {
+      const t = this.tileUnder(cssX, cssY);
+      if (t && chooseCamp(this.state, t.x, t.y)) {
+        this.camera.stopFollowing();
+        this.camera.glideToTile(t.x, t.y);
+        audio.chime(4, 0.03);
+        this.cancelTool();
+        this.notify();
+      } else {
+        audio.thud(0.6, 0.03);
+      }
+      return;
+    }
     if (this.tool.kind === 'build') {
       const t = this.tileUnder(cssX, cssY);
       if (t) this.place(this.tool.def, t.x, t.y);
@@ -631,7 +692,7 @@ export class Game {
   canPlace(def: BuildingId, x: number, y: number): boolean {
     const g = this.state;
     const d = BUILDINGS[def];
-    if (!isUnlocked(g, d.unlock)) return false;
+    if (!availableToBuild(g, def)) return false;
     for (let dy = 0; dy < d.h; dy++)
       for (let dx = 0; dx < d.w; dx++) {
         const t = tileAt(g, x + dx, y + dy);
@@ -692,12 +753,9 @@ export class Game {
     if (!t.building) return;
     const b = buildingById(g, t.building);
     if (!b) return;
-    if (b.def === 'campfire') {
-      toast(g, 'The first fire stays lit.', '🔥', 'warn');
-      return;
-    }
-    if (b.def === 'chest') {
-      toast(g, 'The old chest stays where it is.', '🧰', 'warn');
+    const kept = protectedBuilding(b);
+    if (kept) {
+      toast(g, kept, b.def === 'campfire' ? '🔥' : b.def === 'woodpile' ? '🪵' : '🧰', 'warn');
       return;
     }
     this.removeBuilding(b, true);
@@ -722,28 +780,7 @@ export class Game {
       }
     }
 
-    for (let dy = 0; dy < def.h; dy++)
-      for (let dx = 0; dx < def.w; dx++) {
-        const t = tileAt(g, b.x + dx, b.y + dy);
-        if (!t) continue;
-        if (t.building === b.id) {
-          t.building = 0;
-          t.blocked = false;
-        }
-        if (t.plot === b.id) t.plot = 0;
-      }
-
-    for (const v of g.villagers) {
-      if (v.workplace === b.id) assignJob(g, v, 0);
-      if (v.home === b.id) {
-        v.home = 0;
-        // The bed you chose for them no longer exists, so the choice goes with it.
-        v.homeFixed = false;
-        assignHome(g, v);
-      }
-      abandonPlan(g, v);
-    }
-    g.buildings = g.buildings.filter((x) => x.id !== b.id);
+    removeBuildingFromMap(g, b);
     if (this.selection.kind === 'building' && this.selection.id === b.id) this.selection = { kind: null, id: 0 };
     this.renderer.invalidateGround();
     audio.thud(0.7, 0.05);
@@ -762,7 +799,9 @@ export class Game {
   }
 
   cancelTool(): void {
-    this.tool = { kind: 'none' };
+    // While the founder is standing about waiting to be told where to stop,
+    // there is nothing else to do, so the marker cannot be put away.
+    this.tool = this.state.founding.stage === 'choosing' ? { kind: 'camp' } : { kind: 'none' };
     this.syncCursor();
     this.notify();
   }
@@ -789,6 +828,11 @@ export class Game {
   centerOn(x: number, y: number): void {
     this.camera.stopFollowing();
     this.camera.glideToTile(x, y);
+  }
+
+  /** The view pad's recentre button. */
+  recentre(): void {
+    this.centerOnHeart(true);
   }
 
   setSpeed(speed: number): void {

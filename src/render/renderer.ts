@@ -39,6 +39,8 @@ export interface RenderOptions {
   hover: { x: number; y: number } | null;
   /** Active build ghost, if the player is placing something. */
   ghost: { def: keyof typeof BUILDINGS; x: number; y: number; valid: boolean } | null;
+  /** The campsite marker, during founding only. */
+  marker: { x: number; y: number; valid: boolean } | null;
   demolish: boolean;
 }
 
@@ -392,7 +394,7 @@ export class Renderer {
     }
 
     if (opts.showGrid) this.drawGrid(g, minX, maxX, minY, maxY);
-    if (opts.hover && !opts.ghost) {
+    if (opts.hover && !opts.ghost && !opts.marker) {
       this.outlineFootprint(opts.hover.x, opts.hover.y, 1, 1, opts.demolish ? '#ff9a7a' : 'rgba(255,255,255,0.5)');
     }
   }
@@ -497,6 +499,7 @@ export class Renderer {
   // -------------------------------------------------------------------------
 
   private drawPlacement(g: GameState, opts: RenderOptions): void {
+    if (opts.marker) this.drawCampMarker(opts.marker);
     if (!opts.ghost) return;
     const def = BUILDINGS[opts.ghost.def];
     const { x, y, valid } = opts.ghost;
@@ -511,6 +514,28 @@ export class Renderer {
     b.drawImage(sprite.canvas, Math.round(leftX - this.viewX), Math.round(topY - sprite.rise - this.viewY));
     b.restore();
     this.outlineFootprint(x, y, def.w, def.h, valid ? '#b6f0a8' : '#ff8a72');
+  }
+
+  /**
+   * A stake in the ground under the cursor while the player chooses where the
+   * kingdom starts. Deliberately not a building ghost: nothing is being placed
+   * here, a person is being told where to stop walking.
+   */
+  private drawCampMarker(marker: { x: number; y: number; valid: boolean }): void {
+    const { x, y, valid } = marker;
+    this.fillFootprint(x, y, 1, 1, valid ? 'rgba(255,225,150,0.3)' : 'rgba(255,110,90,0.35)');
+    this.outlineFootprint(x, y, 1, 1, valid ? '#ffd77a' : '#ff8a72');
+
+    const b = this.bctx;
+    const sx = Math.round(toScreenX(x, y) - this.viewX);
+    const sy = Math.round(toScreenY(x, y) - this.viewY);
+    const post = valid ? '#a37f4e' : '#8a5f52';
+    const flag = valid ? '#ffd77a' : '#ff8a72';
+    b.fillStyle = post;
+    b.fillRect(sx - 1, sy - 15, 2, 15);
+    b.fillStyle = flag;
+    b.fillRect(sx + 1, sy - 15, 6, 4);
+    b.fillRect(sx + 1, sy - 11, 3, 1);
   }
 
   // -------------------------------------------------------------------------

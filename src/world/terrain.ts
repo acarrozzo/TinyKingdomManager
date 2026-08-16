@@ -10,6 +10,8 @@ export const MAP_H = 40;
 /** Tree/boulder yields and regrowth pacing, in game seconds. */
 export const TREE_WOOD = 18;
 export const BOULDER_STONE = 24;
+/** Deadfall: two armfuls, no axe required, and gone once it has been picked up. */
+export const BRANCH_WOOD = 6;
 export const TREE_REGROW = 60 * 60 * 1.2;
 export const BOULDER_REGROW = 60 * 60 * 2.0;
 
@@ -43,8 +45,16 @@ function blankTile(terrain: TerrainId): Tile {
 /**
  * Builds the starting island. The centre is a deliberate clearing so the founder
  * has somewhere obvious to begin; woodland, rock and water sit a short walk away.
+ * `start` is that clearing and `arrival` is the beach the founder walks up from,
+ * which is deliberately on the far side of a walk rather than next to it.
  */
-export function generateMap(seed: number): { tiles: Tile[]; w: number; h: number; start: { x: number; y: number } } {
+export function generateMap(seed: number): {
+  tiles: Tile[];
+  w: number;
+  h: number;
+  start: { x: number; y: number };
+  arrival: { x: number; y: number };
+} {
   const r = new RNG(seed);
   const w = MAP_W;
   const h = MAP_H;
@@ -144,9 +154,34 @@ export function generateMap(seed: number): { tiles: Tile[]; w: number; h: number
   // Guarantee a workable amount of nearby wood and stone regardless of noise luck.
   ensureNodes(tiles, w, h, cx, cy, 'tree', 55, r, salt);
   ensureNodes(tiles, w, h, cx, cy, 'boulder', 26, r, salt);
+  scatterDeadfall(tiles, w, h, cx, cy, r, salt);
 
   const start = findStart(tiles, w, h, cx, cy);
-  return { tiles, w, h, start };
+  return { tiles, w, h, start, arrival: findArrival(tiles, w, h, cx, cy, r) };
+}
+
+/**
+ * Fallen branches around the middle of the island. Somebody with no axe and no
+ * kingdom can still pick these up, which is the whole of the opening: the first
+ * wood in the world is lying on the ground waiting to be noticed.
+ */
+function scatterDeadfall(tiles: Tile[], w: number, h: number, cx: number, cy: number, r: RNG, salt: number): void {
+  let placed = 0;
+  let guard = 0;
+  while (placed < 16 && guard++ < 3000) {
+    const a = r.range(0, Math.PI * 2);
+    const d = r.range(3.5, 11);
+    const x = Math.round(cx + Math.cos(a) * d);
+    const y = Math.round(cy + Math.sin(a) * d);
+    if (x < 1 || y < 1 || x >= w - 1 || y >= h - 1) continue;
+    const t = tiles[y * w + x];
+    if (t.prop) continue;
+    if (t.terrain !== 'grass' && t.terrain !== 'meadow' && t.terrain !== 'forest') continue;
+    t.prop = 'branches';
+    t.variant = Math.floor(hash2(x, y, salt + 13) * 4);
+    t.amount = BRANCH_WOOD;
+    placed++;
+  }
 }
 
 function ensureNodes(
@@ -196,6 +231,31 @@ function findStart(tiles: Tile[], w: number, h: number, cx: number, cy: number):
         if (t.terrain === 'grass' && !t.prop) return { x, y };
       }
     }
+  }
+  return { x: Math.round(cx), y: Math.round(cy) };
+}
+
+/**
+ * Somewhere on the shore to walk up from. Picks a bearing, marches out to the
+ * water and comes back to the last dry tile, so the founder starts with the sea
+ * behind them and the whole island in front.
+ */
+function findArrival(tiles: Tile[], w: number, h: number, cx: number, cy: number, r: RNG): { x: number; y: number } {
+  for (let attempt = 0; attempt < 60; attempt++) {
+    const a = r.range(0, Math.PI * 2);
+    let last: { x: number; y: number } | null = null;
+    for (let d = 6; d < Math.max(w, h); d++) {
+      const x = Math.round(cx + Math.cos(a) * d);
+      const y = Math.round(cy + Math.sin(a) * d);
+      if (x < 1 || y < 1 || x >= w - 1 || y >= h - 1) break;
+      const t = tiles[y * w + x];
+      if (t.terrain === 'water' || t.terrain === 'shallow') break;
+      // Prefer standing on the sand itself; failing that, whatever dry ground
+      // the coast last offered.
+      last = { x, y };
+      if (t.terrain === 'sand' && d > 10) return { x, y };
+    }
+    if (last && Math.hypot(last.x - cx, last.y - cy) > 9) return last;
   }
   return { x: Math.round(cx), y: Math.round(cy) };
 }
