@@ -9,7 +9,7 @@
  * shell updates the existing nodes rather than replacing the panel.
  */
 
-import type { Building, PropId, ResourceId, SpeciesId, Villager } from '../types';
+import type { Building, ResourceId, SpeciesId, Villager } from '../types';
 import {
   BUILDINGS,
   JOB_META,
@@ -18,14 +18,18 @@ import {
   SPECIES,
   SPECIES_ORDER,
   buildingName,
+  rangeOf,
   rankOf,
+  relocateCost,
 } from '../sim/defs';
 import { buildingById, homeCapacity, jobSlots, villagerById, xpOf } from '../sim/state';
+import { buildLimit, commonsGrants } from '../sim/goals';
 import { labourNeeded, siteNeeds } from '../sim/villager';
 import { protectedBuilding } from '../sim/founding';
 import { fmtDuration } from '../core/util';
 import type { Game } from '../game';
 import { listSlots } from '../save/save';
+import { relocateCostLine } from './build';
 import { activityLabel, cap, esc, type UIEnv } from './context';
 import { jobOptionsFor } from './inspector';
 import { paintBuilding, paintVillager } from './portraits';
@@ -304,32 +308,24 @@ function buildingWork(game: Game, b: Building): string {
   if (def.harvests) {
     const what = def.harvests === 'tree' ? 'trees' : 'boulders';
     const res = def.harvests === 'tree' ? 'wood' : 'stone';
-    const nearby = nodesNear(game, b, def.harvests);
+    const reach = rangeOf(b.def, b.level);
+    const nearby = game.nodesInRange(b.def, b.level, b.x, b.y);
     out += `<div class="bsec"><div class="bh">Works the ground nearby</div>
-      <div class="kv"><span class="k">${cap(what)} within reach</span><span class="v">${nearby}</span></div>
+      <div class="kv"><span class="k">${cap(what)} within ${reach} tiles</span><span class="v">${nearby}</span></div>
       <div class="kv"><span class="k">${RESOURCE_META[res].name} in the store</span><span class="v">${Math.floor(g.stock[res as ResourceId])}</span></div>
       <div class="tiny muted" style="margin-top:7px;line-height:1.55">${
         nearby === 0
-          ? `Nothing left within a short walk. They will range further, and be slower for it, until these grow back.`
-          : `Workers here take the nearest ${what}, haul the load to the closest store, and come back for more.`
+          ? `Nothing left within reach. They will range further, and be slower for it, until these grow back — and if this ground is worked out for good, ${
+              game.canRelocate(b) ? 'move it somewhere with more in it.' : 'it can be moved once it is finished.'
+            }`
+          : `Workers here take the nearest ${what}, haul the load to the closest store, and come back for more. ${
+              def.harvests === 'boulder'
+                ? 'Worked-out boulders leave rubble, and rubble gathers back into a boulder in time, so the ground recovers.'
+                : 'Felled trees leave stumps, and stumps grow back.'
+            }`
       }</div></div>`;
   }
   return out || `<div class="tiny muted">Nothing is made here.</div>`;
-}
-
-/** Rough count of what a lodge or quarry has left to work within its usual range. */
-function nodesNear(game: Game, b: Building, prop: PropId): number {
-  const g = game.state;
-  const def = BUILDINGS[b.def];
-  const cx = b.x + def.w / 2;
-  const cy = b.y + def.h / 2;
-  let n = 0;
-  for (let y = Math.max(0, Math.floor(cy - 13)); y < Math.min(g.h, Math.ceil(cy + 13)); y++)
-    for (let x = Math.max(0, Math.floor(cx - 13)); x < Math.min(g.w, Math.ceil(cx + 13)); x++) {
-      const t = g.tiles[y * g.w + x];
-      if (t.prop === prop && t.amount > 0) n++;
-    }
-  return n;
 }
 
 function siteBody(game: Game, b: Building): string {
@@ -348,7 +344,19 @@ function siteBody(game: Game, b: Building): string {
   const crew = g.villagers.filter((v) => v.claim?.kind === 'labour' && v.claim.id === b.id);
   const haulers = g.villagers.filter((v) => v.claim?.kind === 'supply' && v.claim.id === b.id);
 
-  return `<div class="bsec"><div class="bh">${b.upgrading ? 'Improvement under way' : 'Under construction'}</div>
+  const origin = b.relocOf ? buildingById(g, b.relocOf) : null;
+  const heading = b.relocOf
+    ? `Ground being made ready${origin ? ` for the ${buildingName(origin.def, origin.level).toLowerCase()}` : ''}`
+    : b.upgrading
+      ? 'Improvement under way'
+      : 'Under construction';
+
+  return `<div class="bsec"><div class="bh">${heading}</div>
+    ${
+      origin
+        ? `<div class="tiny muted" style="margin:-2px 0 9px;line-height:1.55">The ${buildingName(origin.def, origin.level).toLowerCase()} at ${origin.x}, ${origin.y} carries on working until this is finished, and then simply steps across — same level, same people, same name.</div>`
+        : ''
+    }
     <div class="needs">${rows}
       <div class="need"><span aria-hidden="true">🔨</span><span class="track"><i style="width:${labourPct}%;background:var(--good)"></i></span>
       <span class="num">${Math.round(labourPct)}% built</span></div></div>
@@ -378,6 +386,7 @@ function siteBody(game: Game, b: Building): string {
 }
 
 function buildingAbout(game: Game, b: Building): string {
+  const g = game.state;
   const def = BUILDINGS[b.def];
   const facts: string[] = [];
   const kv = (k: string, v: string) => `<div class="kv"><span class="k">${k}</span><span class="v">${v}</span></div>`;
@@ -387,28 +396,69 @@ function buildingAbout(game: Game, b: Building): string {
   if (def.slots) facts.push(kv('Places to work', `${jobSlots(b)}`));
   if (def.storage) facts.push(kv('Adds to the store', `${def.storage[Math.min(b.level, def.storage.length) - 1]}`));
   if (def.job) facts.push(kv('Trade', JOB_META[def.job].name));
+  if (def.harvests) facts.push(kv('Workers range', `${rangeOf(b.def, b.level)} tiles`));
+  const limit = buildLimit(g, b.def);
+  if (Number.isFinite(limit.max)) {
+    facts.push(kv('The kingdom keeps', def.unique ? 'One, and it can be moved' : `${limit.built} of ${limit.max}`));
+  }
   facts.push(kv('Stands on', `${def.w}×${def.h} tiles at ${b.x}, ${b.y}`));
   if (b.stage === 'done' && b.built) facts.push(kv('Built', `Day ${b.built}`));
   if (def.light) facts.push(kv('After dark', 'Lit'));
 
-  const gains = improveGains(b);
-  const upgradeable = b.stage === 'done' && b.level < def.maxLevel && !b.upgrading;
-  const cost = upgradeable
-    ? game
-        .upgradeCost(b)
-        .map((c) => `${RESOURCE_META[c.res].icon} ${c.qty} ${RESOURCE_META[c.res].name.toLowerCase()}`)
-        .join(' · ')
-    : '';
-  /*
-   * What the kingdom has to have *done*, ticked off one line at a time. A
-   * single "not yet" would be true and useless; the whole point of a structural
-   * gate is that you can see what it is waiting for. A step nothing can satisfy
-   * is shown the same way, which is how the last one reads as a horizon rather
-   * than as something broken.
-   */
-  const reqs = upgradeable ? game.upgradeRequirements(b) : [];
+  return `<div class="bsec">
+      <div class="tiny" style="line-height:1.6;color:var(--dim)">${esc(def.desc)}</div>
+    </div>
+    ${movingNote(game, b)}
+    <div class="bsec"><div class="bh">How it works</div>
+      <div class="tiny muted" style="line-height:1.65">${esc(def.how)}</div>
+    </div>
+    <div class="bsec"><div class="bh">The particulars</div>${facts.join('')}</div>
+    ${improveSection(game, b)}`;
+}
+
+/**
+ * Everything the next step of this building asks for, always, whether or not it
+ * can be taken yet — materials with what is in store beside what is wanted,
+ * accomplishments ticked off one at a time, and what the step hands back.
+ *
+ * The rule this section exists to obey: a disabled button is not an
+ * explanation. Anything the player could be waiting on has to be readable
+ * *before* they are waiting on it, so a requirement nobody has met yet is shown
+ * exactly like one they have — same row, different mark. The last step of the
+ * commons is deliberately impossible, and it appears here as a line saying so
+ * rather than as a gap where a level ought to be.
+ */
+function improveSection(game: Game, b: Building): string {
+  const g = game.state;
+  const def = BUILDINGS[b.def];
+  const kv = (k: string, v: string) => `<div class="kv"><span class="k">${k}</span><span class="v">${v}</span></div>`;
+
+  if (b.upgrading) {
+    return `<div class="bsec"><div class="tiny muted">Improvements are under way. See the Site tab for what is still wanted.</div></div>`;
+  }
+  if (b.stage !== 'done') return '';
+  if (b.level >= def.maxLevel) {
+    return def.maxLevel > 1 ? `<div class="bsec"><div class="tiny muted">It is as good as it gets.</div></div>` : '';
+  }
+
   const nextName = def.levelNames?.[Math.min(b.level, def.levelNames.length - 1)] ?? '';
-  const reqRows = reqs
+  const reserved = game.reservedMaterials();
+  // What is genuinely free, not what is stacked: materials already promised to
+  // a site are spoken for, and counting them here would promise them twice.
+  const costRows = game
+    .upgradeCost(b)
+    .map(({ res, qty }) => {
+      const have = Math.floor(g.stock[res] - (reserved[res] ?? 0));
+      const met = have >= qty;
+      return `<div class="kv"><span class="k">${met ? '✓' : '○'} ${RESOURCE_META[res].icon} ${esc(
+        RESOURCE_META[res].name,
+      )}</span>
+        <span class="v" style="color:${met ? 'var(--good)' : 'var(--faint)'}">${Math.max(0, have)} of ${qty}</span></div>`;
+    })
+    .join('');
+
+  const reqRows = game
+    .upgradeRequirements(b)
     .map(
       (r) =>
         `<div class="kv"><span class="k">${r.met ? '✓' : '○'} ${esc(r.label)}</span>
@@ -416,31 +466,69 @@ function buildingAbout(game: Game, b: Building): string {
     )
     .join('');
 
-  return `<div class="bsec">
-      <div class="tiny" style="line-height:1.6;color:var(--dim)">${esc(def.desc)}</div>
-    </div>
-    <div class="bsec"><div class="bh">How it works</div>
-      <div class="tiny muted" style="line-height:1.65">${esc(def.how)}</div>
-    </div>
-    <div class="bsec"><div class="bh">The particulars</div>${facts.join('')}</div>
-    ${
-      upgradeable
-        ? `<div class="bsec"><div class="bh">Improving it${nextName ? ` · ${esc(nextName)}` : ''}</div>
-            ${kv('Costs', cost)}
-            ${gains.map((line) => `<div class="tiny muted" style="line-height:1.55">${esc(line)}</div>`).join('')}
-            ${
-              reqRows
-                ? `<div class="tiny muted" style="margin:9px 0 4px">And what the kingdom has to have got to:</div>${reqRows}`
-                : ''
-            }
-            <div class="tiny muted" style="margin-top:6px;line-height:1.55">The work is done the same way as building it: materials carried over, then somebody swinging a hammer. It stays in service throughout.</div>
-          </div>`
-        : b.upgrading
-          ? `<div class="bsec"><div class="tiny muted">Improvements are under way. See the Site tab.</div></div>`
-          : def.maxLevel > 1
-            ? `<div class="bsec"><div class="tiny muted">It is as good as it gets.</div></div>`
-            : ''
-    }`;
+  // What the step is for. Read off the def where it can be — beds, slots, room
+  // in the store — and off the unlock tier where the commons is concerned, so
+  // the answer to "why bother" is on the same screen as the price.
+  const gains = improveGains(b);
+  if (def.harvests && def.range && b.level < def.range.length) {
+    gains.push(`Workers range: ${rangeOf(b.def, b.level)} → ${rangeOf(b.def, b.level + 1)} tiles`);
+  }
+  if (b.def === 'commons') gains.push(...commonsGrants(g, b.level));
+
+  const waiting = [
+    ...game.upgradeRequirements(b).filter((r) => !r.met).map((r) => r.label.toLowerCase()),
+  ];
+  const shortOf = game
+    .upgradeCost(b)
+    .filter(({ res, qty }) => g.stock[res] - (reserved[res] ?? 0) < qty)
+    .map(({ res }) => RESOURCE_META[res].name.toLowerCase());
+
+  const why = b.movingTo
+    ? 'It is on its way somewhere else. One thing at a time.'
+    : waiting.length || shortOf.length
+      ? `Not yet: ${[...shortOf.map((s) => `short of ${s}`), ...waiting].join('; ')}.`
+      : 'Everything it asks for is here. The Improve button will start the work.';
+
+  return `<div class="bsec"><div class="bh">Improving it${nextName ? ` · ${esc(nextName)}` : ''}</div>
+      <div class="tiny muted" style="margin:0 0 5px">What it costs</div>
+      ${costRows || kv('Costs', 'Nothing at all')}
+      ${
+        reqRows
+          ? `<div class="tiny muted" style="margin:10px 0 5px">And what the kingdom has to have got to</div>${reqRows}`
+          : ''
+      }
+      ${
+        gains.length
+          ? `<div class="tiny muted" style="margin:10px 0 5px">What it gives back</div>${gains
+              .map((line) => `<div class="kv"><span class="k">${esc(line)}</span><span class="v"></span></div>`)
+              .join('')}`
+          : ''
+      }
+      <div class="tiny muted" style="margin-top:9px;line-height:1.55">${esc(why)}</div>
+      <div class="tiny muted" style="margin-top:6px;line-height:1.55">The work is done the same way as building it: materials carried over, then somebody swinging a hammer. It stays in service throughout.</div>
+    </div>`;
+}
+
+/** A move under way, said plainly wherever the building's panel is open. */
+function movingNote(game: Game, b: Building): string {
+  if (!b.movingTo) return '';
+  const site = buildingById(game.state, b.movingTo);
+  if (!site) return '';
+  const need = labourNeeded(site);
+  const pct = need > 0 ? Math.round(Math.min(100, (site.labour / need) * 100)) : 0;
+  const short = siteNeeds(site).filter((n) => n.have < n.need);
+  return `<div class="bsec"><div class="bh">On its way to ${site.x}, ${site.y}</div>
+    <div class="tiny muted" style="line-height:1.55">${
+      short.length
+        ? `Waiting on materials at the new spot — ${short
+            .map((n) => `${Math.floor(n.have)}/${n.need} ${esc(RESOURCE_META[n.res].name.toLowerCase())}`)
+            .join(', ')}.`
+        : `The new one is ${pct}% built.`
+    } Nothing changes here until it is finished.</div>
+    <div class="row" style="margin-top:8px">
+      <button class="btn small" data-act="goto" data-x="${site.x}" data-y="${site.y}">Show me the new spot</button>
+      <button class="btn small" data-act="cancel-move" data-id="${b.id}">Stay here after all</button>
+    </div></div>`;
 }
 
 /** What one more level actually buys, read straight off the def. */
@@ -475,7 +563,16 @@ export function buildingFoot(game: Game, b: Building): string {
   // A greyed-out button with no reason on it is the one thing here people would
   // have to guess at, and the reason is usually not the materials.
   const waiting = upgradeable ? game.upgradeRequirements(b).filter((r) => !r.met) : [];
-  const why = canUp ? '' : waiting.length ? ` — waiting on: ${waiting[0].label.toLowerCase()}` : ' — not enough in store';
+  const why = canUp
+    ? ''
+    : b.movingTo
+      ? ' — it is on its way somewhere else'
+      : waiting.length
+        ? ` — waiting on: ${waiting[0].label.toLowerCase()}`
+        : ' — not enough in store';
+  // Moving is offered on the building's own panel and nowhere else, because it
+  // is a thing you do to a *particular* building rather than a mode you enter.
+  const movable = game.canRelocate(b);
   return `${
     upgradeable
       ? `<button class="btn small ${canUp ? 'primary' : ''}" data-act="upgrade" data-id="${b.id}" ${canUp ? '' : 'disabled'}
@@ -483,8 +580,21 @@ export function buildingFoot(game: Game, b: Building): string {
           aria-label="${esc(`Improve this building${why}`)}">⬆️ Improve ${cost}</button>`
       : ''
   }
+    ${
+      movable
+        ? `<button class="btn small" data-act="relocate" data-id="${b.id}"
+            title="${esc(`Move it somewhere else — costs ${plainRelocateCost(b)}, and it keeps working until the new one is ready`)}"
+            aria-label="${esc(`Move this ${def.name.toLowerCase()} somewhere else`)}">🧭 Move ${relocateCostLine(b.def)}</button>`
+        : ''
+    }
     <button class="btn small" data-act="goto" data-x="${b.x}" data-y="${b.y}">Show me</button>
     ${protectedBuilding(b) ? '' : `<button class="btn small danger" data-act="demolish" data-id="${b.id}">Remove</button>`}`;
+}
+
+function plainRelocateCost(b: Building): string {
+  const entries = Object.entries(relocateCost(b.def));
+  if (!entries.length) return 'nothing';
+  return entries.map(([res, qty]) => `${qty} ${RESOURCE_META[res as ResourceId].name.toLowerCase()}`).join(' and ');
 }
 
 // ---------------------------------------------------------------------------

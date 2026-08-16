@@ -29,7 +29,7 @@ import {
   newSlotId,
   renameSlot,
 } from '../save/save';
-import { newGame } from '../sim/state';
+import { buildingById, newGame } from '../sim/state';
 import { Focus, keepFocus } from './a11y';
 import { cap, el, esc, type UIEnv } from './context';
 import { Hud, storesBody } from './hud';
@@ -404,7 +404,7 @@ export class UI {
      * used the tool on the map. Placement asks here either way.
      */
     const asking = this.game.demolishTarget > 0 && this.modal !== 'building';
-    const confirming = this.game.requireConfirm && (kind === 'build' || kind === 'camp');
+    const confirming = this.game.requireConfirm && (kind === 'build' || kind === 'camp' || kind === 'relocate');
     const bar =
       asking || confirming ? placementBarMarkup(this.game, this.env) : toolHintMarkup(this.game, this.env);
 
@@ -873,6 +873,19 @@ export class UI {
         break;
       case 'upgrade':
         game.upgrade(id);
+        break;
+      case 'relocate': {
+        const b = buildingById(game.state, id);
+        game.startRelocate(id);
+        // The map is the thing being pointed at next, so the panel steps aside.
+        this.setModal(null);
+        if (b) this.focus.announce(`Moving the ${BUILDINGS[b.def].name.toLowerCase()}. Choose where it should stand.`);
+        this.refresh();
+        break;
+      }
+      case 'cancel-move':
+        game.cancelRelocation(id);
+        this.refresh();
         break;
       case 'demolish':
         // Asks; it does not remove. The panel's footer becomes the question.

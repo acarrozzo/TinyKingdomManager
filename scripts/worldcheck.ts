@@ -35,6 +35,23 @@ const NODE_RADIUS = 14;
 const CAMP_RADIUS = 9;
 /** The opening should still be a walk rather than a step. */
 const MIN_ARRIVAL_DISTANCE = 6;
+/**
+ * Somewhere a quarry could actually go, and enough of them to be a choice.
+ *
+ * This one earns its place. Stone now comes from a quarry and from nowhere
+ * else, the kingdom is allowed exactly one quarry, and a quarry's workers only
+ * range so far — so a world where every boulder is scattered too thinly for any
+ * two-by-two of buildable ground to have a worthwhile number inside its reach
+ * is a world with no stone in it at all. That is not a hard start, it is a
+ * kingdom that cannot pass its second commons. `WANT_QUARRY_STONE` is
+ * deliberately well above the handful of stone the early costs want, because
+ * boulders regrow slowly and a quarry with four of them is a quarry that stops.
+ */
+const QUARRY_W = 2;
+const QUARRY_H = 2;
+const QUARRY_RANGE = 13;
+const WANT_QUARRY_STONE = 14;
+const WANT_QUARRY_SITES = 3;
 
 const count = Number(process.argv[2] ?? 10000);
 const first = Number(process.argv[3] ?? 1);
@@ -119,7 +136,70 @@ function check(seed: number, m: World): string[] {
     bad.push(`${nearTrees(m, reach)} trees within ${NEAR_TREE_RADIUS} of the start, wanted ${WANT_NEAR_TREES}`);
   }
 
+  // Somewhere to put the one quarry the kingdom is allowed, on land the founder
+  // can walk to, with real stone inside its reach.
+  const sites = quarrySites(m, reach);
+  if (sites < WANT_QUARRY_SITES) {
+    bad.push(
+      `${sites} places a quarry could work from (${WANT_QUARRY_STONE}+ boulders within ${QUARRY_RANGE}), wanted ${WANT_QUARRY_SITES}`,
+    );
+  }
+
   return bad;
+}
+
+/**
+ * Two-by-two footprints of buildable, reachable ground with a worthwhile number
+ * of boulders inside a quarry's range. Sampled on a stride rather than every
+ * tile: neighbouring footprints see almost the same boulders, so checking each
+ * one costs a great deal and says almost nothing new — and it is the difference
+ * between "somewhere" and "nowhere" that this is for.
+ */
+function quarrySites(m: World, reach: Uint8Array): number {
+  const { tiles, w, h } = m;
+  let n = 0;
+  for (let y = 1; y < h - QUARRY_H; y += 2)
+    for (let x = 1; x < w - QUARRY_W; x += 2) {
+      let ok = true;
+      for (let dy = 0; dy < QUARRY_H && ok; dy++)
+        for (let dx = 0; dx < QUARRY_W; dx++) {
+          const t = tiles[(y + dy) * w + (x + dx)];
+          if (t.terrain === 'water' || t.terrain === 'shallow' || reach[(y + dy) * w + (x + dx)] !== 1) ok = false;
+        }
+      if (!ok) continue;
+      if (boulders(m, x + (QUARRY_W - 1) / 2, y + (QUARRY_H - 1) / 2) >= WANT_QUARRY_STONE) n++;
+    }
+  return n;
+}
+
+/** The most boulders any single legal quarry site can reach. Reported, not asserted. */
+function bestQuarry(m: World, reach: Uint8Array): number {
+  const { tiles, w, h } = m;
+  let best = 0;
+  for (let y = 1; y < h - QUARRY_H; y += 2)
+    for (let x = 1; x < w - QUARRY_W; x += 2) {
+      let ok = true;
+      for (let dy = 0; dy < QUARRY_H && ok; dy++)
+        for (let dx = 0; dx < QUARRY_W; dx++) {
+          const t = tiles[(y + dy) * w + (x + dx)];
+          if (t.terrain === 'water' || t.terrain === 'shallow' || reach[(y + dy) * w + (x + dx)] !== 1) ok = false;
+        }
+      if (ok) best = Math.max(best, boulders(m, x + (QUARRY_W - 1) / 2, y + (QUARRY_H - 1) / 2));
+    }
+  return best;
+}
+
+/** Boulders within a quarry's reach of a point, measured as the planner does. */
+function boulders(m: World, cx: number, cy: number): number {
+  let n = 0;
+  const r2 = QUARRY_RANGE * QUARRY_RANGE;
+  for (let y = Math.max(0, Math.floor(cy - QUARRY_RANGE)); y <= Math.min(m.h - 1, Math.ceil(cy + QUARRY_RANGE)); y++)
+    for (let x = Math.max(0, Math.floor(cx - QUARRY_RANGE)); x <= Math.min(m.w - 1, Math.ceil(cx + QUARRY_RANGE)); x++) {
+      if (m.tiles[y * m.w + x].prop !== 'boulder') continue;
+      if ((x - cx) ** 2 + (y - cy) ** 2 > r2) continue;
+      n++;
+    }
+  return n;
 }
 
 /** How many tiles the game would accept as the centre of a camp. */
@@ -180,7 +260,15 @@ const started = Date.now();
 
 // Counts worth seeing even when everything passes: an island that only ever
 // scrapes the minimum is one bad tuning change away from failing.
-const stats = { trees: [Infinity, 0], boulders: [Infinity, 0], near: [Infinity, 0], sites: [Infinity, 0], treeD: [Infinity, 0] };
+const stats = {
+  trees: [Infinity, 0],
+  boulders: [Infinity, 0],
+  near: [Infinity, 0],
+  sites: [Infinity, 0],
+  treeD: [Infinity, 0],
+  quarry: [Infinity, 0],
+  quarryBest: [Infinity, 0],
+};
 
 for (let i = 0; i < count; i++) {
   const seed = first + i;
@@ -222,6 +310,8 @@ for (let i = 0; i < count; i++) {
   note(stats.near, nearTrees(m, reach));
   note(stats.sites, countCampsites(m.tiles, m.w, m.h));
   note(stats.treeD, nearestTree);
+  note(stats.quarry, quarrySites(m, reach));
+  note(stats.quarryBest, bestQuarry(m, reach));
 
   if (i > 0 && i % 2000 === 0) console.log(`  …${i}`);
 }
@@ -233,3 +323,5 @@ console.log(`  boulders within ${NODE_RADIUS}     ${stats.boulders[0]}–${stats
 console.log(`  campsites to choose between      ${stats.sites[0]}–${stats.sites[1]}`);
 console.log(`  trees within ${NEAR_TREE_RADIUS} of the start   ${stats.near[0]}–${stats.near[1]}`);
 console.log(`  walk to the nearest tree        ${stats.treeD[0].toFixed(1)}–${stats.treeD[1].toFixed(1)} tiles`);
+console.log(`  places a quarry could work from ${stats.quarry[0]}–${stats.quarry[1]}`);
+console.log(`  boulders at the best of them    ${stats.quarryBest[0]}–${stats.quarryBest[1]}`);

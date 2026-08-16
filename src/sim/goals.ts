@@ -27,16 +27,79 @@ function staffed(g: GameState, def: string): boolean {
  * The tier of building each level of the commons hands over. This is the
  * kingdom's spine: everything else the menu offers is either a comfort, which
  * needs no permission at all, or part of the food chain, which the goals open.
+ *
+ * The Base Camp hands over all four foundations at once — somewhere to sleep,
+ * somewhere to put things, and the two buildings that produce the only two raw
+ * materials there are. That is deliberate: the first hour is about deciding
+ * where those four go, and a kingdom that can fell trees but not break stone is
+ * one waiting on permission rather than on itself.
  */
 const COMMONS_UNLOCKS: Record<number, string[]> = {
-  1: ['cabin'],
-  2: ['storehouse', 'quarry', 'lodge'],
+  1: ['cabin', 'storehouse', 'lodge', 'quarry'],
+  2: ['well'],
   3: ['statue'],
 };
 
 /** Called when the commons is finished or improved, with the level it now is. */
 export function unlockCommonsTier(g: GameState, level: number): void {
   for (const key of COMMONS_UNLOCKS[level] ?? []) unlock(g, key);
+}
+
+/** The commons' level, which is what every building count is measured against. */
+export function commonsLevel(g: GameState): number {
+  const camp = g.buildings.find((b) => b.def === 'commons');
+  return camp ? camp.level : 0;
+}
+
+/**
+ * How many of a kind may stand at once, and how many do. `max` is `Infinity`
+ * for the small comforts, which are freely repeatable and always were.
+ *
+ * A building being *moved* does not count twice. Its destination is a site like
+ * any other, but the kingdom still has the one lodge — counting the site as a
+ * second would make the display read "2/1" for the whole of a move, which is
+ * both wrong and alarming.
+ */
+export function buildLimit(g: GameState, id: BuildingId): { built: number; max: number } {
+  const def = BUILDINGS[id];
+  const built = g.buildings.filter((b) => b.def === id && !b.relocOf).length;
+  if (def.once) return { built, max: 1 };
+  if (def.unique) return { built, max: 1 };
+  if (!def.maxCount) return { built, max: Infinity };
+  const level = commonsLevel(g);
+  // Before the camp stands there is no allowance at all, which is moot — the
+  // build menu offers nothing during founding anyway.
+  if (level < 1) return { built, max: 0 };
+  return { built, max: def.maxCount[Math.min(level, def.maxCount.length) - 1] };
+}
+
+/** True when the kingdom already has as many of these as it is allowed. */
+export function atBuildLimit(g: GameState, id: BuildingId): boolean {
+  const { built, max } = buildLimit(g, id);
+  return built >= max;
+}
+
+/**
+ * What the next step of the commons hands over, in words, for the checklist in
+ * its own panel. A structural gate the player cannot see the far side of is
+ * just a locked door; this is the part that says what is behind it.
+ */
+export function commonsGrants(g: GameState, level: number): string[] {
+  const out: string[] = [];
+  const next = level + 1;
+  for (const key of COMMONS_UNLOCKS[next] ?? []) {
+    const def = (BUILDINGS as Record<string, { name: string } | undefined>)[key];
+    if (def) out.push(`Opens the ${def.name}`);
+  }
+  for (const id of ['cabin', 'storehouse'] as BuildingId[]) {
+    const counts = BUILDINGS[id].maxCount;
+    if (!counts) continue;
+    const now = counts[Math.min(level, counts.length) - 1] ?? 0;
+    const then = counts[Math.min(next, counts.length) - 1] ?? now;
+    if (then > now) out.push(`${BUILDINGS[id].name}s allowed: ${now} → ${then}`);
+  }
+  void g;
+  return out;
 }
 
 /**
@@ -85,16 +148,9 @@ export function buildGoals(): Goal[] {
       reward: { wood: 10 },
     },
     {
-      id: 'settled',
-      title: 'Make it a Settled Camp',
-      desc: 'A camp that means to stay: awnings, crates and proper seating. Open the camp on the map and improve it — it wants a cabin standing, three people about, and the materials.',
-      done: false,
-      check: (g) => has(g, 'commons', 2),
-    },
-    {
       id: 'store',
       title: 'Build a Storehouse',
-      desc: 'The camp only holds so much, and it is at the middle of everything. A storehouse raises the ceiling and shortens the walk.',
+      desc: 'The camp only holds sixty, and it is at the middle of everything. A storehouse raises the ceiling and shortens the walk — put it near where the work is.',
       done: false,
       check: (g) => has(g, 'storehouse'),
       unlocks: 'farm',
@@ -102,18 +158,25 @@ export function buildGoals(): Goal[] {
     {
       id: 'lodge',
       title: "Put someone to work at a Woodcutter's Lodge",
-      desc: 'Build a lodge near trees, then assign a villager to it from the Jobs panel.',
+      desc: 'Build the lodge in or beside a wood — the ring on the map is how far its woodcutters will go — then assign a villager to it.',
       done: false,
       check: (g) => staffed(g, 'lodge'),
-      reward: { stone: 15 },
+      reward: { wood: 20 },
     },
     {
       id: 'stone',
-      title: 'Stock 40 stone',
-      desc: 'Boulders can be broken by hand, but a Quarry does it far better.',
+      title: 'Open a Quarry and stock 40 stone',
+      desc: 'Nothing breaks a boulder by hand. Place the quarry against rocky ground, with boulders inside the ring, and put somebody on it — every scrap of stone the kingdom will ever have comes from there.',
       done: false,
       check: (g) => g.stock.stone >= 40,
       unlocks: 'mill',
+    },
+    {
+      id: 'settled',
+      title: 'Make it a Settled Camp',
+      desc: 'A camp that means to stay: awnings, crates and proper seating. Open the camp on the map and improve it — its panel lists everything it wants, materials and all, and ticks them off as you get there.',
+      done: false,
+      check: (g) => has(g, 'commons', 2),
     },
     {
       id: 'farm',
@@ -223,6 +286,12 @@ export function isUnlocked(g: GameState, key?: string): boolean {
  * during founding nothing at all is on offer. The founding asks for one
  * decision and it is not a building — everything else would be unaffordable
  * anyway, since there is no store yet, only the wood in the founder's arms.
+ *
+ * Being at the count limit is deliberately *not* one of the rules. A kind of
+ * building the kingdom has all of it is allowed still belongs in the list,
+ * greyed and reading "1/1 built": a row that quietly vanishes teaches nothing,
+ * and the limit is exactly the thing the player has to be able to plan around.
+ * `Game.placeProblem` is what refuses the placement.
  */
 export function availableToBuild(g: GameState, id: BuildingId): boolean {
   if (!foundingDone(g)) return false;

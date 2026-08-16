@@ -143,6 +143,12 @@ export interface BuildingDef {
   recipe?: Recipe;
   /** Node prop harvested by this building's workers. */
   harvests?: PropId;
+  /**
+   * How far this building's workers range for their nodes, per level. Shown to
+   * the player while placing or moving it, because a lodge with no trees in
+   * reach is the one placement mistake that looks fine and produces nothing.
+   */
+  range?: number[];
   /** Farm plots are generated inside the footprint. */
   plots?: boolean;
   /** Lights up at night. */
@@ -153,6 +159,20 @@ export interface BuildingDef {
   unlock?: string;
   /** The kingdom only ever has one; it leaves the menu once it stands. */
   once?: boolean;
+  /**
+   * A principal building: the kingdom has one at a time, and rather than
+   * building a second the player *moves* the one they have. Capacity, range and
+   * job slots grow through improvement instead of through duplication — a
+   * second lodge would be a production strategy, and would stop the first from
+   * being a place.
+   */
+  unique?: boolean;
+  /**
+   * How many may stand at once, indexed by the commons' level. Cabins and
+   * storehouses are not unique, but neither are they unlimited: the count is
+   * one of the things the commons hands over as it grows.
+   */
+  maxCount?: number[];
   /** Sort weight in the build menu. */
   order: number;
 }
@@ -183,6 +203,15 @@ export interface Building {
   plots: { x: number; y: number; state: 'empty' | 'growing' | 'ripe'; growth: number; claimed: number }[];
   /** True while an upgrade is under construction. */
   upgrading: boolean;
+  /**
+   * A move under way. The building being moved carries `movingTo`, the id of a
+   * plain construction site standing on the new ground; that site carries
+   * `relocOf` pointing back. The original keeps working the whole time and only
+   * steps across when the site is finished, so moving the only quarry never
+   * costs the kingdom its stone halfway through.
+   */
+  movingTo?: number;
+  relocOf?: number;
   /** Game-day the building was completed. */
   built: number;
   /** Cosmetic seed for per-instance variation. */

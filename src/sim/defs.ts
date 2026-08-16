@@ -38,7 +38,7 @@ export const RESOURCE_INFO: Record<string, { from: string; used: string }> = {
     used: 'Nearly every building, from a cabin at 20 up to a windmill at 50, and every step the commons takes.',
   },
   stone: {
-    from: 'Stoneworkers at the quarry, and helpers breaking loose boulders.',
+    from: 'Stoneworkers at the quarry, and nowhere else. Boulders are too much for bare hands; until there is a quarry they simply stand there being scenery.',
     used: 'Improving the commons or a cabin, wells, and the workshops further along the chain.',
   },
   wheat: {
@@ -63,7 +63,7 @@ export const JOB_META: Record<JobId, { name: string; icon: string; desc: string 
   helper: {
     name: 'Helper',
     icon: '🧺',
-    desc: 'Gathers wood and stone by hand, hauls goods between buildings, and helps raise new construction.',
+    desc: 'Fells trees by hand, hauls goods between buildings, and helps raise new construction. Stone is beyond bare hands; that wants a quarry.',
   },
   woodcutter: { name: 'Woodcutter', icon: '🪓', desc: 'Fells trees near the lodge and carries wood to storage.' },
   stoneworker: { name: 'Stoneworker', icon: '⛏️', desc: 'Works the boulders near the quarry for stone.' },
@@ -132,6 +132,10 @@ function standing(g: GameState, def: BuildingId): boolean {
 const COMMONS_REQS: UpgradeReq[][] = [
   [
     { label: 'A cabin with a roof on it', met: (g) => standing(g, 'cabin') },
+    // The Base Camp itself hands the quarry over, so asking for one here is a
+    // step forward rather than a knot: the stone this improvement costs has to
+    // come from somewhere, and there is exactly one somewhere.
+    { label: 'A quarry, since nothing else gives stone', met: (g) => standing(g, 'quarry') },
     { label: 'Three people about the place', met: (g) => g.villagers.length >= 3 },
   ],
   [
@@ -171,7 +175,7 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     order: -1,
     once: true,
     desc: 'A fire, somewhere to put things down, and room to sleep rough beside it. Where the kingdom begins, and afterwards the middle of it.',
-    how: 'The first fire, the kingdom\'s first store and two places to sleep out of doors, all on the same nine tiles. It grows with the kingdom rather than being replaced — a Settled Camp, then a Village Commons, and there is talk of something after that — and it never closes for the work: the store stays open at its current size the whole time, so nothing is ever stranded. Improving it wants materials and a settlement that has got somewhere; both are listed before you commit. People walk through it, sit at it and stand about in it whether or not they have any business there, which is rather the point. It cannot be taken down.',
+    how: 'The first fire, the kingdom\'s first store and two places to sleep out of doors, all on the same nine tiles. It grows with the kingdom rather than being replaced — a Settled Camp, then a Village Commons, and there is talk of something after that — and it never closes for the work: the store stays open at its current size the whole time, so nothing is ever stranded. Every step opens up more of the kingdom: new kinds of building, and one more cabin and one more storehouse than before. Improving it wants materials and a settlement that has got somewhere; both are listed in full before you commit. People walk through it, sit at it and stand about in it whether or not they have any business there, which is rather the point. It cannot be taken down, and it cannot be moved: it stands where the kingdom began.',
     housing: [2, 2, 2, 2],
     storage: [60, 200, 450, 800],
     light: [{ x: 1.5, y: 1.5, radius: 50, color: '#ffb35c' }],
@@ -195,7 +199,11 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     order: 0,
     unlock: 'cabin',
     desc: 'A roof, a door, and somewhere dry to sleep. Sleeps two, and grows.',
-    how: 'Somewhere dry to sleep, and at first that is the whole of it. People walk home at their own bedtime and rise at their own hour, a little earlier or later than each other. Improving it adds two more beds and a good deal more building: a chimney first, then stone footings and a proper roof. Six sleep in a finished one. On the day it is done it takes in anyone still sleeping out at the commons, and you can move people between cabins yourself from this panel.',
+    how: 'Somewhere dry to sleep, and at first that is the whole of it. People walk home at their own bedtime and rise at their own hour, a little earlier or later than each other. Improving it adds two more beds and a good deal more building: a chimney first, then stone footings and a proper roof. Six sleep in a finished one. How many cabins the kingdom may have at once is set by the commons — one more with every step it takes — so a growing settlement is usually better served by improving the cabins it has. On the day one is finished it takes in anyone still sleeping out at the commons, and you can move people between cabins yourself from this panel.',
+    // One more cabin per step the commons takes. Housing is the tightest of the
+    // two counts by design: a cabin that grows to six beds is worth more than a
+    // second cabin of two, and this is what makes that the obvious move.
+    maxCount: [1, 2, 3, 4],
     housing: [2, 4, 6],
     light: [{ x: 1.0, y: 1.35, radius: 36, color: '#ffc06a' }],
     solid: true,
@@ -212,7 +220,8 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     upgradeCostMul: 2.4,
     order: 10,
     desc: 'Everything the kingdom keeps ends up here. Build them near where goods are made.',
-    how: 'Adds 250 to the shared store, or 550 once improved. Goods are one pool for the whole kingdom, so this raises the ceiling rather than holding anything of its own. Villagers carry loads to whichever store is nearest, which is the only reason where you put it matters.',
+    how: 'Adds 250 to the shared store, or 550 once improved. Goods are one pool for the whole kingdom, so this raises the ceiling rather than holding anything of its own. Villagers carry loads to whichever store is nearest, which is the only reason where you put it matters — and it is reason enough, since a storehouse out by the woods is half the walking. The commons decides how many may stand at once, one more with each step it takes.',
+    maxCount: [1, 2, 3, 4],
     storage: [250, 550],
     unlock: 'storehouse',
     solid: true,
@@ -228,11 +237,13 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     maxLevel: 2,
     upgradeCostMul: 2.2,
     order: 20,
-    desc: 'Woodcutters work the trees nearby. Place it in or beside a wood.',
-    how: 'Woodcutters work whatever trees stand within a short walk of the lodge, roughly a dozen tiles, and range further only when the near ones are gone. Each felled tree becomes a stump and grows back in time. They chop three trips\' worth, haul it to the nearest store, and set off again. When wood climbs past about a third of the whole store they stop and go help elsewhere, so the barn never fills with timber while the bread runs out.',
+    desc: 'The kingdom’s one lodge. Woodcutters work the trees nearby, so place it in or beside a wood.',
+    how: 'Woodcutters work whatever trees stand within thirteen tiles of the lodge — seventeen once it is improved — and range further only when the near ones are gone. The reach is drawn on the map while you are placing or moving it, along with every tree inside it. Each felled tree becomes a stump and grows back in time. They chop three trips\' worth, haul it to the nearest store, and set off again. When wood climbs past about a third of the whole store they stop and go help elsewhere, so the barn never fills with timber while the bread runs out. There is only ever one lodge; if the wood around it thins out, move it rather than building a second.',
     slots: [2, 3],
     job: 'woodcutter',
     harvests: 'tree',
+    range: [13, 17],
+    unique: true,
     unlock: 'lodge',
     solid: true,
   },
@@ -242,16 +253,20 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     category: 'production',
     w: 2,
     h: 2,
-    cost: { wood: 30, stone: 10 },
+    // Wood only, and it has to stay that way: this is the kingdom's only source
+    // of stone, so a quarry that cost stone could never be built at all.
+    cost: { wood: 30 },
     labour: 60,
     maxLevel: 2,
     upgradeCostMul: 2.2,
     order: 21,
-    desc: 'Stoneworkers break the boulders nearby. Place it against rocky ground.',
-    how: 'Stoneworkers break the loose boulders within a short walk, roughly a dozen tiles, and range further when the near ones are worked out. Rubble comes back in time, like stumps. As with wood, they down tools and help elsewhere once stone is past about a third of the store.',
+    desc: 'The only stone in the kingdom comes from here. Place it against rocky ground.',
+    how: 'Stoneworkers break the loose boulders within thirteen tiles of the quarry — seventeen once it is improved — and range further when the near ones are worked out. The reach is drawn on the map while you are placing or moving it, along with every boulder inside it. Worked-out boulders leave rubble, and rubble gathers back into a boulder in time, so a quarry does not exhaust its ground for good. Nothing else in the kingdom produces stone: bare hands will not break a boulder, and clearing one to build on wastes it until this stands. As with wood, stoneworkers down tools and help elsewhere once stone is past about a third of the store. There is only ever one quarry; if the rock around it runs thin, move it.',
     slots: [2, 3],
     job: 'stoneworker',
     harvests: 'boulder',
+    range: [13, 17],
+    unique: true,
     unlock: 'quarry',
     solid: true,
   },
@@ -267,10 +282,11 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     upgradeCostMul: 2.0,
     order: 22,
     desc: 'A small barn and eight plots. Farmers sow, wait, and harvest wheat.',
-    how: 'Eight plots around a small barn. A farmer sows a bare plot, leaves it, and comes back when it is ripe — a little over three minutes of growing at normal speed, quickest in summer and about a third of that pace in winter. A farm with nobody assigned still creeps along at about a third the pace. Harvested wheat goes to the nearest store, not into the barn.',
+    how: 'Eight plots around a small barn. A farmer sows a bare plot, leaves it, and comes back when it is ripe — a little over three minutes of growing at normal speed, quickest in summer and about a third of that pace in winter. A farm with nobody assigned still creeps along at about a third the pace. Harvested wheat goes to the nearest store, not into the barn. There is one farm in the kingdom; moving it lays out fresh plots on the new ground, so whatever was in the old ones is lost with them — worth waiting for a harvest first.',
     slots: [2, 3],
     job: 'farmer',
     plots: true,
+    unique: true,
     unlock: 'farm',
     solid: false,
   },
@@ -286,10 +302,11 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     upgradeCostMul: 2.0,
     order: 23,
     desc: 'Grinds wheat into flour. The sails turn whenever the miller is working.',
-    how: 'Three wheat in, two flour out, about eighteen seconds a batch and quicker as the miller learns the work. The miller fetches wheat from the store personally rather than waiting to be supplied, and carries the flour back once the shelf is worth a trip. Nothing here is automatic: if nobody is walking, nothing is moving.',
+    how: 'Three wheat in, two flour out, about eighteen seconds a batch and quicker as the miller learns the work. The miller fetches wheat from the store personally rather than waiting to be supplied, and carries the flour back once the shelf is worth a trip. Nothing here is automatic: if nobody is walking, nothing is moving. There is one windmill, and it can be moved — a shorter walk between the farm, the mill and the ovens is most of what makes bread arrive.',
     slots: [1, 2],
     job: 'miller',
     recipe: { inputs: { wheat: 3 }, outputs: { flour: 2 }, seconds: 18 },
+    unique: true,
     unlock: 'mill',
     solid: true,
   },
@@ -305,10 +322,11 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     upgradeCostMul: 2.0,
     order: 24,
     desc: 'Flour becomes bread. The smell reaches most of the kingdom.',
-    how: 'Two flour in, three loaves out, about twenty-two seconds a batch and quicker with practice. Bread is the only thing anyone eats, so this is the one chain worth keeping staffed. Bakers fetch their own flour and haul the loaves to the store. The smell draws people over even when they have no business here.',
+    how: 'Two flour in, three loaves out, about twenty-two seconds a batch and quicker with practice. Bread is the only thing anyone eats, so this is the one chain worth keeping staffed. Bakers fetch their own flour and haul the loaves to the store. The smell draws people over even when they have no business here, which is a reason in itself to have the one bakery somewhere people pass. It can be moved if you decide wrong.',
     slots: [2, 3],
     job: 'baker',
     recipe: { inputs: { flour: 2 }, outputs: { bread: 3 }, seconds: 22 },
+    unique: true,
     unlock: 'bakery',
     light: [{ x: 1.0, y: 1.3, radius: 42, color: '#ffa14a' }],
     solid: true,
@@ -324,7 +342,8 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     maxLevel: 1,
     order: 30,
     desc: 'People gather at wells. Nobody has ever been able to explain why.',
-    how: 'It does nothing for the economy. People simply come and stand at it, which is what it is for.',
+    how: 'It does nothing for the economy. People simply come and stand at it, which is what it is for. Build as many as you like.',
+    unlock: 'well',
     solid: true,
   },
   bench: {
@@ -444,6 +463,37 @@ export function upgradeReqsOf(def: BuildingId, level: number): UpgradeReq[] {
   return BUILDINGS[def].upgradeReqs?.[level - 1] ?? [];
 }
 
+/** Default reach for a building whose workers go out to nodes. */
+export const DEFAULT_WORK_RANGE = 13;
+
+/**
+ * How far this building's workers will go for their nodes. One number, used by
+ * the planner, by the panel's count of what is left, and by the ring drawn on
+ * the map while it is being placed — a range the player is shown and a range
+ * the workers actually keep to have to be the same range.
+ */
+export function rangeOf(def: BuildingId, level: number): number {
+  const d = BUILDINGS[def];
+  if (!d.range) return DEFAULT_WORK_RANGE;
+  return d.range[Math.min(level, d.range.length) - 1];
+}
+
+/**
+ * What moving a building costs. The full materials of a new one, and the full
+ * labour: taking a building apart and putting it up again somewhere else is the
+ * same work either way, and charging less would make relocation the cheap way
+ * to hold a building rather than a decision. What it is *not* is a rebuild —
+ * the level, the name, the workers and the history all step across intact, so
+ * moving an improved quarry never costs you the improvement.
+ */
+export function relocateCost(def: BuildingId): Partial<Record<ResourceId, number>> {
+  return { ...BUILDINGS[def].cost };
+}
+
+export function relocateLabour(def: BuildingId): number {
+  return BUILDINGS[def].labour;
+}
+
 export const CATEGORY_META: Record<string, { name: string; icon: string }> = {
   housing: { name: 'Housing', icon: '🏠' },
   storage: { name: 'Storage', icon: '📦' },
@@ -505,7 +555,7 @@ export const TERRAIN_META: Record<TerrainId, { name: string; desc: string; like:
   },
   rocky: {
     name: 'Rocky ground',
-    desc: 'Awkward footing, so slower going. Boulders here can be worked for stone.',
+    desc: 'Awkward footing, so slower going. The boulders here are the kingdom’s only stone, and it takes a quarry to work them.',
     like: 'rocky ground like this',
     feel: 'Bare and exposed. What comes up here usually has a reason.',
   },
@@ -525,7 +575,11 @@ export const PROP_META: Record<
     yields: 'wood',
   },
   stump: { name: 'Stump', desc: 'Felled. Left alone, it will come back as a tree.', regrowsFrom: 'tree' },
-  boulder: { name: 'Boulder', desc: 'A stoneworker or a helper can break it for stone.', yields: 'stone' },
+  boulder: {
+    name: 'Boulder',
+    desc: 'Far too much for bare hands. A stoneworker sent out from a quarry can break it for stone; until then it is part of the landscape.',
+    yields: 'stone',
+  },
   pebbles: {
     name: 'Pebbles',
     desc: 'Loose chippings. Where a boulder was worked, another gathers in time.',

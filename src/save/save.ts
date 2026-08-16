@@ -29,9 +29,14 @@ const SETTINGS_KEY = 'tkm.settings';
  * 5: one commons replaces the campfire and the chest, and deadfall is gone from
  * the world, so a version 4 file names three things that no longer exist and
  * has no heart to its kingdom at all.
+ * 6: stone comes only from a quarry, and the kingdom keeps a limited number of
+ * each building. A version 5 kingdom can hold four storehouses where two are
+ * now allowed, and its quarry was bought partly with stone that nothing in this
+ * version could have produced — so its economy is not one this version could
+ * ever have arrived at.
  * Older files are refused rather than guessed at.
  */
-export const SAVE_VERSION = 5;
+export const SAVE_VERSION = 6;
 
 export interface SlotInfo {
   id: string;
@@ -196,6 +201,11 @@ export function serialize(g: GameState): SavePayload {
       residents: b.residents,
       plots: b.plots.map((p) => ({ x: p.x, y: p.y, state: p.state, growth: p.growth })),
       upgrading: b.upgrading,
+      // A move under way is two records pointing at each other, and both ends
+      // are saved: closing the tab in the middle of moving the quarry should
+      // find it still on its way, not silently back where it started.
+      movingTo: b.movingTo,
+      relocOf: b.relocOf,
       built: b.built,
       seed: b.seed,
       name: b.name,

@@ -556,7 +556,16 @@ export function countProp(g: GameState, cx: number, cy: number, prop: PropId, ra
   return n;
 }
 
-/** Nearest tile carrying a live resource node of the given prop, within radius. */
+/**
+ * Nearest tile carrying a live resource node of the given prop, within radius.
+ *
+ * Genuinely within it. The box is only how the scan is bounded; the distance
+ * test is what decides, and it used to be missing — which made a lodge's
+ * "thirteen tiles" a *square* thirteen tiles across the middle and eighteen at
+ * the corners. That was invisible while nothing drew the range. Now that the
+ * player is shown a ring before they commit to a spot, the ring and the reach
+ * have to be the same shape or the picture is a lie.
+ */
 export function findNode(
   g: GameState,
   cx: number,
@@ -567,6 +576,7 @@ export function findNode(
 ): { x: number; y: number } | null {
   let best: { x: number; y: number } | null = null;
   let bestD = Infinity;
+  const maxD = radius * radius;
   const x0 = clamp(Math.floor(cx - radius), 0, g.w - 1);
   const x1 = clamp(Math.ceil(cx + radius), 0, g.w - 1);
   const y0 = clamp(Math.floor(cy - radius), 0, g.h - 1);
@@ -577,10 +587,9 @@ export function findNode(
       if (t.prop !== prop || t.amount <= 0) continue;
       if (skipClaimed && t.claimed) continue;
       const d = (x - cx) ** 2 + (y - cy) ** 2;
-      if (d < bestD) {
-        bestD = d;
-        best = { x, y };
-      }
+      if (d > maxD || d >= bestD) continue;
+      bestD = d;
+      best = { x, y };
     }
   return best;
 }
@@ -599,7 +608,13 @@ export function updateTerrain(g: GameState, dt: number): void {
         if (t.prop === 'stump') {
           t.prop = 'tree';
           t.amount = TREE_WOOD;
-        } else if (t.prop === 'pebbles' && t.terrain === 'rocky') {
+        } else if (t.prop === 'pebbles') {
+          // Anywhere, not only on rocky ground. Rubble with a timer on it is
+          // rubble left by a worked-out boulder, wherever that boulder happened
+          // to stand — and generation scatters plenty of them onto grass. The
+          // old terrain test quietly made those a one-off, which was survivable
+          // while stone could be picked up by hand and is not now that the
+          // quarry is the only source there is.
           t.prop = 'boulder';
           t.amount = BOULDER_STONE;
         }

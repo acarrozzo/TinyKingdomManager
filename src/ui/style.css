@@ -714,6 +714,23 @@ button {
   font-size: 10.5px;
   color: var(--bad);
 }
+/* How many of this kind stand, out of how many the commons currently allows.
+   Shown whether or not the kingdom is at the ceiling: knowing there is room for
+   one more storehouse is as much a part of planning as being told there is not. */
+.build-item .tally {
+  display: block;
+  margin-top: 4px;
+  font-size: 10.5px;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+.build-item .tally.at-limit {
+  color: var(--accent);
+}
+.build-item.locked .row1 .tally {
+  margin-top: 0;
+  white-space: nowrap;
+}
 .build-item.locked {
   opacity: 0.62;
   cursor: default;

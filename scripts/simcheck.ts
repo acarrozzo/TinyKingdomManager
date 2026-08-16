@@ -14,10 +14,19 @@ import { newGame, assignJob, buildingById, makeBuilding, storageCapacity } from 
 import { completeConstruction, updateVillagers } from '../src/sim/villager';
 import { updateWildlife } from '../src/sim/wildlife';
 import { updatePopulation } from '../src/sim/population';
-import { availableToBuild, updateGoals } from '../src/sim/goals';
+import { atBuildLimit, availableToBuild, buildLimit, updateGoals } from '../src/sim/goals';
 import { chooseCamp, suggestCamp } from '../src/sim/founding';
 import { updateTerrain, tileAt } from '../src/world/terrain';
-import { BUILDINGS, CARRY_CAPACITY, DAY_LENGTH, SPECIES, upgradeCostOf, upgradeReqsOf } from '../src/sim/defs';
+import {
+  BUILDINGS,
+  CARRY_CAPACITY,
+  DAY_LENGTH,
+  SPECIES,
+  rangeOf,
+  relocateCost,
+  upgradeCostOf,
+  upgradeReqsOf,
+} from '../src/sim/defs';
 import { rng } from '../src/core/util';
 import type { Building, BuildingId, GameState } from '../src/types';
 import { seasonForDay } from '../src/sim/state';
@@ -102,6 +111,82 @@ function improve(state: GameState, def: BuildingId): boolean {
   return false;
 }
 
+/** Live nodes of a building's kind within the reach it actually works to. */
+function nodesInRange(state: GameState, def: BuildingId, level: number, x: number, y: number): number {
+  const d = BUILDINGS[def];
+  if (!d.harvests) return 0;
+  const cx = x + (d.w - 1) / 2;
+  const cy = y + (d.h - 1) / 2;
+  const r = rangeOf(def, level);
+  let n = 0;
+  for (let ty = Math.max(0, Math.floor(cy - r)); ty <= Math.min(state.h - 1, Math.ceil(cy + r)); ty++)
+    for (let tx = Math.max(0, Math.floor(cx - r)); tx <= Math.min(state.w - 1, Math.ceil(cx + r)); tx++) {
+      const t = state.tiles[ty * state.w + tx];
+      if (t.prop !== d.harvests || t.amount <= 0) continue;
+      if ((tx - cx) ** 2 + (ty - cy) ** 2 > r * r) continue;
+      n++;
+    }
+  return n;
+}
+
+/**
+ * Moves a unique building the way the interface does: a plain construction site
+ * on the new ground, the original left running until it is finished. Exercising
+ * this here matters because a relocation is the only thing in the game that
+ * changes a finished building's coordinates, and the ways it can go wrong —
+ * tiles left claimed by a building that is no longer there, two buildings on
+ * one tile, workers pointing at nothing — are all things a static read will not
+ * catch and the consistency checks below will.
+ */
+function moveTo(state: GameState, b: Building, x: number, y: number): boolean {
+  const d = BUILDINGS[b.def];
+  for (let dy = 0; dy < d.h; dy++)
+    for (let dx = 0; dx < d.w; dx++) {
+      const t = tileAt(state, x + dx, y + dy);
+      if (!t || t.building || t.plot) return false;
+      if (t.terrain === 'water' || t.terrain === 'shallow') return false;
+    }
+  const cost = relocateCost(b.def);
+  for (const k in cost) if (state.stock[k as 'wood'] < (cost[k as 'wood'] ?? 0)) return false;
+
+  const site = makeBuilding(state, b.def, x, y, rng);
+  site.stage = 'building';
+  site.relocOf = b.id;
+  b.movingTo = site.id;
+  state.buildings.push(site);
+  for (let dy = 0; dy < d.h; dy++)
+    for (let dx = 0; dx < d.w; dx++) {
+      const t = tileAt(state, x + dx, y + dy)!;
+      t.building = site.id;
+      if (d.solid) t.blocked = true;
+      t.prop = null;
+      t.amount = 0;
+    }
+  return true;
+}
+
+/**
+ * A lodge or quarry that has worked its ground out gets moved rather than
+ * duplicated — the whole point of there being one of each. Only when the reach
+ * is genuinely empty, which is what a player would wait for too.
+ */
+function considerMove(state: GameState): void {
+  for (const b of state.buildings) {
+    const d = BUILDINGS[b.def];
+    if (!d.unique || !d.harvests || b.stage !== 'done' || b.upgrading || b.movingTo) continue;
+    if (nodesInRange(state, b.def, b.level, b.x, b.y) > 0) continue;
+
+    let best: { x: number; y: number; n: number } | null = null;
+    for (let y = 1; y < state.h - d.h; y += 2)
+      for (let x = 1; x < state.w - d.w; x += 2) {
+        const n = nodesInRange(state, b.def, b.level, x, y);
+        if (n < 10 || (best && n <= best.n)) continue;
+        best = { x, y, n };
+      }
+    if (best && moveTo(state, b, best.x, best.y)) return;
+  }
+}
+
 function autoplay(state: GameState): void {
   // Founding asks the player for exactly one click: where to begin. Everything
   // after it — felling the tree, raising the camp — the founder does alone.
@@ -119,38 +204,62 @@ function autoplay(state: GameState): void {
   const building = state.buildings.some((b) => b.stage === 'building');
   if (building) return;
 
+  const beds = state.buildings
+    .filter((b) => b.stage === 'done' && BUILDINGS[b.def].housing)
+    .reduce((n, b) => n + (BUILDINGS[b.def].housing![Math.min(b.level, BUILDINGS[b.def].housing!.length) - 1] ?? 0), 0);
+
+  /*
+   * Housing comes off the top rather than off the end of the chain. It used to
+   * be the last thing considered, which was fine while the chain was cheap:
+   * now that stone is quarry-only, a kingdom saving up for a bakery it cannot
+   * yet afford would sit there for twenty days with nowhere for anybody to
+   * sleep and never reach the line that would have fixed it. A player looking
+   * at a full kingdom builds a bed, whatever else is on the list.
+   *
+   * Improving a cabin comes before laying out another, which is both what a
+   * player does with a building that grows and the only thing that exercises
+   * the upgrade path at all — and, with the count limited, usually the only
+   * thing allowed.
+   */
+  /*
+   * A list in order of preference rather than a single choice, and that is not
+   * a tidying-up: the chain used to pick one thing and, if the kingdom could
+   * not afford it, do nothing whatever. With stone gated behind a quarry that
+   * became a standstill — a kingdom saving for a bakery it had no stone for
+   * would not build the storehouse that would have let anyone gather any, and
+   * sat at six people for twenty days. A player looks down the list.
+   */
   const wants: BuildingId[] = [];
-  if (!has('cabin')) wants.push('cabin');
-  else if (!has('storehouse') && state.unlocked.has('storehouse')) wants.push('storehouse');
-  else if (!has('lodge') && state.unlocked.has('lodge')) wants.push('lodge');
-  else if (!has('quarry') && state.unlocked.has('quarry')) wants.push('quarry');
-  else if (!has('farm') && state.unlocked.has('farm')) wants.push('farm');
-  else if (!has('mill') && state.unlocked.has('mill')) wants.push('mill');
-  else if (!has('bakery') && state.unlocked.has('bakery')) wants.push('bakery');
-  else if (
-    state.buildings.filter((b) => b.def === 'storehouse').length < 4 &&
-    storageCapacity(state) > 0 &&
-    usedStorage(state) > storageCapacity(state) * 0.8
-  )
-    wants.push('storehouse');
-  else {
-    const beds = state.buildings
-      .filter((b) => b.stage === 'done' && BUILDINGS[b.def].housing)
-      .reduce((n, b) => n + (BUILDINGS[b.def].housing![Math.min(b.level, BUILDINGS[b.def].housing!.length) - 1] ?? 0), 0);
-    // Improve what stands before laying out more of it — that is what a player
-    // does with a building that grows, and it is the only thing that exercises
-    // the upgrade path at all.
-    if (beds - state.villagers.length < 2 && !improve(state, 'cabin')) wants.push('cabin');
-  }
+  const full = beds - state.villagers.length < 1;
+  const cramped = storageCapacity(state) > 0 && usedStorage(state) > storageCapacity(state) * 0.8;
+  if (full && improve(state, 'cabin')) return; // Started; nothing else this tick.
+  if (!has('cabin') || full) wants.push('cabin');
+  if (cramped) wants.push('storehouse');
+  if (!has('storehouse')) wants.push('storehouse');
+  if (!has('lodge')) wants.push('lodge');
+  if (!has('quarry')) wants.push('quarry');
+  if (!has('farm')) wants.push('farm');
+  if (!has('mill')) wants.push('mill');
+  if (!has('bakery')) wants.push('bakery');
+  if (beds - state.villagers.length < 2 && !improve(state, 'cabin')) wants.push('cabin');
   // Grow the commons whenever the kingdom has earned it. This is the spine of
   // the progression now, so the harness leans on it before anything else — a
   // run that never gets past a Base Camp is a run that never sees a storehouse.
   improve(state, 'commons');
+  considerMove(state);
+
+  // Improving a storehouse is what a player does when they are allowed only so
+  // many of them. Without this the harness asks for a fifth storehouse it can
+  // never have and the kingdom quietly runs out of room instead.
+  if (atBuildLimit(state, 'storehouse') && usedStorage(state) > storageCapacity(state) * 0.75) {
+    improve(state, 'storehouse');
+  }
 
   for (const def of wants) {
     // Play by the same rules the interface enforces: the menu opens a step at a
-    // time, so the harness cannot reach for a storehouse before it is offered.
-    if (!availableToBuild(state, def)) continue;
+    // time, and the kingdom keeps only so many of each kind, so the harness can
+    // no more reach for a fifth storehouse than the player can.
+    if (!availableToBuild(state, def) || atBuildLimit(state, def)) continue;
     const cost = BUILDINGS[def].cost;
     let afford = true;
     for (const k in cost) if (state.stock[k as 'wood'] < (cost[k as 'wood'] ?? 0)) afford = false;
@@ -182,7 +291,13 @@ function autoplay(state: GameState): void {
 
   // Staff buildings the way a player would: food chain first, and never let a
   // single trade swallow every free pair of hands.
-  const priority: BuildingId[] = ['bakery', 'mill', 'farm', 'lodge', 'quarry'];
+  //
+  // The quarry outranks the lodge, and that is not a preference but the shape
+  // of the economy: any helper with nothing better to do will fell a tree, and
+  // no helper can break a boulder, so an unstaffed lodge costs the kingdom some
+  // speed while an unstaffed quarry costs it stone altogether — and stone is
+  // what every cabin, every commons and half the workshops are waiting on.
+  const priority: BuildingId[] = ['bakery', 'mill', 'farm', 'quarry', 'lodge'];
   const softCap: Partial<Record<BuildingId, number>> = { lodge: 2, quarry: 2, farm: 2, mill: 1, bakery: 2 };
 
   for (const def of priority) {
@@ -367,6 +482,53 @@ if (used > storageCapacity(g) + inFlight + 1) {
 for (const v of g.villagers) {
   if (v.carrying && v.activity === 'idle' && g.founding.stage === 'done') {
     problems.push(`${v.name} is stuck holding ${Math.round(v.carrying.qty)} ${v.carrying.res}`);
+  }
+}
+
+// Stone has exactly one source. Any at all in a kingdom with no quarry means
+// something is handing it out — a goal reward, a cleared boulder, a helper with
+// a chisel — and the whole shape of the early game rests on there being none.
+if (!g.buildings.some((b) => b.def === 'quarry') && g.stock.stone > 0) {
+  problems.push(`${Math.floor(g.stock.stone)} stone in a kingdom with no quarry`);
+}
+
+// Never more of a kind than the commons allows. The build menu refuses it and
+// so does placement, so a count over the line means something bypassed both.
+for (const id of Object.keys(BUILDINGS) as BuildingId[]) {
+  const { built, max } = buildLimit(g, id);
+  if (built > max) problems.push(`${built} ${id}, but only ${max} allowed`);
+}
+
+/*
+ * Relocation leaves two records pointing at each other, and every way it can go
+ * wrong is a way the map and the building list stop agreeing: a footprint whose
+ * tiles belong to somebody else, a site whose original was taken down, or a
+ * building that thinks it is moving to nowhere.
+ */
+for (const b of g.buildings) {
+  const d = BUILDINGS[b.def];
+  for (let dy = 0; dy < d.h; dy++)
+    for (let dx = 0; dx < d.w; dx++) {
+      const t = tileAt(g, b.x + dx, b.y + dy);
+      if (!t) {
+        problems.push(`${b.def} #${b.id} hangs off the map at ${b.x},${b.y}`);
+        continue;
+      }
+      if (t.building !== b.id) {
+        problems.push(`tile ${b.x + dx},${b.y + dy} under ${b.def} #${b.id} is owned by #${t.building}`);
+      }
+    }
+  if (b.movingTo && !buildingById(g, b.movingTo)) problems.push(`${b.def} #${b.id} is moving to nothing`);
+  if (b.relocOf && !buildingById(g, b.relocOf)) problems.push(`a ${b.def} site is standing in for nothing`);
+  if (b.movingTo && b.relocOf) problems.push(`${b.def} #${b.id} is both moving and being moved to`);
+}
+// Tiles must not claim a building that has gone: a footprint left behind is
+// ground nothing can ever be built on again.
+for (let i = 0; i < g.tiles.length; i++) {
+  const id = g.tiles[i].building;
+  if (id && !buildingById(g, id)) {
+    problems.push(`tile ${i % g.w},${Math.floor(i / g.w)} still belongs to removed building #${id}`);
+    break;
   }
 }
 const idle = g.villagers.filter((v) => v.activity === 'idle').length;

@@ -9,10 +9,11 @@
  */
 
 import type { BuildingId, GameState } from '../types';
-import { BUILDINGS, BUILD_ORDER, CATEGORY_META, RESOURCE_META } from '../sim/defs';
-import { availableToBuild, isUnlocked } from '../sim/goals';
+import { BUILDINGS, BUILD_ORDER, CATEGORY_META, RESOURCE_META, rangeOf, relocateCost } from '../sim/defs';
+import { availableToBuild, buildLimit, isUnlocked } from '../sim/goals';
 import { foundingDone } from '../sim/founding';
 import { buildingById } from '../sim/state';
+import { buildingName } from '../sim/defs';
 import type { Game } from '../game';
 import { esc, type UIEnv } from './context';
 
@@ -45,12 +46,34 @@ export function buildListMarkup(game: Game, env: UIEnv): string {
     if (!availableToBuild(g, id)) continue;
     const affordable = game.canAffordNew(id);
     const on = tool.kind === 'build' && tool.def === id;
-    const html = `<button class="build-item ${on ? 'on' : ''} ${affordable ? '' : 'short'}"
-      data-act="build" data-def="${id}" aria-pressed="${on}">
-      <span class="row1"><span class="name">${esc(def.name)}</span>
-      <span class="cost">${costLine(id)}</span></span>
-      <span class="desc">${esc(def.desc)}</span>
-      ${affordable ? '' : `<span class="warnline">Not enough in store yet</span>`}</button>`;
+    /*
+     * How many stand, out of how many are allowed. Shown on every limited kind
+     * whether or not the kingdom is at the ceiling — knowing there is room for
+     * one more storehouse is as much a part of planning as being told there is
+     * not, and a count that appears only when you are blocked teaches nothing.
+     */
+    const limit = buildLimit(g, id);
+    const counted = Number.isFinite(limit.max);
+    const full = limit.built >= limit.max;
+    const tally = counted
+      ? `<span class="tally ${full ? 'at-limit' : ''}">${limit.built}/${limit.max} built</span>`
+      : '';
+    const html = full
+      ? `<div class="build-item locked" aria-disabled="true">
+          <span class="row1"><span class="name">${esc(def.name)}</span>${tally}</span>
+          <span class="desc">${esc(def.desc)}</span>
+          <span class="warnline">${esc(
+            def.unique
+              ? 'The kingdom keeps one. Open it on the map to move it somewhere better.'
+              : 'Improving the commons allows another.',
+          )}</span></div>`
+      : `<button class="build-item ${on ? 'on' : ''} ${affordable ? '' : 'short'}"
+          data-act="build" data-def="${id}" aria-pressed="${on}">
+          <span class="row1"><span class="name">${esc(def.name)}</span>
+          <span class="cost">${costLine(id)}</span></span>
+          <span class="desc">${esc(def.desc)}</span>
+          ${tally}
+          ${affordable ? '' : `<span class="warnline">Not enough in store yet</span>`}</button>`;
     const list = groups.get(def.category) ?? [];
     list.push(html);
     groups.set(def.category, list);
@@ -148,6 +171,26 @@ export function placementBarMarkup(game: Game, env: UIEnv): string {
     });
   }
 
+  if (tool.kind === 'relocate') {
+    const b = buildingById(g, tool.id);
+    if (b) {
+      const spot = game.candidate;
+      const problem = spot ? game.relocateProblem(b, spot.x, spot.y) : null;
+      const ready = !!spot && !problem;
+      const name = buildingName(b.def, b.level);
+      return bar({
+        icon: '🧭',
+        title: `Move the ${name.toLowerCase()} · ${plainCost(b.def)}`,
+        state: spot ? (problem ? 'bad' : 'good') : 'plain',
+        body: spot
+          ? problem ?? `${rangeNote(game, b.def, b.level, spot)}The old one keeps working until this is finished.`
+          : `${env.touch ? 'Tap' : 'Click'} where it should stand instead. It keeps its level, its name and everyone working there.`,
+        actions: `${ready ? `<button class="btn small primary" data-act="confirm-place">Move it here</button>` : ''}
+          <button class="btn small" data-act="cancel-tool">Cancel</button>`,
+      });
+    }
+  }
+
   if (tool.kind === 'build') {
     const def = BUILDINGS[tool.def];
     const spot = game.candidate;
@@ -158,7 +201,8 @@ export function placementBarMarkup(game: Game, env: UIEnv): string {
       title: `${def.name} · ${costLine(tool.def)}`,
       state: spot ? (problem ? 'bad' : 'good') : 'plain',
       body: spot
-        ? problem ?? 'This will do. Villagers will carry the materials over and build it.'
+        ? problem ??
+          `${rangeNote(game, tool.def, 1, spot)}Villagers will carry the materials over and build it.`
         : `${env.touch ? 'Tap' : 'Click'} a spot on the map to see how it would sit.`,
       actions: `${ready ? `<button class="btn small primary" data-act="confirm-place">Build it here</button>` : ''}
         ${env.compact ? `<button class="btn small" data-act="toggle-build">Change</button>` : ''}
@@ -167,6 +211,23 @@ export function placementBarMarkup(game: Game, env: UIEnv): string {
     });
   }
   return '';
+}
+
+/**
+ * What this ground would actually give a lodge or a quarry, in words. The ring
+ * on the map shows the shape of the reach and marks what is in it; this counts
+ * it, because "seven trees" and "forty trees" look much the same from far
+ * enough out and the difference is the whole decision.
+ */
+function rangeNote(game: Game, def: BuildingId, level: number, spot: { x: number; y: number }): string {
+  const d = BUILDINGS[def];
+  if (!d.harvests) return '';
+  const what = d.harvests === 'tree' ? 'trees' : 'boulders';
+  const n = game.nodesInRange(def, level, spot.x, spot.y);
+  const reach = rangeOf(def, level);
+  if (n === 0) return `Nothing to work: no ${what} at all within ${reach} tiles. It would stand idle. `;
+  if (n < 8) return `Thin ground — only ${n} ${what} within ${reach} tiles. `;
+  return `${n} ${what} within ${reach} tiles. `;
 }
 
 /**
@@ -202,6 +263,21 @@ export function toolHintMarkup(game: Game, env: UIEnv): string {
     });
   }
 
+  if (t.kind === 'relocate') {
+    const b = buildingById(game.state, t.id);
+    if (!b) return '';
+    const name = buildingName(b.def, b.level);
+    return bar({
+      icon: '🧭',
+      title: `Moving the ${name.toLowerCase()}`,
+      state: game.blockReason ? 'bad' : 'plain',
+      body:
+        game.blockReason ??
+        `${liveRange(game, b.def, b.level)}Click where it should stand instead. Costs ${plainCost(b.def)} and the usual building work; it keeps its level, its name and everyone working there, and goes on working where it is until the new one is ready.`,
+      actions: `<button class="btn small" data-act="cancel-tool">Cancel ${env.touch ? '' : '<kbd>Esc</kbd>'}</button>`,
+    });
+  }
+
   const def = BUILDINGS[t.def];
   const short = !game.canAffordNew(t.def);
   return bar({
@@ -212,15 +288,39 @@ export function toolHintMarkup(game: Game, env: UIEnv): string {
       game.blockReason ??
       (short
         ? `Not enough in store right now — it needs ${plainCost(t.def)}.`
-        : `Click a clear spot on the map. Costs ${plainCost(t.def)}; villagers will carry the materials over and build it.`),
+        : `${liveRange(game, t.def, 1)}Click a clear spot on the map. Costs ${plainCost(t.def)}; villagers will carry the materials over and build it.`),
     actions: `<button class="btn small" data-act="cancel-tool">Done ${env.touch ? '' : '<kbd>Esc</kbd>'}</button>`,
   });
+}
+
+/**
+ * The count under the cursor, updated as the mouse moves.
+ *
+ * On a desktop nothing is confirmed, so there is no candidate tile to describe
+ * — and the ring is frequently no help on its own, because thirteen tiles is
+ * wider than the window at the usual zoom and its edge is somewhere off the
+ * side of the screen. The number is the part that always fits.
+ */
+function liveRange(game: Game, def: BuildingId, level: number): string {
+  if (!BUILDINGS[def].harvests) return '';
+  const spot = game.hover;
+  if (!spot) return 'The shaded ground is how far its workers will go. ';
+  return rangeNote(game, def, level, spot);
 }
 
 function plainCost(def: BuildingId): string {
   const entries = Object.entries(BUILDINGS[def].cost);
   if (entries.length === 0) return 'nothing';
   return entries.map(([res, qty]) => `${qty} ${RESOURCE_META[res].name.toLowerCase()}`).join(' and ');
+}
+
+/** "🪵 30 wood", for the footer button and the move bar. Moving costs a full set. */
+export function relocateCostLine(def: BuildingId): string {
+  const entries = Object.entries(relocateCost(def));
+  if (entries.length === 0) return '—';
+  return entries
+    .map(([res, qty]) => `${RESOURCE_META[res].icon} ${qty} ${esc(RESOURCE_META[res].name.toLowerCase())}`)
+    .join(' · ');
 }
 
 interface BarParts {

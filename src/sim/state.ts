@@ -258,6 +258,20 @@ export function villagerById(g: GameState, id: number): Villager | null {
  */
 export function removeBuilding(g: GameState, b: Building): void {
   const def = BUILDINGS[b.def];
+  // A half-finished move is one arrangement across two records, so taking down
+  // either end tidies the other: removing the building being moved abandons the
+  // ground it was moving to, and abandoning the ground leaves the building
+  // exactly where it was, still working.
+  if (b.movingTo) {
+    const site = buildingById(g, b.movingTo);
+    b.movingTo = undefined;
+    if (site) removeBuilding(g, site);
+  }
+  if (b.relocOf) {
+    const origin = buildingById(g, b.relocOf);
+    if (origin) origin.movingTo = undefined;
+  }
+
   for (let dy = 0; dy < def.h; dy++)
     for (let dx = 0; dx < def.w; dx++) {
       const t = tileAt(g, b.x + dx, b.y + dy);

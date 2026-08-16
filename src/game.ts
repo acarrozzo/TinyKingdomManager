@@ -21,6 +21,8 @@ import {
   DAYS_PER_SEASON,
   JOB_META,
   buildingName,
+  rangeOf,
+  relocateCost,
   upgradeCostOf,
   upgradeReqsOf,
 } from './sim/defs';
@@ -48,7 +50,7 @@ import {
 } from './sim/founding';
 import { updateWildlife, rebuildHabitat } from './sim/wildlife';
 import { updatePopulation } from './sim/population';
-import { updateGoals, availableToBuild } from './sim/goals';
+import { updateGoals, availableToBuild, buildLimit } from './sim/goals';
 import { journal, toast, updateToasts } from './sim/journal';
 import { tileAt, updateTerrain } from './world/terrain';
 import { toScreenX, toScreenY } from './world/iso';
@@ -69,6 +71,12 @@ export type Tool =
   | { kind: 'none' }
   | { kind: 'build'; def: BuildingId }
   | { kind: 'demolish' }
+  /**
+   * Moving a building that already stands. Carries the building's id rather
+   * than its kind, because what is being placed is a *particular* quarry with a
+   * level, a name and two people working at it — not another quarry.
+   */
+  | { kind: 'relocate'; id: number }
   /** Only ever armed during founding: the player choosing where it all starts. */
   | { kind: 'camp' };
 
@@ -399,11 +407,12 @@ export class Game {
       showBubbles: this.settings.showBubbles,
       showNames: this.settings.showNames && !this.cleanMode,
       showActivity: this.settings.showActivity && !this.cleanMode,
-      showGrid: this.tool.kind === 'build' || this.tool.kind === 'camp',
+      showGrid: this.tool.kind === 'build' || this.tool.kind === 'camp' || this.tool.kind === 'relocate',
       selection: this.selection,
       hover: this.hover,
       ghost: null,
       marker: null,
+      range: null,
       demolish: this.tool.kind === 'demolish',
     };
 
@@ -414,13 +423,76 @@ export class Game {
       const { x, y } = spot;
       opts.ghost = { def: this.tool.def, x, y, valid: this.canPlace(this.tool.def, x, y) };
     }
+    if (this.tool.kind === 'relocate' && spot) {
+      const b = buildingById(this.state, this.tool.id);
+      if (b) {
+        const { x, y } = spot;
+        opts.ghost = { def: b.def, x, y, valid: this.relocateProblem(b, x, y) === null };
+      }
+    }
     if (this.tool.kind === 'camp' && spot) {
       const { x, y } = spot;
       opts.marker = { x, y, valid: canChooseCamp(this.state, x, y) };
     }
+    // A building whose worth depends on what is around it shows what would be
+    // around it, before the decision rather than after: a lodge with no trees
+    // inside its ring is the one placement mistake that looks perfectly fine.
+    const ranged = this.rangePreview(spot);
+    if (ranged) opts.range = ranged;
     if (this.demolishTarget) opts.selection = { kind: 'building', id: this.demolishTarget };
 
     this.renderer.render(this.state, this.camera, opts, realDt);
+  }
+
+  /**
+   * The working area to draw, if the thing being placed or moved has one. The
+   * ring is centred on the footprint's middle — the same point the planner
+   * measures from — so what is shown and what the workers will actually reach
+   * are the same circle rather than two near-misses.
+   */
+  private rangePreview(spot: { x: number; y: number } | null): RenderOptions['range'] {
+    if (!spot) return null;
+    let def: BuildingId | null = null;
+    let level = 1;
+    if (this.tool.kind === 'build') def = this.tool.def;
+    else if (this.tool.kind === 'relocate') {
+      const b = buildingById(this.state, this.tool.id);
+      if (!b) return null;
+      def = b.def;
+      level = b.level;
+    }
+    if (!def) return null;
+    const d = BUILDINGS[def];
+    if (!d.harvests) return null;
+    return {
+      cx: spot.x + (d.w - 1) / 2,
+      cy: spot.y + (d.h - 1) / 2,
+      radius: rangeOf(def, level),
+      prop: d.harvests,
+    };
+  }
+
+  /**
+   * How many live nodes a building of this kind would have inside its reach if
+   * it stood here. The placement bar says the number out loud, because a ring
+   * with four trees in it and a ring with forty look much the same at a glance.
+   */
+  nodesInRange(def: BuildingId, level: number, x: number, y: number): number {
+    const d = BUILDINGS[def];
+    if (!d.harvests) return 0;
+    const g = this.state;
+    const cx = x + (d.w - 1) / 2;
+    const cy = y + (d.h - 1) / 2;
+    const r = rangeOf(def, level);
+    let n = 0;
+    for (let ty = Math.max(0, Math.floor(cy - r)); ty <= Math.min(g.h - 1, Math.ceil(cy + r)); ty++)
+      for (let tx = Math.max(0, Math.floor(cx - r)); tx <= Math.min(g.w - 1, Math.ceil(cx + r)); tx++) {
+        const t = g.tiles[ty * g.w + tx];
+        if (t.prop !== d.harvests || t.amount <= 0) continue;
+        if ((tx - cx) ** 2 + (ty - cy) ** 2 > r * r) continue;
+        n++;
+      }
+    return n;
   }
 
   // -------------------------------------------------------------------------
@@ -464,7 +536,15 @@ export class Game {
 
       const dx = e.clientX - this.lastPointer.x;
       const dy = e.clientY - this.lastPointer.y;
+      const was = this.hover;
       this.hover = this.tileUnder(e.clientX, e.clientY);
+      // Hovering does not normally concern the interface — the ghost is drawn
+      // by the renderer, which reads `hover` every frame anyway. It concerns it
+      // for exactly one thing: the placement hint counts the trees under the
+      // cursor, and a count that only changes when you click is not a count.
+      if (this.hover && (!was || was.x !== this.hover.x || was.y !== this.hover.y) && this.hintFollowsCursor()) {
+        this.notify();
+      }
 
       if (this.dragging && (Math.abs(dx) > 1 || Math.abs(dy) > 1)) {
         this.dragMoved = true;
@@ -600,6 +680,17 @@ export class Game {
     this.hover = this.tileUnder(e.clientX, e.clientY);
   }
 
+  /** True when the tile under the cursor changes what the placement hint says. */
+  private hintFollowsCursor(): boolean {
+    if (this.requireConfirm) return false; // A tap sets a candidate; hover means nothing.
+    if (this.tool.kind === 'build') return !!BUILDINGS[this.tool.def].harvests;
+    if (this.tool.kind === 'relocate') {
+      const b = buildingById(this.state, this.tool.id);
+      return !!b && !!BUILDINGS[b.def].harvests;
+    }
+    return false;
+  }
+
   /** Zoom a step from the interface, anchored on the middle of the view. */
   zoomStep(delta: number): void {
     this.camera.zoomBy(delta);
@@ -635,6 +726,25 @@ export class Game {
         return;
       }
       this.place(this.tool.def, t.x, t.y);
+      return;
+    }
+    if (this.tool.kind === 'relocate') {
+      const t = this.tileUnder(cssX, cssY);
+      if (!t) return;
+      const b = buildingById(this.state, this.tool.id);
+      if (!b) {
+        this.cancelTool();
+        return;
+      }
+      if (this.requireConfirm) {
+        this.candidate = t;
+        this.blockReason = this.relocateProblem(b, t.x, t.y);
+        if (this.blockReason) audio.thud(0.6, 0.03);
+        else audio.tick();
+        this.notify();
+        return;
+      }
+      this.relocate(b.id, t.x, t.y);
       return;
     }
     if (this.tool.kind === 'demolish') {
@@ -753,34 +863,74 @@ export class Game {
     const g = this.state;
     const d = BUILDINGS[def];
     if (!availableToBuild(g, def)) return 'The kingdom cannot build that just yet.';
+    const limit = this.buildLimitOf(def);
+    if (limit.built >= limit.max) return this.limitReason(def);
 
+    const ground = this.footprintProblem(def, x, y, 0);
+    if (ground) return ground;
+
+    // Materials promised to sites that have not been supplied yet are already
+    // spoken for, so this is what is genuinely free rather than what is stacked.
+    return this.affordProblem(d.cost);
+  }
+
+  /**
+   * Why this ground will not take a footprint of this size, or null when it
+   * will. Shared by building and by moving, since the ground does not care
+   * which of the two is happening; `ignoreId` lets a move overlook the building
+   * that is doing the moving, though in practice it never overlaps its own
+   * corner because moving onto yourself is refused outright.
+   */
+  private footprintProblem(def: BuildingId, x: number, y: number, ignoreId: number): string | null {
+    const g = this.state;
+    const d = BUILDINGS[def];
     for (let dy = 0; dy < d.h; dy++)
       for (let dx = 0; dx < d.w; dx++) {
         const t = tileAt(g, x + dx, y + dy);
         if (!t) return 'Part of it would hang off the edge of the world.';
         if (t.terrain === 'water' || t.terrain === 'shallow') return 'Nothing gets built standing in the water.';
-        if (t.building) {
+        if (t.building && t.building !== ignoreId) {
           const other = buildingById(g, t.building);
-          const name = other ? BUILDINGS[other.def].name.toLowerCase() : 'something';
+          const name = other ? buildingName(other.def, other.level).toLowerCase() : 'something';
           return `The ${name} is already there. Somewhere clear.`;
         }
-        if (t.plot) return 'A farm plot is in the way.';
+        if (t.plot && t.plot !== ignoreId) return 'A farm plot is in the way.';
       }
+    return null;
+  }
 
-    // Materials promised to sites that have not been supplied yet are already
-    // spoken for, so this is what is genuinely free rather than what is stacked.
+  /** Whether the store can actually cover a cost, in the words the player reads. */
+  private affordProblem(cost: Partial<Record<ResourceId, number>>): string | null {
+    const g = this.state;
     const reserved = this.reservedMaterials();
     const short: string[] = [];
-    for (const k in d.cost) {
+    for (const k in cost) {
       const res = k as ResourceId;
       const free = g.stock[res] - (reserved[res] ?? 0);
-      const want = d.cost[res] ?? 0;
+      const want = cost[res] ?? 0;
       if (free < want) short.push(`${Math.ceil(want - free)} more ${res}`);
     }
-    if (short.length) {
-      return `Not enough in store — it needs ${short.length === 2 ? `${short[0]} and ${short[1]}` : short.join(', ')}.`;
+    if (!short.length) return null;
+    return `Not enough in store — it needs ${short.length === 2 ? `${short[0]} and ${short[1]}` : short.join(', ')}.`;
+  }
+
+  /** How many of a kind stand, and how many may. For the menu and the refusals. */
+  buildLimitOf(def: BuildingId): { built: number; max: number } {
+    return buildLimit(this.state, def);
+  }
+
+  /**
+   * Why there cannot be another of these, said as a fact about the kingdom
+   * rather than as a rule — and always with the way out attached, because the
+   * answer for a unique building is not "no" but "move the one you have".
+   */
+  private limitReason(def: BuildingId): string {
+    const d = BUILDINGS[def];
+    const { max } = this.buildLimitOf(def);
+    if (d.unique) {
+      return `There is only ever one ${d.name.toLowerCase()}. Open the one you have and move it instead.`;
     }
-    return null;
+    return `The kingdom keeps ${max} ${max === 1 ? `${d.name.toLowerCase()}` : `${d.name.toLowerCase()}s`} at a time. Improving the commons allows another.`;
   }
 
   /** The founding campsite rule, so the interface has one place to ask. */
@@ -810,9 +960,14 @@ export class Game {
         if (!t) continue;
         t.building = b.id;
         if (d.solid) t.blocked = true;
-        // Clearing ground for a building returns a little of what was there.
+        // Clearing ground for a building returns a little of what was there —
+        // except that a boulder shifted by people with no quarry is a boulder
+        // rolled aside and left, not stone. Stone has exactly one source, and
+        // building on top of the rock is not a way round it.
         if (t.prop === 'tree' && t.amount > 0) deposit(g, 'wood', Math.floor(t.amount * 0.4));
-        if (t.prop === 'boulder' && t.amount > 0) deposit(g, 'stone', Math.floor(t.amount * 0.4));
+        if (t.prop === 'boulder' && t.amount > 0 && this.hasQuarry()) {
+          deposit(g, 'stone', Math.floor(t.amount * 0.4));
+        }
         t.prop = null;
         t.amount = 0;
         t.regrow = 0;
@@ -836,6 +991,137 @@ export class Game {
     // go afterwards, and it is not built through here.
     this.notify();
     return true;
+  }
+
+  // -------------------------------------------------------------------------
+  // Moving a building that already stands
+  // -------------------------------------------------------------------------
+
+  /** Whether this building is the sort that can be moved at all. */
+  canRelocate(b: Building): boolean {
+    return this.relocateBlock(b) === null;
+  }
+
+  /** Why this building is staying where it is, or null when it need not. */
+  relocateBlock(b: Building): string | null {
+    const def = BUILDINGS[b.def];
+    if (b.def === 'commons') return 'The commons stands where the kingdom began. It does not move.';
+    if (!def.unique) return `There can be more than one ${def.name.toLowerCase()}, so build one where you want it and take this down.`;
+    if (b.stage !== 'done') return 'It is not finished yet.';
+    if (b.upgrading) return 'It is being improved. One thing at a time.';
+    if (b.movingTo) return 'It is already on its way somewhere.';
+    return null;
+  }
+
+  /** Arms the tool that asks where a building should stand instead. */
+  startRelocate(id: number): void {
+    const b = buildingById(this.state, id);
+    if (!b) return;
+    const why = this.relocateBlock(b);
+    if (why) {
+      this.blockReason = why;
+      audio.thud(0.6, 0.03);
+      this.notify();
+      return;
+    }
+    this.setTool({ kind: 'relocate', id });
+  }
+
+  /** Why this building will not stand there, or null when it will. */
+  relocateProblem(b: Building, x: number, y: number): string | null {
+    const why = this.relocateBlock(b);
+    if (why) return why;
+    if (x === b.x && y === b.y) return 'That is where it already is.';
+    const ground = this.footprintProblem(b.def, x, y, 0);
+    if (ground) return ground;
+    return this.affordProblem(relocateCost(b.def));
+  }
+
+  /**
+   * Lays out the new ground and leaves the old building alone.
+   *
+   * Nothing is torn down and nothing stops: the destination is an ordinary
+   * construction site, so helpers carry materials to it and build it exactly as
+   * they would anything else, while the quarry goes on producing stone the
+   * whole time. The building only steps across when the site is finished, in
+   * `completeConstruction`. That ordering is the point of the feature — the
+   * alternative loses you the only quarry halfway through moving it.
+   */
+  relocate(id: number, x: number, y: number): boolean {
+    const g = this.state;
+    const b = buildingById(g, id);
+    if (!b) return false;
+    const problem = this.relocateProblem(b, x, y);
+    if (problem) {
+      this.blockReason = problem;
+      audio.thud(0.6, 0.03);
+      this.notify();
+      return false;
+    }
+
+    const d = BUILDINGS[b.def];
+    const site = makeBuilding(g, b.def, x, y, rng);
+    site.stage = 'building';
+    site.relocOf = b.id;
+    b.movingTo = site.id;
+    g.buildings.push(site);
+
+    for (let dy = 0; dy < d.h; dy++)
+      for (let dx = 0; dx < d.w; dx++) {
+        const t = tileAt(g, x + dx, y + dy);
+        if (!t) continue;
+        t.building = site.id;
+        if (d.solid) t.blocked = true;
+        // Clearing ground gives back what clearing ground always gives back.
+        if (t.prop === 'tree' && t.amount > 0) deposit(g, 'wood', Math.floor(t.amount * 0.4));
+        if (t.prop === 'boulder' && t.amount > 0 && this.hasQuarry()) {
+          deposit(g, 'stone', Math.floor(t.amount * 0.4));
+        }
+        t.prop = null;
+        t.amount = 0;
+        t.regrow = 0;
+      }
+    this.renderer.invalidateGround();
+
+    for (const v of g.villagers) {
+      const vx = Math.round(v.x);
+      const vy = Math.round(v.y);
+      if (vx >= x && vx < x + d.w && vy >= y && vy < y + d.h) abandonPlan(g, v);
+    }
+
+    this.blockReason = null;
+    this.candidate = null;
+    const name = buildingName(b.def, b.level);
+    toast(g, `The ${name.toLowerCase()} is moving — it keeps working until the new one is ready`, '🧭', 'info');
+    audio.thud(1.2, 0.05);
+    // Unlike laying out a row of houses, there is exactly one of these to place,
+    // so the tool lets go the moment the ground is chosen.
+    this.cancelTool();
+    this.notify();
+    return true;
+  }
+
+  /** Abandons a move under way, leaving the building where it has been all along. */
+  cancelRelocation(id: number): void {
+    const b = buildingById(this.state, id);
+    const site = b?.movingTo ? buildingById(this.state, b.movingTo) : null;
+    if (!b || !site) return;
+    // Whatever was carried over goes back into the store rather than into the
+    // ground: nothing in this game is ever taken away for changing your mind.
+    for (const k in site.delivered) {
+      const res = k as ResourceId;
+      deposit(this.state, res, site.delivered[res] ?? 0);
+    }
+    removeBuildingFromMap(this.state, site);
+    b.movingTo = undefined;
+    this.renderer.invalidateGround();
+    toast(this.state, `The ${buildingName(b.def, b.level).toLowerCase()} is staying put`, '🧭', 'info');
+    this.notify();
+  }
+
+  /** True once there is a quarry standing — the kingdom's only source of stone. */
+  private hasQuarry(): boolean {
+    return this.state.buildings.some((b) => b.def === 'quarry' && b.stage === 'done');
   }
 
   /**
@@ -882,12 +1168,13 @@ export class Game {
     else this.notify();
   }
 
-  /** Builds, or makes camp, on the tile the player has been looking at. */
+  /** Builds, moves, or makes camp, on the tile the player has been looking at. */
   confirmPlacement(): boolean {
     const spot = this.candidate;
     if (!spot) return false;
     if (this.tool.kind === 'camp') return this.commitCamp(spot.x, spot.y);
     if (this.tool.kind === 'build') return this.place(this.tool.def, spot.x, spot.y);
+    if (this.tool.kind === 'relocate') return this.relocate(this.tool.id, spot.x, spot.y);
     return false;
   }
 
@@ -1106,6 +1393,9 @@ export class Game {
   canUpgrade(b: Building): boolean {
     const def = BUILDINGS[b.def];
     if (b.stage !== 'done' || b.upgrading) return false;
+    // Improving a building that is halfway to somewhere else would leave the
+    // half-built copy a level behind the thing it is about to become.
+    if (b.movingTo) return false;
     if (b.level >= def.maxLevel) return false;
     if (this.upgradeRequirements(b).some((r) => !r.met)) return false;
     const reserved = this.reservedMaterials();

@@ -10,7 +10,18 @@
 
 import { RNG, clamp, dist, rng } from '../core/util';
 import type { Building, GameState, JobId, PropId, ResourceId, Step, Villager } from '../types';
-import { BUILDINGS, CARRY_CAPACITY, TERRAIN_SPEED, buildingName, skillMul, upgradeCostOf, xpGain } from './defs';
+import {
+  BUILDINGS,
+  CARRY_CAPACITY,
+  TERRAIN_SPEED,
+  buildingName,
+  rangeOf,
+  relocateCost,
+  relocateLabour,
+  skillMul,
+  upgradeCostOf,
+  xpGain,
+} from './defs';
 import {
   abandonPlan,
   addXp,
@@ -57,16 +68,21 @@ const HARVEST_SECONDS = 3.5;
 const HARVEST_YIELD = 3;
 const PLOT_GROW_SECONDS = 200;
 
-/** Hand-gathering stops once the kingdom has comfortably enough of something. */
-const GATHER_TARGET: Record<string, number> = { wood: 120, stone: 90 };
+/**
+ * Hand-gathering stops once the kingdom has comfortably enough of something.
+ *
+ * Wood is the only entry, and that is the whole of the early economy: stone
+ * cannot be gathered by hand at all, so a kingdom's stone is exactly what its
+ * quarry has produced. See `planHelper`.
+ */
+const GATHER_TARGET: Record<string, number> = { wood: 120 };
 /**
  * …and no more than this share of whatever the kingdom can actually hold. With
- * a storehouse up these never bind, but a Base Camp holds sixty, and without a
- * ceiling helpers cheerfully fill it with stone nothing yet needs and leave the
- * kingdom unable to afford the very improvement that would fix it.
- * Wood gets the larger share because every early building is made of it.
+ * a storehouse up this never binds, but a Base Camp holds sixty, and without a
+ * ceiling helpers would fill it with timber and leave the kingdom unable to
+ * afford the very improvement that would fix it.
  */
-const GATHER_SHARE: Record<string, number> = { wood: 0.5, stone: 0.32 };
+const GATHER_SHARE: Record<string, number> = { wood: 0.5 };
 
 function gatherTarget(g: GameState, res: ResourceId): number {
   const cap = storageCapacity(g);
@@ -431,8 +447,7 @@ function doLabour(g: GameState, v: Villager, step: Extract<Step, { t: 'labour' }
     return 0;
   }
   v.activity = 'building';
-  const def = BUILDINGS[b.def];
-  const need = def.labour * (b.upgrading ? 1.4 : 1);
+  const need = labourNeeded(b);
   const rate = (v.trait === 'crafty' ? 1.2 : 1) * (0.85 + xpOf(v, 'helper') * 0.004);
   b.labour += dt * rate;
   addXp(v, 'helper', xpGain(xpOf(v, 'helper'), dt));
@@ -469,6 +484,14 @@ function doSleep(g: GameState, v: Villager, dt: number): number {
 // ---------------------------------------------------------------------------
 
 export function completeConstruction(g: GameState, b: Building): void {
+  // The new ground is ready, so the building walks across to it. Handled before
+  // anything else here because a relocation is not a new building at all — it
+  // is the same one, somewhere else.
+  if (b.relocOf) {
+    finishRelocation(g, b);
+    return;
+  }
+
   const def = BUILDINGS[b.def];
   const wasUpgrade = b.upgrading;
   const firstOfKind = !g.buildings.some((o) => o !== b && o.def === b.def && o.stage === 'done');
@@ -520,6 +543,61 @@ export function completeConstruction(g: GameState, b: Building): void {
       v.home = b.id;
     }
   }
+}
+
+/**
+ * The move is paid for and built: the building steps across.
+ *
+ * The *original* record is the one that survives, moved to the new corner, and
+ * the site is thrown away. Keeping the id is the whole trick — every worker's
+ * `workplace`, every resident's `home`, every claim and every reference in a
+ * villager's history already points at it, and none of them has to be found and
+ * rewritten. Level, name, buffers and the day it was built come along for free
+ * because they were never anywhere else.
+ */
+function finishRelocation(g: GameState, site: Building): void {
+  const b = buildingById(g, site.relocOf ?? 0);
+  g.buildings = g.buildings.filter((o) => o.id !== site.id);
+  if (!b) return; // The original was taken down mid-move; the site goes with it.
+
+  const def = BUILDINGS[b.def];
+  // Let go of the old ground first, or a footprint that overlaps itself would
+  // clear the tiles it has just claimed.
+  for (let dy = 0; dy < def.h; dy++)
+    for (let dx = 0; dx < def.w; dx++) {
+      const t = tileAt(g, b.x + dx, b.y + dy);
+      if (!t) continue;
+      if (t.building === b.id) {
+        t.building = 0;
+        t.blocked = false;
+      }
+      if (t.plot === b.id) t.plot = 0;
+    }
+  for (const p of b.plots) {
+    const t = tileAt(g, p.x, p.y);
+    if (t && t.plot === b.id) t.plot = 0;
+  }
+
+  b.x = site.x;
+  b.y = site.y;
+  b.movingTo = undefined;
+  for (let dy = 0; dy < def.h; dy++)
+    for (let dx = 0; dx < def.w; dx++) {
+      const t = tileAt(g, b.x + dx, b.y + dy);
+      if (!t) continue;
+      t.building = b.id;
+      if (def.solid) t.blocked = true;
+    }
+  // Fresh ground means fresh fields: whatever was growing in the old plots went
+  // with them, which is why the farm's own panel says to harvest before moving.
+  if (def.plots) makePlots(g, b);
+
+  const name = buildingName(b.def, b.level);
+  toast(g, `The ${name.toLowerCase()} is standing at its new spot`, '🧭', 'good');
+  journal(g, `The ${name.toLowerCase()} was taken apart and put back up on better ground.`, '🧭');
+
+  // Everybody re-decides: half the kingdom was walking towards the old corner.
+  for (const v of g.villagers) abandonPlan(g, v);
 }
 
 function makePlots(g: GameState, b: Building): void {
@@ -826,8 +904,10 @@ function planHarvestNode(
   // Plenty of this already: lend a hand elsewhere rather than filling the barn.
   if (glutOf(g, res)) return planHelper(g, v);
 
+  // The reach drawn on the map when this was placed is the reach used here.
+  const reach = rangeOf(workplace.def, workplace.level);
   const c = buildingCentre(workplace);
-  const node = findNode(g, c.x, c.y, prop, 13) ?? findNode(g, v.x, v.y, prop, 20);
+  const node = findNode(g, c.x, c.y, prop, reach) ?? findNode(g, v.x, v.y, prop, reach + 7);
   if (!node) return planHelper(g, v);
 
   const goals = neighbours(g, node.x, node.y);
@@ -849,10 +929,16 @@ function planHarvestNode(
   return true;
 }
 
-/** What one kind of node gives up, and how long a go at it takes. */
+/**
+ * What one kind of node gives up by hand, and how long a go at it takes.
+ *
+ * Trees, and only trees. A boulder is not on this list on purpose: breaking one
+ * is quarry work, so there is no path through `planGatherNode` that produces
+ * stone and no way for a helper to find one. Stoneworkers go through
+ * `planHarvestNode` instead, which is reached only from a staffed quarry.
+ */
 const NODE_WORK: Partial<Record<PropId, { res: ResourceId; per: number; seconds: number }>> = {
   tree: { res: 'wood', per: CHOP_YIELD, seconds: CHOP_SECONDS },
-  boulder: { res: 'stone', per: MINE_YIELD, seconds: MINE_SECONDS },
 };
 
 /**
@@ -985,6 +1071,16 @@ function planProduce(g: GameState, v: Villager, b: Building): boolean {
   const needed = recipe.inputs[inRes] ?? 1;
   const store = nearestStore(g, b.x, b.y);
 
+  // A workshop is as capable of burying the kingdom as a woodcutter is, and for
+  // a while nothing stopped one: a mill with wheat coming in and no bakery yet
+  // built ground every last sheaf into flour, filled the store with it, and
+  // left everybody else — the stoneworkers who would have quarried the stone
+  // the bakery was waiting on — with nowhere to put anything down. The rule is
+  // the same one the gatherers follow: past a third of the whole store, go and
+  // be useful elsewhere. Clearing the shelf below is deliberately left running,
+  // so a workshop that has already made the stuff still gets it carried off.
+  const glutted = glutOf(g, outRes);
+
   // Clear the output shelf before it jams the workshop.
   if (store && storageFree(g) > 0 && (outHeld >= CARRY_CAPACITY || (outHeld > 0 && inHeld < needed))) {
     planWalkTo(g, v, b, [
@@ -994,7 +1090,7 @@ function planProduce(g: GameState, v: Villager, b: Building): boolean {
     return true;
   }
 
-  if (inHeld >= needed && outHeld + (recipe.outputs[outRes] ?? 0) <= OUTPUT_CAP) {
+  if (!glutted && inHeld >= needed && outHeld + (recipe.outputs[outRes] ?? 0) <= OUTPUT_CAP) {
     planWalkTo(g, v, b, [
       { t: 'act', dur: recipe.seconds, kind: 'working', xp: def.job },
       { t: 'effect', kind: 'batch', id: b.id },
@@ -1003,7 +1099,7 @@ function planProduce(g: GameState, v: Villager, b: Building): boolean {
   }
 
   // Fetch raw materials personally rather than waiting for a helper to notice.
-  if (inHeld < needed && store && g.stock[inRes] >= needed) {
+  if (!glutted && inHeld < needed && store && g.stock[inRes] >= needed) {
     const sdef = BUILDINGS[store.def];
     v.plan = [
       { t: 'move', x: store.x, y: store.y, goals: footprintApproach(g, store.x, store.y, sdef.w, sdef.h) },
@@ -1058,6 +1154,8 @@ function planHelper(g: GameState, v: Villager): boolean {
     if (b.stage !== 'done' || b.workers.length === 0) continue;
     const def = BUILDINGS[b.def];
     if (!def.recipe) continue;
+    // No sense carrying wheat to a mill that has stopped grinding it.
+    if (glutOf(g, Object.keys(def.recipe.outputs)[0] as ResourceId)) continue;
     const inRes = Object.keys(def.recipe.inputs)[0] as ResourceId;
     const held = b.input[inRes] ?? 0;
     if (held >= INPUT_CAP * 0.6 || g.stock[inRes] < 2) continue;
@@ -1095,30 +1193,23 @@ function planHelper(g: GameState, v: Villager): boolean {
     return true;
   }
 
-  // 5. Gather by hand whatever the kingdom is shortest of.
+  // 5. Fell a tree. Wood is the only thing hands alone can fetch: stone comes
+  //    out of a quarry or it does not come at all, which is what makes the
+  //    quarry the kingdom's second real decision rather than a convenience.
   if (storageFree(g) < 6) noticeStoreFull(g);
-  else {
-    const wants: { res: ResourceId; deficit: number }[] = [];
-    for (const res of ['wood', 'stone'] as ResourceId[]) {
-      const target = gatherTarget(g, res);
-      const deficit = (target - g.stock[res]) / target;
-      if (deficit > 0.02) wants.push({ res, deficit });
-    }
-    wants.sort((a, b) => b.deficit - a.deficit);
-    for (const want of wants) {
-      const got =
-        want.res === 'wood'
-          ? planGatherWood(g, v, 'helper')
-          : planGatherNode(g, v, 'boulder', 22, 'helper', true);
-      if (got) return true;
-    }
-  }
+  else if (g.stock.wood < gatherTarget(g, 'wood') && planGatherWood(g, v, 'helper')) return true;
 
   return false;
 }
 
-/** What a site is being paid: its own cost, or the cost of the improvement under way. */
+/**
+ * What a site is being paid: its own cost, the cost of the improvement under
+ * way, or — for the empty ground a building is moving onto — the cost of the
+ * move. Three cases, one function, so helpers supplying a relocation are simply
+ * helpers supplying a site and no planner needed a word changing.
+ */
 export function siteCost(b: Building): Partial<Record<ResourceId, number>> {
+  if (b.relocOf) return relocateCost(b.def);
   return b.upgrading ? upgradeCostOf(b.def, b.level) : BUILDINGS[b.def].cost;
 }
 
@@ -1144,6 +1235,7 @@ export function siteNeeds(b: Building): { res: ResourceId; need: number; have: n
 }
 
 export function labourNeeded(b: Building): number {
+  if (b.relocOf) return relocateLabour(b.def);
   return BUILDINGS[b.def].labour * (b.upgrading ? 1.4 : 1);
 }
 

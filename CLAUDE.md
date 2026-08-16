@@ -90,14 +90,37 @@ npx tsx scripts/worldcheck.ts 1 8     # one seed, the way a failure reports itse
 Generates island after island and checks each one is a kingdom somebody could
 start on: the wood and stone the first hour needs, a choice of at least six
 three-by-three campsites the game's own rule would accept, at least four trees
-the founder can walk to from where they start, a beach that connects to it on
-foot, sane tiles, and the same seed giving the same world twice.
+the founder can walk to from where they start, at least three places a Quarry
+could stand and reach fourteen boulders, a beach that connects to it on foot,
+sane tiles, and the same seed giving the same world twice.
 
 **Run this after any change to `world/terrain.ts`.** Generation leans on random
 scatter, and a scatter with a give-up guard is not a guarantee — the failures it
 finds are single seeds in the tens of thousands where the noise came out badly
 and the founder walks up a beach to an island with no firewood on it. It prints
 the failing seed so the world can be regenerated on its own.
+
+The quarry check earns its place now that stone comes from a quarry and from
+nowhere else: an island whose boulders are scattered too thinly for any one
+quarry to reach a worthwhile number of them is not a hard start, it is a kingdom
+that cannot pass its second commons.
+
+### Moving buildings: `npm run reloccheck`
+
+```bash
+npm run reloccheck
+```
+
+Drives one relocation the whole way through on a real kingdom — start the move,
+check the original is still working and still staffed, save and reload it
+half-finished, then let villagers actually carry the materials and build it.
+
+**Run this after any change to relocation, `completeConstruction`, or
+`removeBuilding`.** Moving a building is the only thing in the game that changes
+a finished building's coordinates, and everything it can get wrong is invisible
+both in the source and on screen: a footprint left claimed by a building that
+has walked away, a worker pointing at a corner with nothing on it, a level or a
+name quietly reset to what a new one would have had.
 
 ### Visuals: `scripts/shot.mjs`
 
@@ -172,7 +195,7 @@ src/
   ui/portraits.ts     map art painted into interface canvases
   ui/style.css        all styling
   game.ts             clock, input routing, every player-facing operation
-scripts/              simcheck.ts, worldcheck.ts, roundtrip.ts, shot.mjs
+scripts/              simcheck.ts, worldcheck.ts, relocheck.ts, roundtrip.ts, shot.mjs
 ```
 
 **`src/sim/defs.ts` holds essentially all the tuning**: buildings (size, cost,
@@ -312,21 +335,39 @@ until every one is met. `COMMONS_REQS` in `defs.ts` holds them, and each level
 hands over a tier of the build menu through `unlockCommonsTier` in `goals.ts`,
 called from `completeConstruction`:
 
-| level | asks for | opens |
-|---|---|---|
-| 1 Base Camp | the founding | Cabin |
-| 2 Settled Camp | a cabin, three people | Storehouse, Quarry, Lodge |
-| 3 Village Commons | bread of your own, six people, somebody in a trade | Standing Stone |
-| 4 Kingdom Commons | *a way of building nobody knows yet* | — |
+| level | asks for | opens | cabins / storehouses |
+|---|---|---|---|
+| 1 Base Camp | the founding | Cabin, Storehouse, Lodge, Quarry | 1 / 1 |
+| 2 Settled Camp | a cabin, a quarry, three people | Well | 2 / 2 |
+| 3 Village Commons | bread of your own, six people, somebody in a trade | Standing Stone | 3 / 3 |
+| 4 Kingdom Commons | *a way of building nobody knows yet* | — | 4 / 4 |
+
+The Base Camp hands over all four foundations at once, on purpose: the first
+hour is about deciding where those four go, and a kingdom that can fell trees
+but not break stone is one waiting on permission rather than on itself. What the
+later levels give is mostly *room* — one more cabin and one more storehouse each
+— which is a reward you can act on rather than a new menu entry.
 
 Two rules that are easy to break. **No level may require something it is itself
 responsible for unlocking** — that is why bread gates the Village Commons rather
 than the Settled Camp, and why the food chain (Farm, Windmill, Bakery) is
-unlocked by *goals* instead. And **every cost must fit inside the storage the
-previous level left behind, and under what `gatherTarget` will actually fetch**
-(half the store in wood, a third in stone): a cost above that line is one nobody
-can ever pay. The requirements are written to be things that cannot un-happen,
+unlocked by *goals* instead. The Settled Camp asking for a quarry is fine
+precisely because the Base Camp is what opened the quarry. And **every cost must
+fit inside the storage the previous level left behind, and under what
+`gatherTarget` will actually fetch**: a cost above that line is one nobody can
+ever pay. The requirements are written to be things that cannot un-happen,
 because a kingdom is never told it has gone backwards.
+
+**Every step of every building shows its whole price before you commit.**
+`improveSection` in `ui/modals.ts` draws it as one checklist and draws it
+*always* — materials with what is free in store against what is wanted,
+accomplishments ticked off one at a time, what the step hands back, and a plain
+sentence naming everything still outstanding. Not only when the button is live:
+a disabled button is not an explanation, and the thing a player needs to read is
+what they are waiting for, which is by definition something they cannot do yet.
+A requirement nothing can currently satisfy is shown in the same row shape as
+one that is met, which is how the Kingdom Commons reads as a horizon rather than
+as something broken.
 
 **Level 4 is deliberately out of reach.** Its requirement is `met: () => false`
 with a label saying so, and the panel shows it greyed rather than hiding it. The
@@ -349,6 +390,92 @@ planner would have sent them. None of this pays anything, and none of it should
 start to: celebrations, announcements and memorials all belong here later, and
 they belong here as behaviour rather than as a bonus.
 
+**Stone comes from a quarry, and from nowhere else at all.** This is the
+kingdom's second real decision and the spine of the early game:
+
+> **wood → Quarry → stone → the commons grows**
+
+Nothing else may ever produce stone. Not a helper with bare hands, not a goal
+reward, not starting stock, and not clearing a boulder to build on — `place()`
+and `relocate()` both check `hasQuarry()` before a cleared boulder gives anything
+back, so building on top of the rock is not a way round the rule. The Quarry's
+own cost is therefore **wood only, and must stay that way**: a quarry that cost
+stone could never be built. For the same reason no requirement or cost that
+comes before the quarry may ask for stone. `simcheck` fails the run if a kingdom
+with no quarry has any stone at all, which is the cheapest way to catch a new
+source being added by accident.
+
+Two things keep it from being a trap. Boulders regrow — `updateTerrain` turns
+rubble back into a boulder **wherever it stands**, not only on rocky ground,
+which was a real bug the moment stone stopped being pickable by hand. And
+`worldcheck` guarantees every island has somewhere a quarry can stand and reach
+a worthwhile number of them.
+
+**Buildings come in four kinds, and the kind is a `BuildingDef` flag.**
+
+- **The commons** — `once`, never in the menu, never removable, never movable.
+  It stands where the kingdom began.
+- **`unique: true`** — Lodge, Quarry, Farm, Windmill, Bakery. One at a time.
+  They grow through improvement rather than duplication, and rather than
+  building a second you **move** the one you have.
+- **`maxCount: [...]`** — Cabin and Storehouse, indexed by the commons' level.
+  Not unique, not unlimited; the count is one of the things the commons hands
+  over as it grows.
+- **everything else** — benches, lanterns, flowerbeds, saplings, wells. Freely
+  repeatable, as they always were.
+
+`buildLimit()` in `goals.ts` is the one place that answers "how many, out of how
+many". The build menu shows the tally on **every** limited kind whether or not
+the kingdom is at the ceiling, and a kind that is full stays in the list, greyed,
+rather than vanishing: a row that quietly disappears teaches nothing, and the
+limit is exactly the thing the player has to plan around. Being at the limit is
+deliberately not part of `availableToBuild` — `Game.placeProblem` is what
+refuses, and it says what to do instead.
+
+**Moving a building never takes it out of service.** `relocate()` puts an
+ordinary construction site on the new ground carrying `relocOf`, and marks the
+original `movingTo`. Helpers then supply and build that site exactly as they
+would any other — no planner needed a word changing, because `siteCost` and
+`labourNeeded` simply have a third case. The original goes on working the whole
+time, and only steps across in `finishRelocation` when the site is done.
+
+That ordering is the entire point of the feature. Anything that tore the
+building down first would lose the kingdom its only quarry halfway through
+moving the quarry, drop storage below what is already stored, or turf workers
+out of a workplace that does not exist yet.
+
+**The record that survives a move is the original, moved.** `finishRelocation`
+changes `b.x/b.y` and deletes the site; the id never changes, so every
+`workplace`, every `home`, every claim and every line of history keeps pointing
+at the right thing without being found and rewritten. Level, name, buffers and
+the day it was built come along because they were never anywhere else. Farms are
+the one thing that does not survive: fresh ground means fresh plots, and the
+farm's own copy says to harvest first. Costs a full set of materials and the
+full labour — it is not a discount, it is a way of keeping a building rather
+than replacing it.
+
+**Both ends of a move tidy each other up.** `removeBuilding` on the original
+abandons the site; on the site it clears the original's `movingTo` and leaves it
+where it was. `canUpgrade` refuses while a move is under way. Both ends are
+saved, so closing the tab halfway through does not quietly put the building
+back. `relocheck` exists because none of this is visible in a screenshot.
+
+**A working range is shown before it is committed to, and it is the range the
+workers keep.** `range` on a `BuildingDef` (per level) is read by `rangeOf`, and
+that one number feeds the planner, the count in the building's own panel, and
+the ring drawn on the map while it is being placed or moved. `findNode` now
+tests the distance rather than only bounding the scan — it used to search a
+*square*, which made "thirteen tiles" eighteen at the corners. That was
+invisible while nothing drew the range and is a lie the moment something does.
+
+The overlay is worth knowing about: a circle in tile space is exactly an
+axis-aligned **ellipse** on screen — substitute the isometric projection into
+the circle and you get `(sx/HALF_W)² + (sy/HALF_H)² ≤ 2r²` — so `drawWorkRange`
+paints it column by column instead of filling five hundred separate diamonds
+every frame. Every live node inside gets a mark of its own, and the placement
+hint says the count out loud, because at the usual zoom the ring's edge is off
+the side of the screen and the number is the part that always fits.
+
 **Claims prevent collisions.** `claim()` / `releaseClaim()` reserve a tree, a
 farm plot, or a task so two villagers do not walk to the same one. Always release
 through `releaseClaim` — it also clears the tile/plot flags. Plot claims are
@@ -359,15 +486,29 @@ exceeds 35% of storage capacity. Without it, woodcutters fill the barn and the
 food chain starves. This is the mechanism that makes "the kingdom stalls but
 never collapses" actually true.
 
-Hand-gathering has the same idea in `gatherTarget()`: the flat targets (120 wood,
-90 stone) are additionally capped at a share of what the kingdom can actually
-hold. With a storehouse up this never binds. It exists for the Base Camp, which
-holds sixty: without it helpers cheerfully fill that with stone nothing needs yet
-and leave the kingdom unable to afford the improvement that would fix it — a
-stall with no way out, which is worse than a slow kingdom. It is also the ceiling
-every commons upgrade cost has to sit under. This is the same trap
-`DESIGN.md`-style per-resource shelf limits keep falling into, and the reason any
-future version of them has to clear the early costs.
+It applies to **workshops as well as gatherers**, and that was missing for a
+long time without showing: a mill with wheat coming in and no bakery built yet
+ground every last sheaf into flour, filled the store with it, and left the
+stoneworkers who would have quarried the stone the bakery was waiting on with
+nowhere to put anything down. `planProduce` checks the glut before it runs a
+batch or fetches inputs, and `planHelper`'s restock step will not carry wheat to
+a mill that has stopped. Clearing the output shelf is deliberately *not* gated —
+a workshop that has already made the stuff still gets it carried off.
+
+Hand-gathering has the same idea in `gatherTarget()`: the flat target (120 wood)
+is additionally capped at half of what the kingdom can actually hold. With a
+storehouse up this never binds. It exists for the Base Camp, which holds sixty:
+without it helpers cheerfully fill that and leave the kingdom unable to afford
+the improvement that would fix it — a stall with no way out, which is worse than
+a slow kingdom. It is also the ceiling every commons upgrade cost has to sit
+under. This is the same trap `DESIGN.md`-style per-resource shelf limits keep
+falling into, and the reason any future version of them has to clear the early
+costs.
+
+**Wood is the only thing hands alone can fetch.** `GATHER_TARGET` and
+`NODE_WORK` list trees and nothing else, so there is no path through
+`planGatherNode` that produces stone and no way for a helper to find one.
+See "Stone comes from a quarry" below.
 
 **Putting a load down never fails.** `deposit()` is clipped by capacity, but
 `deliver()` — what a villager carrying goods actually calls — always accepts the
@@ -506,9 +647,17 @@ the camp's centre and the footprint is the thing worth seeing.
 
 **Speed lives in Settings → Viewing**, not on the map, along with `space` and
 `1`/`2`/`3`. **Removing a building lives at the foot of the build panel**, not in
-the top bar; a building's own panel has Improve, Show me and Remove in its
+the top bar; a building's own panel has Improve, Move, Show me and Remove in its
 footer. Both were moved out of the way deliberately — do not put them back on
 the map chrome.
+
+**Moving is offered on a building's own panel and nowhere else.** There is no
+"move" mode in the build list, because moving is something you do to a
+*particular* quarry — one with a level, a name and two people working at it —
+rather than a mode you enter and then go looking for a target. The tool it arms
+carries the building's id for the same reason, and it lets go of itself the
+moment the ground is chosen: unlike laying out a row of houses there is exactly
+one of these to place.
 
 **Villagers, animals and tiles get a card in the right margin; a building gets
 the whole modal.** Clicking a building on the map fires `game.onBuildingClicked`
@@ -699,6 +848,21 @@ depletes, leaves a stump and grows back like every other tree. Do not reintroduc
 a special opening-only resource; if the first minute needs to be gentler, tune
 the chop, not the world.
 
+**Hand-mining is gone, and is not coming back.** Helpers and the founder used to
+break boulders for stone the way they fell trees for wood. They cannot any more:
+stone is the Quarry's alone, and the whole early game is shaped by that one
+dependency. `NODE_WORK` lists trees and nothing else, so there is no code path
+left to reintroduce it by accident. If the run-up to a quarry ever needs to be
+gentler, tune the quarry — its cost, its reach, how fast a stoneworker swings —
+not the rule.
+
+**A second Lodge, Quarry, Farm, Windmill or Bakery is gone, and is not coming
+back.** These are institutions rather than production units. If one is in a bad
+spot the answer is to move it, which keeps its level, its name, its workers and
+its history; a duplicate would weaken all of that and quietly become the
+optimal strategy besides. Adding a new principal production building means
+`unique: true` on it, not a count.
+
 **Roads and paths are gone, and are not coming back.** `DESIGN.md` specifies
 them at length — player-placed roads, a meaningful movement bonus — and that
 part of the brief has been dropped on purpose. There is no paint tool, no
@@ -717,11 +881,16 @@ Master rank is ~10–15 real hours of dedicated work in one trade · storage is 
 single shared pool fed by storage buildings: nothing at all until the Base Camp
 is finished, then 60 / 200 / 450 / 800 as the commons grows, and +250 per
 storehouse · housing is Cabins (2 / 4 / 6 beds) plus the commons' two beds
-outdoors, which never increase · founding itself is about a minute and a half at
-1×, twenty seconds of it the walk up the beach and twenty the tree · a generated
-island carries at least 55 trees and 26 boulders within 14 tiles of the middle, a
-choice of at least 6 legal campsites, and at least 4 trees within 9 tiles of
-where the kingdom begins — the nearest about 3.
+outdoors, which never increase · the kingdom keeps as many Cabins and
+Storehouses as the commons has levels, 1 each at Base Camp up to 4 each at
+Kingdom Commons, and exactly one of each principal production building · a lodge
+or quarry reaches 13 tiles, 17 once improved · founding itself is about a minute
+and a half at 1×, twenty seconds of it the walk up the beach and twenty the tree
+· a generated island carries at least 55 trees and 26 boulders within 14 tiles of
+the middle, a choice of at least 6 legal campsites, at least 4 trees within 9
+tiles of where the kingdom begins — the nearest about 3 — and at least 3 places a
+quarry could stand and reach 14 boulders (in practice a hundred or more, the best
+of them reaching forty to ninety).
 
 Per-resource shelf limits — one good never taking more than a share of the
 store — have been discussed and deliberately deferred. Any such limit has to

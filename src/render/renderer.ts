@@ -8,7 +8,7 @@
  */
 
 import { clamp, hash2 } from '../core/util';
-import type { Building, GameState, Season, Villager } from '../types';
+import type { Building, GameState, PropId, Season, Villager } from '../types';
 import { BUILDINGS } from '../sim/defs';
 import { HALF_H, HALF_W, toGridX, toGridY, toScreenX, toScreenY } from '../world/iso';
 import { CAMP_HALF, CAMP_SPAN } from '../world/terrain';
@@ -42,6 +42,13 @@ export interface RenderOptions {
   ghost: { def: keyof typeof BUILDINGS; x: number; y: number; valid: boolean } | null;
   /** The campsite marker, during founding only. */
   marker: { x: number; y: number; valid: boolean } | null;
+  /**
+   * The working area of whatever is being placed or moved: how far its workers
+   * will go, and every live node of theirs inside it. Drawn only while a
+   * decision is being made, because a permanent ring round the lodge would be a
+   * diagram laid over a place people live.
+   */
+  range: { cx: number; cy: number; radius: number; prop: PropId } | null;
   demolish: boolean;
 }
 
@@ -503,6 +510,9 @@ export class Renderer {
   // -------------------------------------------------------------------------
 
   private drawPlacement(g: GameState, opts: RenderOptions): void {
+    // Under the ghost, so the building being sited still reads as the thing in
+    // the player's hand rather than as one more mark on a busy diagram.
+    if (opts.range) this.drawWorkRange(g, opts.range);
     if (opts.marker) this.drawCampMarker(opts.marker);
     if (!opts.ghost) return;
     const def = BUILDINGS[opts.ghost.def];
@@ -518,6 +528,78 @@ export class Renderer {
     b.drawImage(sprite.canvas, Math.round(leftX - this.viewX), Math.round(topY - sprite.rise - this.viewY));
     b.restore();
     this.outlineFootprint(x, y, def.w, def.h, valid ? '#b6f0a8' : '#ff8a72');
+  }
+
+  /**
+   * How far a lodge or a quarry would reach from here, and what is inside it.
+   *
+   * The boundary is drawn rather than the area filled, and for a reason that is
+   * not only speed: a thirteen-tile circle is five hundred tiles, and washing
+   * five hundred tiles with colour hides the very trees the ring exists to let
+   * you count. So the edge is a band of tiles, and each live node inside gets a
+   * small mark of its own — the answer to "will this lodge have anything to do"
+   * is a thing you can see at a glance rather than a shaded blob.
+   */
+  private drawWorkRange(g: GameState, range: NonNullable<RenderOptions['range']>): void {
+    const { cx, cy, radius, prop } = range;
+    const b = this.bctx;
+
+    /*
+     * A circle in tile space is an axis-aligned ellipse on screen, exactly.
+     * Writing the projection out: screen x is (tx - ty)·HALF_W and screen y is
+     * (tx + ty)·HALF_H, and substituting those into the circle turns it into
+     * (sx/HALF_W)² + (sy/HALF_H)² ≤ 2r². So the reach can be drawn as one
+     * ellipse, column by column, instead of as five hundred separate diamonds —
+     * which matters because this is redrawn every frame while the player moves
+     * the cursor around deciding.
+     */
+    const a = radius * Math.SQRT2 * HALF_W;
+    const bb = radius * Math.SQRT2 * HALF_H;
+    const ox = toScreenX(cx, cy) - this.viewX;
+    const oy = toScreenY(cx, cy) - this.viewY;
+    const lo = Math.max(Math.ceil(-a), Math.floor(-ox));
+    const hi = Math.min(Math.floor(a), Math.ceil(this.bufW - ox));
+
+    // A wash over everything inside, then a hard band at the edge. The wash is
+    // what makes the reach legible when the boundary is off the side of the
+    // screen, which at the usual zoom it very often is.
+    for (let dx = lo; dx <= hi; dx++) {
+      const k = 1 - (dx * dx) / (a * a);
+      if (k <= 0) continue;
+      const half = bb * Math.sqrt(k);
+      b.fillStyle = 'rgba(255,232,160,0.10)';
+      b.fillRect(Math.round(ox + dx), Math.round(oy - half), 1, Math.round(half * 2));
+      // The band is drawn from the same maths, so it sits exactly on the line
+      // the wash ends at rather than a pixel out from it.
+      const innerHalf = bb * Math.sqrt(Math.max(0, 1 - (dx * dx) / ((a - HALF_W * 1.2) ** 2)));
+      const thick = Math.max(1, Math.round(half - innerHalf));
+      b.fillStyle = 'rgba(255,226,140,0.5)';
+      b.fillRect(Math.round(ox + dx), Math.round(oy - half), 1, thick);
+      b.fillRect(Math.round(ox + dx), Math.round(oy + half - thick), 1, thick);
+    }
+
+    // And a mark on every live node inside it — the ring says how far, this
+    // says whether there is anything out there worth walking to.
+    const x0 = Math.max(0, Math.floor(cx - radius));
+    const x1 = Math.min(g.w - 1, Math.ceil(cx + radius));
+    const y0 = Math.max(0, Math.floor(cy - radius));
+    const y1 = Math.min(g.h - 1, Math.ceil(cy + radius));
+    const r2 = radius * radius;
+    for (let y = y0; y <= y1; y++)
+      for (let x = x0; x <= x1; x++) {
+        if ((x - cx) ** 2 + (y - cy) ** 2 > r2) continue;
+        const t = g.tiles[y * g.w + x];
+        if (t.prop !== prop || t.amount <= 0) continue;
+        // On the tile itself rather than on the sprite standing on it: the tree
+        // is drawn later and would cover a mark placed at its crown.
+        const sx = Math.round(toScreenX(x, y) - this.viewX);
+        const sy = Math.round(toScreenY(x, y) - this.viewY);
+        b.fillStyle = 'rgba(30,24,16,0.55)';
+        b.fillRect(sx - 2, sy - 1, 5, 3);
+        b.fillStyle = '#ffe9a6';
+        b.fillRect(sx - 1, sy, 3, 1);
+        b.fillRect(sx, sy - 1, 1, 3);
+      }
   }
 
   /**

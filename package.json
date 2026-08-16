@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit",
     "sim": "tsx scripts/simcheck.ts",
     "worldcheck": "tsx scripts/worldcheck.ts",
+    "reloccheck": "tsx scripts/relocheck.ts",
     "roundtrip": "tsx scripts/roundtrip.ts",
     "shot": "node scripts/shot.mjs"
   },
