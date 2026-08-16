@@ -31,9 +31,10 @@ import {
 import { BOULDER_REGROW, TREE_REGROW, findNode, isWalkable, tileAt } from '../world/terrain';
 import { findPath, footprintApproach } from '../world/path';
 import { CHATTER } from './names';
+import { unlockCommonsTier } from './goals';
 import { journal, note, toast } from './journal';
 import {
-  campfireOf,
+  commonsOf,
   foundingActive,
   foundingSite,
   foundingWoodNeeded,
@@ -51,9 +52,6 @@ const CHOP_SECONDS = 4.5;
 const CHOP_YIELD = 3;
 const MINE_SECONDS = 5.5;
 const MINE_YIELD = 2;
-/** Deadfall: quicker than felling, because it is already on the ground. */
-const BRANCH_SECONDS = 3.2;
-const BRANCH_YIELD = 3;
 const PLANT_SECONDS = 3.5;
 const HARVEST_SECONDS = 3.5;
 const HARVEST_YIELD = 3;
@@ -63,9 +61,9 @@ const PLOT_GROW_SECONDS = 200;
 const GATHER_TARGET: Record<string, number> = { wood: 120, stone: 90 };
 /**
  * …and no more than this share of whatever the kingdom can actually hold. With
- * a storehouse up these never bind, but the opening chest holds fifty, and
- * without a ceiling helpers cheerfully fill it with stone nothing yet needs and
- * leave the kingdom unable to afford the very storehouse that would fix it.
+ * a storehouse up these never bind, but a Base Camp holds sixty, and without a
+ * ceiling helpers cheerfully fill it with stone nothing yet needs and leave the
+ * kingdom unable to afford the very improvement that would fix it.
  * Wood gets the larger share because every early building is made of it.
  */
 const GATHER_SHARE: Record<string, number> = { wood: 0.5, stone: 0.32 };
@@ -329,8 +327,8 @@ function doGive(g: GameState, v: Villager, step: Extract<Step, { t: 'give' }>): 
   if (!v.carrying) return;
   const res = v.carrying.res;
   // A step with no `qty` hands over the whole load, which is what hauling always
-  // does. The founding builds ask for an exact amount and leave the rest in the
-  // founder's arms — the fire takes four of the twelve, the chest takes eight.
+  // does. The founding build asks for an exact amount instead, so a founder who
+  // felled more than twelve is not quietly relieved of the rest.
   const qty = step.qty === undefined ? v.carrying.qty : Math.min(step.qty, v.carrying.qty);
   if (qty <= 0) return;
   v.carrying.qty -= qty;
@@ -484,15 +482,15 @@ export function completeConstruction(g: GameState, b: Building): void {
 
   if (wasUpgrade) {
     b.level = Math.min(def.maxLevel, b.level + 1);
-    // Named after the improvement, not before it: a widened chest is a Medium
-    // Chest from the moment the lid shuts.
+    // Named after the improvement, not before it: a camp that has been seen to
+    // is a Settled Camp from the moment the last post goes in.
     const now = buildingName(b.def, b.level);
     toast(g, def.levelNames ? `Now a ${now}` : `${now} improved`, '⬆️', 'good');
     journal(g, def.levelNames ? `A ${now.toLowerCase()} took the place of the old one.` : `The ${now.toLowerCase()} was improved.`, '⬆️');
   } else {
     if (def.plots) makePlots(g, b);
-    // The fire and the chest are the two buildings that deserve better words
-    // than "Campfire finished", and finishing them moves the kingdom on.
+    // The Base Camp deserves better words than "Base Camp finished", and
+    // finishing it is what moves the kingdom out of its founding.
     const founded = onFoundingBuild(g, b);
     if (founded) {
       toast(g, founded.toast, founded.icon, 'good');
@@ -503,13 +501,19 @@ export function completeConstruction(g: GameState, b: Building): void {
     }
   }
 
-  // A finished house takes in anyone still sleeping by the fire.
+  // Each level of the commons hands the kingdom its next tier of buildings.
+  // Doing it here rather than from a goal keeps the two in step: the goal that
+  // congratulates you on a Settled Camp and the storehouse it lets you build
+  // both hang off the same moment.
+  if (b.def === 'commons') unlockCommonsTier(g, b.level);
+
+  // A finished house takes in anyone still sleeping out at the commons.
   if (def.housing) {
     for (const v of g.villagers) {
       // A bed the player picked is never quietly reassigned, even to a better one.
       if (v.homeFixed) continue;
       const home = buildingById(g, v.home);
-      if (home && home.def !== 'campfire') continue;
+      if (home && home.def !== 'commons') continue;
       if (b.residents.length >= homeCapacity(b)) break;
       if (home) home.residents = home.residents.filter((id) => id !== v.id);
       b.residents.push(v.id);
@@ -590,8 +594,8 @@ function think(g: GameState, v: Villager): void {
 
   // Never carry goods across a decision — put them somewhere first. The founder
   // during founding is the one exception in the whole game: there is nowhere to
-  // put anything down yet, so the wood stays in their arms and pays for the fire
-  // and the chest directly. The exception ends with the chest.
+  // put anything down yet, so the wood stays in their arms and pays for the
+  // Base Camp directly. The exception ends with the camp.
   if (v.carrying && !isFounder(g, v)) {
     const store = nearestStore(g, v.x, v.y);
     if (store) {
@@ -656,11 +660,13 @@ function planFounding(g: GameState, v: Villager): boolean {
       // therefore costs nothing and a slow one is spent usefully.
       return planCamp(g, v);
     case 'settling': {
-      // The fire ring is already on this tile; they are walking out to stand in
-      // it, which is the last thing that happens before any work does.
+      // The rough camp is already laid out around this tile; they are walking
+      // into the middle of it, which is the last thing that happens before any
+      // work does. The camp is not solid, so they stand in it rather than
+      // beside it.
       const { x, y } = g.founding;
       v.plan = [
-        { t: 'move', x, y, goals: neighbours(g, x, y) },
+        { t: 'move', x, y },
         { t: 'act', dur: 4, kind: 'building' },
         { t: 'say', text: 'Flat enough, and out of the wind.' },
         { t: 'effect', kind: 'settled' },
@@ -674,27 +680,23 @@ function planFounding(g: GameState, v: Villager): boolean {
 }
 
 /**
- * Deadfall in, fire and chest out, all of it paid for from the founder's arms.
+ * One tree in, one Base Camp out, all of it paid for from the founder's arms.
  * Runs from the moment they stop walking, before the ground is even chosen: they
- * fill up first and build second, and one load of twelve covers the four the
- * fire wants and the eight the chest wants, so nothing is left over and nobody
- * walks the same ground twice.
+ * fill up first and build second, and one full load of twelve is exactly what
+ * the camp costs, so nothing is left over and nobody walks the same ground
+ * twice.
  */
 function planCamp(g: GameState, v: Villager): boolean {
   const held = carriedWood(v);
   const site = foundingSite(g);
   const short = site ? woodShortfall(site) : 0;
 
-  // Top the load up while there is still something to pay for. Deadfall is the
-  // intended source and there is always plenty near the middle of the island;
-  // the tree is insurance against a camp chosen at the far edge of the radius
-  // with every pile already picked up, which must not leave them with nothing
-  // to do and no way to finish.
+  // Top the load up while there is still something to pay for. Felled at the
+  // ordinary pace rather than the untrained one: this is the first minute of
+  // the game and it should feel deliberate, not like a punishment for not
+  // owning an axe yet.
   const want = Math.min(CARRY_CAPACITY, foundingWoodNeeded(g));
-  if (held < want) {
-    if (planGatherNode(g, v, 'branches', 20, 'helper', false, false)) return true;
-    if (planGatherNode(g, v, 'tree', 24, 'helper', true, false)) return true;
-  }
+  if (held < want && planGatherNode(g, v, 'tree', 24, 'helper', false, false)) return true;
 
   if (site) {
     // Materials, then hands: the same two jobs any other site needs, minus the
@@ -715,14 +717,10 @@ function planCamp(g: GameState, v: Villager): boolean {
   }
 
   // Nothing to fetch and nothing to build, which means they are waiting on the
-  // player. Nobody sits down during the founding: with a fire lit they feed and
-  // bank it, and before that they walk the ground looking for the spot.
-  const fire = campfireOf(g);
-  if (fire && fire.stage === 'done') {
-    planWalkTo(g, v, fire, [{ t: 'act', dur: rng.range(6, 12), kind: 'working' }]);
-  } else {
-    planSurvey(g, v);
-  }
+  // player: they walk the ground looking the place over. Nobody sits down
+  // during the founding — idling is the product once a kingdom exists, and
+  // before that it reads as a broken game.
+  planSurvey(g, v);
   return true;
 }
 
@@ -853,17 +851,17 @@ function planHarvestNode(
 
 /** What one kind of node gives up, and how long a go at it takes. */
 const NODE_WORK: Partial<Record<PropId, { res: ResourceId; per: number; seconds: number }>> = {
-  branches: { res: 'wood', per: BRANCH_YIELD, seconds: BRANCH_SECONDS },
   tree: { res: 'wood', per: CHOP_YIELD, seconds: CHOP_SECONDS },
   boulder: { res: 'stone', per: MINE_YIELD, seconds: MINE_SECONDS },
 };
 
 /**
  * Hand-gathering: walk to the nearest node of a kind, work it until an armful
- * is up, and haul that to the nearest store. `slow` is the untrained penalty —
- * it does not apply to deadfall, because picking sticks up off the ground is
- * not a skill anybody is short of. `haul` is off only during founding, where
- * there is no store to walk to and the load stays in the founder's arms.
+ * is up, and haul that to the nearest store. `slow` is the untrained penalty,
+ * which the founding deliberately does not apply: the opening is one tree and
+ * one load, and it wants to read as deliberate rather than laborious. `haul` is
+ * off only during founding, where there is no store to walk to and the load
+ * stays in the founder's arms.
  */
 function planGatherNode(
   g: GameState,
@@ -899,9 +897,9 @@ function planGatherNode(
   return true;
 }
 
-/** Deadfall first: quicker, nearer at the start, and it clears itself away. */
+/** Wood by hand means a tree, felled slowly by somebody who is not a woodcutter. */
 function planGatherWood(g: GameState, v: Villager, xp: JobId): boolean {
-  return planGatherNode(g, v, 'branches', 18, xp, false) || planGatherNode(g, v, 'tree', 22, xp, true);
+  return planGatherNode(g, v, 'tree', 22, xp, true);
 }
 
 function neighbours(g: GameState, x: number, y: number): { x: number; y: number }[] {
@@ -1153,7 +1151,27 @@ export function labourNeeded(b: Building): number {
 // Leisure — the half of the simulation with no numbers attached
 // ---------------------------------------------------------------------------
 
-const LEISURE_BUILDINGS = new Set(['bench', 'well', 'statue', 'flowerbed', 'campfire', 'bakery']);
+const LEISURE_BUILDINGS = new Set(['bench', 'well', 'statue', 'flowerbed', 'commons', 'bakery']);
+/** Places people sit down at rather than stand and look at. */
+const SITTING_PLACES = new Set(['bench', 'commons']);
+
+/**
+ * A newcomer's first walk: in to the fire, rather than to wherever the planner
+ * would otherwise have sent them. It earns nothing and costs a minute, which is
+ * rather the point — somebody arrives, and the middle of the kingdom is where
+ * they go.
+ */
+export function planArrivalWelcome(g: GameState, v: Villager): void {
+  const camp = commonsOf(g);
+  if (!camp || camp.stage !== 'done') {
+    speak(v, 'Room for one more?');
+    return;
+  }
+  planWalkTo(g, v, camp, [
+    { t: 'say', text: 'Room for one more?' },
+    { t: 'act', dur: rng.range(10, 18), kind: 'watching' },
+  ]);
+}
 
 function planLeisureFallback(g: GameState, v: Villager, line: string): boolean {
   speak(v, line);
@@ -1172,11 +1190,15 @@ function planLeisure(g: GameState, v: Villager): void {
       const def = BUILDINGS[b.def];
       const goals = footprintApproach(g, b.x, b.y, def.w, def.h);
       if (goals.length) {
+        // People stay at the commons longer than anywhere else and are twice as
+        // likely to say something there, which is the whole of what makes it the
+        // middle of the kingdom rather than a large box of wood.
+        const social = b.def === 'commons';
         v.plan = [
           { t: 'move', x: b.x, y: b.y, goals },
-          { t: 'act', dur: r.range(10, 26), kind: b.def === 'bench' ? 'resting' : 'watching' },
+          { t: 'act', dur: social ? r.range(16, 38) : r.range(10, 26), kind: SITTING_PLACES.has(b.def) ? 'resting' : 'watching' },
         ];
-        maybeSay(g, v, r);
+        maybeSay(g, v, r, social ? 0.34 : 0.15);
         return;
       }
     }
@@ -1284,8 +1306,8 @@ function findWaterEdge(g: GameState, x: number, y: number, radius: number, r: RN
   return best;
 }
 
-function maybeSay(g: GameState, v: Villager, r: RNG): void {
-  if (!r.chance(0.15)) return;
+function maybeSay(g: GameState, v: Villager, r: RNG, chance = 0.15): void {
+  if (!r.chance(chance)) return;
   const pool = v.hunger > 0.8 ? CHATTER.hungry : g.dayT > 0.62 ? CHATTER.night : CHATTER.day;
   speak(v, r.pick(pool));
 }
@@ -1330,10 +1352,6 @@ function sweepDepletedNodes(g: GameState): void {
     } else if (t.prop === 'boulder') {
       t.prop = 'pebbles';
       t.regrow = BOULDER_REGROW;
-      t.claimed = 0;
-    } else if (t.prop === 'branches') {
-      // Deadfall leaves nothing behind and does not come back.
-      t.prop = null;
       t.claimed = 0;
     }
   }

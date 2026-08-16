@@ -399,6 +399,22 @@ function buildingAbout(game: Game, b: Building): string {
         .map((c) => `${RESOURCE_META[c.res].icon} ${c.qty} ${RESOURCE_META[c.res].name.toLowerCase()}`)
         .join(' · ')
     : '';
+  /*
+   * What the kingdom has to have *done*, ticked off one line at a time. A
+   * single "not yet" would be true and useless; the whole point of a structural
+   * gate is that you can see what it is waiting for. A step nothing can satisfy
+   * is shown the same way, which is how the last one reads as a horizon rather
+   * than as something broken.
+   */
+  const reqs = upgradeable ? game.upgradeRequirements(b) : [];
+  const nextName = def.levelNames?.[Math.min(b.level, def.levelNames.length - 1)] ?? '';
+  const reqRows = reqs
+    .map(
+      (r) =>
+        `<div class="kv"><span class="k">${r.met ? '✓' : '○'} ${esc(r.label)}</span>
+          <span class="v" style="color:${r.met ? 'var(--good)' : 'var(--faint)'}">${r.met ? 'done' : 'not yet'}</span></div>`,
+    )
+    .join('');
 
   return `<div class="bsec">
       <div class="tiny" style="line-height:1.6;color:var(--dim)">${esc(def.desc)}</div>
@@ -409,9 +425,14 @@ function buildingAbout(game: Game, b: Building): string {
     <div class="bsec"><div class="bh">The particulars</div>${facts.join('')}</div>
     ${
       upgradeable
-        ? `<div class="bsec"><div class="bh">Improving it</div>
+        ? `<div class="bsec"><div class="bh">Improving it${nextName ? ` · ${esc(nextName)}` : ''}</div>
             ${kv('Costs', cost)}
             ${gains.map((line) => `<div class="tiny muted" style="line-height:1.55">${esc(line)}</div>`).join('')}
+            ${
+              reqRows
+                ? `<div class="tiny muted" style="margin:9px 0 4px">And what the kingdom has to have got to:</div>${reqRows}`
+                : ''
+            }
             <div class="tiny muted" style="margin-top:6px;line-height:1.55">The work is done the same way as building it: materials carried over, then somebody swinging a hammer. It stays in service throughout.</div>
           </div>`
         : b.upgrading
@@ -429,6 +450,9 @@ function improveGains(b: Building): string[] {
   const out: string[] = [];
   const step = (arr: number[] | undefined, noun: string) => {
     if (!arr || i + 1 >= arr.length) return;
+    // A line saying 2 → 2 is worse than no line: the commons keeps its two beds
+    // on purpose, and reading it as a gain makes the whole list untrustworthy.
+    if (arr[i + 1] === arr[i]) return;
     out.push(`${noun}: ${arr[i]} → ${arr[i + 1]}`);
   };
   step(def.housing, 'Beds');
@@ -448,10 +472,15 @@ export function buildingFoot(game: Game, b: Building): string {
         .map((c) => `${RESOURCE_META[c.res].icon}${c.qty}`)
         .join(' ')
     : '';
+  // A greyed-out button with no reason on it is the one thing here people would
+  // have to guess at, and the reason is usually not the materials.
+  const waiting = upgradeable ? game.upgradeRequirements(b).filter((r) => !r.met) : [];
+  const why = canUp ? '' : waiting.length ? ` — waiting on: ${waiting[0].label.toLowerCase()}` : ' — not enough in store';
   return `${
     upgradeable
       ? `<button class="btn small ${canUp ? 'primary' : ''}" data-act="upgrade" data-id="${b.id}" ${canUp ? '' : 'disabled'}
-          aria-label="Improve this building${canUp ? '' : ' — not enough in store'}">⬆️ Improve ${cost}</button>`
+          title="${esc(`Improve this building${why}`)}"
+          aria-label="${esc(`Improve this building${why}`)}">⬆️ Improve ${cost}</button>`
       : ''
   }
     <button class="btn small" data-act="goto" data-x="${b.x}" data-y="${b.y}">Show me</button>

@@ -63,14 +63,11 @@ export function buildListMarkup(game: Game, env: UIEnv): string {
   }
 
   if (!foundingDone(g)) {
-    // Nothing else is on offer yet, and saying why is kinder than an empty
-    // panel — the answer is always "there is nowhere to put anything".
-    body += `<div class="build-group"><div class="tiny muted" style="line-height:1.55">${
-      body
-        ? 'Everything else waits until the kingdom has a chest to keep things in.'
-        : 'Nothing to build yet. Your founder is still gathering, and the fire goes up on its own.'
-    }</div></div>`;
-    return body;
+    // Nothing is on offer yet, and saying why is kinder than an empty panel —
+    // the answer is always "there is nowhere to put anything, and nobody to
+    // carry it there".
+    return `<div class="build-group"><div class="tiny muted" style="line-height:1.55">Nothing to build yet.
+      Your founder is felling a tree, and the camp goes up on the ground you chose without being placed.</div></div>`;
   }
 
   /*
@@ -139,11 +136,12 @@ export function placementBarMarkup(game: Game, env: UIEnv): string {
     const chosen = !!spot && !problem;
     return bar({
       icon: '📍',
-      title: 'Choose a campsite',
+      title: 'Choose where the kingdom begins',
       state: spot ? (problem ? 'bad' : 'good') : 'plain',
       body: spot
-        ? problem ?? 'Clear grass, near enough the middle. Your founder will walk over and make camp here.'
-        : `${env.touch ? 'Tap' : 'Click'} a clear patch of grass near the middle of the island.`,
+        ? problem ??
+          'Open grass, near enough the middle. Your founder will walk over and make camp here; anything standing on those nine tiles gets cleared.'
+        : `${env.touch ? 'Tap' : 'Click'} open grass near the middle of the island. The camp takes three tiles by three, with the fire in the middle.`,
       actions: chosen
         ? `<button class="btn small primary" data-act="confirm-place">Make camp here</button>`
         : '',
@@ -155,15 +153,12 @@ export function placementBarMarkup(game: Game, env: UIEnv): string {
     const spot = game.candidate;
     const problem = spot ? game.placeProblem(tool.def, spot.x, spot.y) : null;
     const ready = !!spot && !problem;
-    const founding = !foundingDone(g);
     return bar({
       icon: '🔨',
       title: `${def.name} · ${costLine(tool.def)}`,
       state: spot ? (problem ? 'bad' : 'good') : 'plain',
       body: spot
-        ? problem ?? (founding
-            ? 'This will do. Your founder has the wood for it already.'
-            : 'This will do. Villagers will carry the materials over and build it.')
+        ? problem ?? 'This will do. Villagers will carry the materials over and build it.'
         : `${env.touch ? 'Tap' : 'Click'} a spot on the map to see how it would sit.`,
       actions: `${ready ? `<button class="btn small primary" data-act="confirm-place">Build it here</button>` : ''}
         ${env.compact ? `<button class="btn small" data-act="toggle-build">Change</button>` : ''}
@@ -181,7 +176,6 @@ export function placementBarMarkup(game: Game, env: UIEnv): string {
  */
 export function toolHintMarkup(game: Game, env: UIEnv): string {
   const t = game.tool;
-  const g = game.state;
   if (t.kind === 'none') return '';
 
   if (t.kind === 'demolish') {
@@ -199,29 +193,26 @@ export function toolHintMarkup(game: Game, env: UIEnv): string {
     // the marker away would only be a way of getting stuck.
     return bar({
       icon: '📍',
-      title: 'Choose a campsite',
+      title: 'Choose where the kingdom begins',
       state: game.blockReason ? 'bad' : 'plain',
       body:
         game.blockReason ??
-        'Click a clear patch of grass near the middle of the island. Your founder will walk over and make camp there.',
+        'Click open grass near the middle of the island. The camp takes three tiles by three with the fire in the middle, and your founder will walk over and make it there.',
       actions: '',
     });
   }
 
   const def = BUILDINGS[t.def];
   const short = !game.canAffordNew(t.def);
-  const founding = !foundingDone(g);
   return bar({
     icon: '🔨',
     title: `Placing a ${def.name}`,
     state: game.blockReason || short ? 'bad' : 'plain',
     body:
       game.blockReason ??
-      (founding
-        ? 'Click a tile beside the fire. Your founder has the wood for it already.'
-        : short
-          ? `Not enough in store right now — it needs ${plainCost(t.def)}.`
-          : `Click a clear spot on the map. Costs ${plainCost(t.def)}; villagers will carry the materials over and build it.`),
+      (short
+        ? `Not enough in store right now — it needs ${plainCost(t.def)}.`
+        : `Click a clear spot on the map. Costs ${plainCost(t.def)}; villagers will carry the materials over and build it.`),
     actions: `<button class="btn small" data-act="cancel-tool">Done ${env.touch ? '' : '<kbd>Esc</kbd>'}</button>`,
   });
 }

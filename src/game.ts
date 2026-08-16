@@ -22,6 +22,7 @@ import {
   JOB_META,
   buildingName,
   upgradeCostOf,
+  upgradeReqsOf,
 } from './sim/defs';
 import {
   abandonPlan,
@@ -39,11 +40,10 @@ import {
 } from './sim/state';
 import { completeConstruction, siteNeeds, updateVillagers } from './sim/villager';
 import {
-  awaitingChest,
   campProblem,
   canChooseCamp,
   chooseCamp,
-  foundingDone,
+  commonsOf,
   protectedBuilding,
 } from './sim/founding';
 import { updateWildlife, rebuildHabitat } from './sim/wildlife';
@@ -132,8 +132,6 @@ export class Game {
   private wheelMode: 'wheel' | 'trackpad' | 'pinch' = 'wheel';
   private wheelAt = 0;
   private zoomAcc = 0;
-  /** Whether the chest placement has already been offered, so it is offered once. */
-  private chestPrompted = false;
   private autosaveTimer = AUTOSAVE_INTERVAL;
   private lastFrame = 0;
   private running = false;
@@ -164,16 +162,17 @@ export class Game {
   }
 
   /**
-   * Wherever the kingdom's middle is today. Before the fire is lit there is no
-   * landmark at all, so it falls back to the founder — who is, at that point,
-   * the only thing worth looking at.
+   * Wherever the kingdom's middle is today, which is the commons at whatever it
+   * has grown into. Before the camp is sited there is no landmark at all, so it
+   * falls back to the founder — who is, at that point, the only thing worth
+   * looking at.
    */
   private centerOnHeart(glide = false): void {
     const g = this.state;
-    const fire = g.buildings.find((b) => b.def === 'campfire') ?? g.buildings[0];
+    const camp = commonsOf(g) ?? g.buildings[0];
     const founder = villagerById(g, g.founderId) ?? g.villagers[0];
-    const spot = fire
-      ? { x: fire.x, y: fire.y }
+    const spot = camp
+      ? { x: camp.x + Math.floor(BUILDINGS[camp.def].w / 2), y: camp.y + Math.floor(BUILDINGS[camp.def].h / 2) }
       : founder
         ? { x: Math.round(founder.x), y: Math.round(founder.y) }
         : { x: g.w / 2, y: g.h / 2 };
@@ -206,7 +205,6 @@ export class Game {
     this.candidate = null;
     this.demolishTarget = 0;
     this.blockReason = null;
-    this.chestPrompted = false;
     this.camera.stopFollowing();
     // Survey this kingdom's land at once so the habitat scores are never the
     // previous kingdom's. The pacing came in with the state and is left alone.
@@ -291,26 +289,15 @@ export class Game {
   }
 
   /**
-   * Founding puts its two placements on the cursor rather than in a menu. The
-   * campsite marker arms itself while the founder waits to be told where to
-   * stop — at that moment it is the only thing the player can do — and the
-   * chest arms itself once the fire is lit. The marker cannot be dismissed; the
-   * chest can, and is armed once rather than forced, since by then the player
-   * has a kingdom to look at and may want to look at it.
+   * The founding's one placement puts itself on the cursor rather than in a
+   * menu: the campsite marker arms while the founder waits to be told where to
+   * stop, and at that moment it is the only thing the player can do at all. It
+   * cannot be dismissed, and it comes off the moment the ground is picked.
    */
   private syncFoundingTool(): void {
     const choosing = this.state.founding.stage === 'choosing';
     if (choosing && this.tool.kind !== 'camp') this.setTool({ kind: 'camp' });
     else if (!choosing && this.tool.kind === 'camp') this.cancelTool();
-
-    if (awaitingChest(this.state)) {
-      if (!this.chestPrompted) {
-        this.chestPrompted = true;
-        if (this.tool.kind === 'none') this.setTool({ kind: 'build', def: 'chest' });
-      }
-    } else {
-      this.chestPrompted = false;
-    }
   }
 
   private simulate(dt: number): void {
@@ -743,9 +730,6 @@ export class Game {
 
   /** True when the kingdom could actually supply this building right now. */
   canAffordNew(def: BuildingId): boolean {
-    // During founding there is no store to check: the founder is carrying the
-    // wood, and will go and fetch the rest if they are short.
-    if (!foundingDone(this.state)) return true;
     const cost = BUILDINGS[def].cost;
     const reserved = this.reservedMaterials();
     for (const k in cost) {
@@ -787,13 +771,11 @@ export class Game {
     // spoken for, so this is what is genuinely free rather than what is stacked.
     const reserved = this.reservedMaterials();
     const short: string[] = [];
-    if (foundingDone(g)) {
-      for (const k in d.cost) {
-        const res = k as ResourceId;
-        const free = g.stock[res] - (reserved[res] ?? 0);
-        const want = d.cost[res] ?? 0;
-        if (free < want) short.push(`${Math.ceil(want - free)} more ${res}`);
-      }
+    for (const k in d.cost) {
+      const res = k as ResourceId;
+      const free = g.stock[res] - (reserved[res] ?? 0);
+      const want = d.cost[res] ?? 0;
+      if (free < want) short.push(`${Math.ceil(want - free)} more ${res}`);
     }
     if (short.length) {
       return `Not enough in store — it needs ${short.length === 2 ? `${short[0]} and ${short[1]}` : short.join(', ')}.`;
@@ -849,10 +831,9 @@ export class Game {
 
     audio.thud(1.2, 0.05);
     this.selection = { kind: 'building', id: b.id };
-    // Founding placements are one-offs, so the cursor lets go afterwards. Every
-    // other building keeps the tool armed, because laying out a row of houses
-    // should not mean going back to the menu five times.
-    if (!foundingDone(g)) this.cancelTool();
+    // The tool stays armed: laying out a row of houses should not mean going
+    // back to the menu five times. The campsite is the one placement that lets
+    // go afterwards, and it is not built through here.
     this.notify();
     return true;
   }
@@ -943,7 +924,7 @@ export class Game {
     // that stay put are refused in one place.
     const kept = protectedBuilding(b);
     if (kept) {
-      toast(g, kept, b.def === 'campfire' ? '🔥' : '🧰', 'warn');
+      toast(g, kept, '🔥', 'warn');
       return;
     }
 
@@ -1126,11 +1107,21 @@ export class Game {
     const def = BUILDINGS[b.def];
     if (b.stage !== 'done' || b.upgrading) return false;
     if (b.level >= def.maxLevel) return false;
+    if (this.upgradeRequirements(b).some((r) => !r.met)) return false;
     const reserved = this.reservedMaterials();
     for (const { res, qty } of this.upgradeCost(b)) {
       if (this.state.stock[res] - (reserved[res] ?? 0) < qty) return false;
     }
     return true;
+  }
+
+  /**
+   * What the kingdom must have *done* before the next improvement, each with
+   * whether it has. Shown as a checklist rather than folded into one refusal:
+   * "not yet" is only useful with the rest of the sentence attached.
+   */
+  upgradeRequirements(b: Building): { label: string; met: boolean }[] {
+    return upgradeReqsOf(b.def, b.level).map((r) => ({ label: r.label, met: r.met(this.state) }));
   }
 
   upgrade(buildingId: number): void {

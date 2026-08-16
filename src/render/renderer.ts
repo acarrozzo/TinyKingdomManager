@@ -11,6 +11,7 @@ import { clamp, hash2 } from '../core/util';
 import type { Building, GameState, Season, Villager } from '../types';
 import { BUILDINGS } from '../sim/defs';
 import { HALF_H, HALF_W, toGridX, toGridY, toScreenX, toScreenY } from '../world/iso';
+import { CAMP_HALF, CAMP_SPAN } from '../world/terrain';
 import { Camera } from './camera';
 import { ambientTint } from './palette';
 import type { BuildingSprite } from './sprites';
@@ -328,8 +329,11 @@ export class Renderer {
       const topY = toScreenY(bd.x, bd.y) - HALF_H;
       const dx = Math.round(leftX - this.viewX);
       const dy = Math.round(topY - sprite.rise - this.viewY);
-      // Farms show their barn in the back corner, so they sort from there.
-      const depth = def.plots ? bd.x + bd.y : bd.x + def.w - 1 + (bd.y + def.h - 1);
+      // Farms show their barn in the back corner, so they sort from there — and
+      // so does the commons, which is a yard people stand about *inside*. Both
+      // would otherwise draw over anybody in the middle of them.
+      const openPlan = def.plots || bd.def === 'commons';
+      const depth = openPlan ? bd.x + bd.y : bd.x + def.w - 1 + (bd.y + def.h - 1);
       const isSelected = sel.kind === 'building' && sel.id === bd.id;
 
       list.push({
@@ -518,13 +522,18 @@ export class Renderer {
 
   /**
    * A stake in the ground under the cursor while the player chooses where the
-   * kingdom starts. Deliberately not a building ghost: nothing is being placed
-   * here, a person is being told where to stop walking.
+   * kingdom starts, with the whole camp's ground marked out around it.
+   * Deliberately not a building ghost: nothing is being placed here, a person is
+   * being told where to stop walking. The cursor is the camp's *centre* — where
+   * the fire ends up — so the shaded nine tiles are the only way to see how much
+   * room it actually wants.
    */
   private drawCampMarker(marker: { x: number; y: number; valid: boolean }): void {
     const { x, y, valid } = marker;
-    this.fillFootprint(x, y, 1, 1, valid ? 'rgba(255,225,150,0.3)' : 'rgba(255,110,90,0.35)');
-    this.outlineFootprint(x, y, 1, 1, valid ? '#ffd77a' : '#ff8a72');
+    const x0 = x - CAMP_HALF;
+    const y0 = y - CAMP_HALF;
+    this.fillFootprint(x0, y0, CAMP_SPAN, CAMP_SPAN, valid ? 'rgba(255,225,150,0.3)' : 'rgba(255,110,90,0.35)');
+    this.outlineFootprint(x0, y0, CAMP_SPAN, CAMP_SPAN, valid ? '#ffd77a' : '#ff8a72');
 
     const b = this.bctx;
     const sx = Math.round(toScreenX(x, y) - this.viewX);
@@ -588,7 +597,9 @@ export class Renderer {
           const wy = toScreenY(bd.x + src.x - 0.5, bd.y + src.y - 0.5);
           const sx = wx - this.viewX;
           const sy = wy - this.viewY;
-          const r = src.radius;
+          // A building that has been improved throws a little further: a stone
+          // hearth under a pavilion is not the same light as a fire in the grass.
+          const r = src.radius * (1 + (bd.level - 1) * 0.1);
           if (sx < -r || sy < -r || sx > this.bufW + r || sy > this.bufH + r) continue;
           // A gentle flicker so lamplight is never perfectly still.
           const flick = 0.92 + Math.sin(this.time * 3.1 + bd.id) * 0.05 + Math.sin(this.time * 7.7 + bd.id * 2) * 0.03;

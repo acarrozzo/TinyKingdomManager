@@ -109,7 +109,7 @@ function footLine(game: Game): string {
   const g = game.state;
   if (!foundingDone(g)) {
     const carried = carriedByFounder(g);
-    // The founder's arms are the treasury until the chest is built, so the one
+    // The founder's arms are the treasury until the camp is built, so the one
     // number worth showing during founding is what is in them.
     return carried > 0 ? `Carrying ${RESOURCE_META.wood.icon} ${carried} wood` : 'Nothing gathered yet';
   }

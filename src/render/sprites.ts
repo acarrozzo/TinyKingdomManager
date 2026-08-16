@@ -120,17 +120,7 @@ export interface PropSprite {
 
 export type PropSheet = Record<PropId, PropSprite[]>;
 
-const PROP_IDS: PropId[] = [
-  'tree',
-  'stump',
-  'boulder',
-  'pebbles',
-  'branches',
-  'bush',
-  'flowers',
-  'reeds',
-  'lilypad',
-];
+const PROP_IDS: PropId[] = ['tree', 'stump', 'boulder', 'pebbles', 'bush', 'flowers', 'reeds', 'lilypad'];
 
 export function bakeProps(season: Season): PropSheet {
   const sheet = {} as PropSheet;
@@ -151,8 +141,6 @@ function bakeProp(season: Season, id: PropId, v: number): PropSprite {
       return bakeBoulder(v, false);
     case 'pebbles':
       return bakeBoulder(v, true);
-    case 'branches':
-      return bakeBranches(v);
     case 'bush':
       return bakeBush(season, v);
     case 'flowers':
@@ -324,36 +312,6 @@ function bakeBoulder(v: number, small: boolean): PropSprite {
     px(ctx, cx + 1, cy - 2, dark, 2, 1);
   }
   return { canvas: c, ox: -w / 2, oy: -(h - 2) };
-}
-
-/**
- * Deadfall: two or three sticks lying where they fell. It has to read as
- * something you would pick up rather than something growing, so it stays flat
- * to the ground with no upright piece at all.
- */
-function bakeBranches(v: number): PropSprite {
-  const c = mkCanvas(16, 9);
-  const ctx = ctxOf(c);
-  const bark = '#7a5a38';
-  const lit = '#9c7748';
-  const dark = '#523c26';
-  groundShadow(ctx, 8, 8, 12);
-
-  const lay = [
-    [2, 5, 11, 1],
-    [4, 3, 8, 1],
-    [6, 6, 7, 1],
-    [3, 4, 6, 1],
-  ];
-  for (let i = 0; i < 3; i++) {
-    const [x, y, w] = lay[(i + v) % lay.length];
-    px(ctx, x, y + (i % 2), i === 1 ? lit : bark, w, 1);
-    px(ctx, x, y + 1 + (i % 2), dark, w, 1);
-  }
-  // A couple of twigs off the ends, so it is not three neat planks.
-  px(ctx, 12, 3, bark, 2, 1);
-  px(ctx, 3, 7, bark, 2, 1);
-  return { canvas: c, ox: -8, oy: -7 };
 }
 
 function bakeBush(season: Season, v: number): PropSprite {
@@ -673,10 +631,11 @@ function shapeFor(def: BuildingId, level: number): { wall: number; roof: number;
       return { wall: 5, roof: 0, ov: 0, extra: 22 };
     case 'lantern':
       return { wall: 0, roof: 0, ov: 0, extra: 22 };
-    case 'campfire':
-      return { wall: 0, roof: 0, ov: 0, extra: 16 };
-    case 'chest':
-      return { wall: 0, roof: 0, ov: 0, extra: level >= 3 ? 16 : level === 2 ? 13 : 10 };
+    // The commons has no walls or roof of its own — it is a yard with things
+    // standing in it — so all of its height is headroom for whatever the level
+    // puts at the far corner: an awning, then a shelter, then a pavilion.
+    case 'commons':
+      return { wall: 0, roof: 0, ov: 0, extra: level >= 4 ? 32 : level === 3 ? 24 : level === 2 ? 16 : 10 };
     case 'bench':
       return { wall: 0, roof: 0, ov: 0, extra: 13 };
     case 'sapling':
@@ -718,9 +677,9 @@ function drawBuilding(
 ): BuildingSprite {
   const spanW = (w + h) * HALF_W;
   const spanH = (w + h) * HALF_H;
-  // The fire ring is barely off the ground, and a sprite as tall as the lit
-  // campfire would hang its progress bar in mid-air well above it.
-  const rise = stage === 'site' && def === 'campfire' ? 4 : riseFor(def, level);
+  // The unbuilt camp is scuffed ground and a few sticks, and a sprite as tall
+  // as the finished commons would hang its progress bar in mid-air above it.
+  const rise = stage === 'site' && def === 'commons' ? 6 : riseFor(def, level);
   const c = mkCanvas(spanW + PAD * 2, spanH + rise);
   const ctx = ctxOf(c);
   const baseY = spanH + rise;
@@ -768,11 +727,12 @@ function drawSite(
   seed: number,
   def?: BuildingId,
 ): void {
-  // The campsite is not a building site with posts and railings around it — it
-  // is a ring of stones somebody laid on the ground the moment you chose the
-  // spot, waiting for an armful of wood. It has to read as *the decision*.
-  if (def === 'campfire') {
-    drawFireRing(ctx, ox, baseY, w, h);
+  // The campsite is not a building site with posts and railings round it — it
+  // is a patch of ground somebody scuffed clear and a ring of stones they laid
+  // in the middle of it, the moment you chose the spot. It has to read as *the
+  // decision*, and as a camp already half-there rather than a hole in the grass.
+  if (def === 'commons') {
+    drawCampSite(ctx, ox, baseY, w, h);
     return;
   }
   drawFootprint(ctx, ox, baseY, w, h, '#8a7350', '#6a5539');
@@ -798,28 +758,51 @@ function drawSite(
 }
 
 /**
- * The unlit campsite: scuffed ground, the same ring of stones the lit fire has,
- * and wood leaned together waiting for a spark. It stands up rather than lying
- * flat because this is the one mark of the player's only real decision in the
- * opening, and it has to be findable at 1× across a green island.
+ * Where a single tile of a multi-tile footprint sits inside the sprite. The
+ * commons is a yard rather than a box, so everything in it is positioned by
+ * which of its nine tiles it stands on — and drawn back to front, in order of
+ * `dx + dy`, exactly as the renderer sorts the world itself.
  */
-function drawFireRing(ctx: CanvasRenderingContext2D, ox: number, baseY: number, w: number, h: number): void {
+function tileSpot(ox: number, baseY: number, w: number, h: number, dx: number, dy: number): Pt {
+  return { x: ox + HALF_W * (dx - dy + h), y: baseY - HALF_H * (w + h - 1 - dx - dy) };
+}
+
+/**
+ * The unfinished camp: ground scuffed clear across the whole footprint, a ring
+ * of stones laid in the middle of it and wood leaned together waiting for a
+ * spark. It stands up rather than lying flat because this is the one mark of
+ * the player's only real decision in the opening, and it has to be findable at
+ * 1× across a green island.
+ */
+function drawCampSite(ctx: CanvasRenderingContext2D, ox: number, baseY: number, w: number, h: number): void {
   const g = diamond(ox, baseY, w, h, 0, 0);
-  const bx = g.S.x;
-  fillPoly(ctx, [g.L, g.N, g.R, g.S], 'rgba(96,78,54,0.34)');
+  fillPoly(ctx, [g.L, g.N, g.R, g.S], 'rgba(96,78,54,0.30)');
+  const c = tileSpot(ox, baseY, w, h, 1, 1);
+
+  // A stake at each corner: somebody has paced this out and meant it.
+  for (const [dx, dy] of [
+    [0, 0],
+    [2, 0],
+    [0, 2],
+    [2, 2],
+  ]) {
+    const p = tileSpot(ox, baseY, w, h, dx, dy);
+    px(ctx, p.x - 1, p.y - 7, '#8a6a42', 2, 7);
+    px(ctx, p.x - 1, p.y - 7, '#a5824f', 1, 7);
+  }
 
   // Stone ring, the same one the lit fire keeps, so nothing is replaced later.
   for (let i = 0; i < 8; i++) {
     const a = (i / 8) * Math.PI * 2;
-    px(ctx, bx + Math.cos(a) * 9 - 1, baseY - 4 + Math.sin(a) * 4.5, i % 2 ? '#9a9992' : '#b4b3ab', 3, 3);
+    px(ctx, c.x + Math.cos(a) * 9 - 1, c.y - 1 + Math.sin(a) * 4.5, i % 2 ? '#9a9992' : '#b4b3ab', 3, 3);
   }
   // Cold ash inside it.
-  px(ctx, bx - 4, baseY - 4, '#6a625a', 8, 2);
+  px(ctx, c.x - 4, c.y - 1, '#6a625a', 8, 2);
   // Three sticks leaned into a cone, unlit.
-  px(ctx, bx - 4, baseY - 11, '#6b4a2f', 2, 8);
-  px(ctx, bx + 2, baseY - 11, '#7d5936', 2, 8);
-  px(ctx, bx - 1, baseY - 13, '#8a6440', 2, 10);
-  px(ctx, bx - 2, baseY - 13, '#5c4028', 4, 2);
+  px(ctx, c.x - 4, c.y - 8, '#6b4a2f', 2, 8);
+  px(ctx, c.x + 2, c.y - 8, '#7d5936', 2, 8);
+  px(ctx, c.x - 1, c.y - 10, '#8a6440', 2, 10);
+  px(ctx, c.x - 2, c.y - 10, '#5c4028', 4, 2);
 }
 
 function drawFinished(
@@ -1026,57 +1009,260 @@ function drawFinished(
       px(ctx, bx - 5, baseY - 16, '#8f9c8a', 2, 3);
       break;
     }
-    case 'chest': {
-      // Low, wide and banded. It has to read as a chest at a glance next to a
-      // 16px villager, so it stays well under head height — anything taller
-      // starts looking like a little shed. Small, medium and large are the same
-      // chest getting wider and more heavily ironed, because a store that holds
-      // ten times as much and looks identical is a change you cannot see.
-      const body = snow ? '#9c7748' : '#a37f4e';
-      const lit = snow ? '#c6a06d' : '#c39a63';
-      const dark = '#6b4a2f';
-      const iron = '#5c5148';
-      const halfW = level >= 3 ? 11 : level === 2 ? 9 : 7;
-      const bodyH = level >= 3 ? 10 : level === 2 ? 8 : 7;
-      const base = baseY - 2;
+    case 'commons':
+      drawCommons(ctx, ox, baseY, w, h, level, season, seed);
+      break;
+  }
+}
 
-      px(ctx, bx - halfW - 1, baseY - 2, 'rgba(24,20,14,0.18)', halfW * 2 + 2, 2);
-      // Body.
-      px(ctx, bx - halfW, base - bodyH, body, halfW * 2, bodyH);
-      px(ctx, bx - halfW, base - 1, dark, halfW * 2, 1);
-      // Domed lid, two steps so the curve reads without antialiasing.
-      const lidY = base - bodyH;
-      px(ctx, bx - halfW, lidY - 3, body, halfW * 2, 3);
-      px(ctx, bx - halfW + 1, lidY - 5, body, halfW * 2 - 2, 2);
-      px(ctx, bx - halfW + 1, lidY - 5, snow ? '#e8e4dc' : lit, halfW * 2 - 2, 1);
-      px(ctx, bx - halfW, lidY - 1, dark, halfW * 2, 1);
-      // Iron bands over lid and body — one pair, then two, then two and corners.
-      const bandH = bodyH + 5;
-      const bands = level >= 2 ? [-halfW + 2, -1, halfW - 3] : [-halfW + 2, halfW - 3];
-      for (const bxo of bands) px(ctx, bx + bxo, lidY - 5, iron, 1, bandH);
-      if (level >= 3) {
-        px(ctx, bx - halfW, lidY - 5, iron, 1, bandH);
-        px(ctx, bx + halfW - 1, lidY - 5, iron, 1, bandH);
-      }
-      // Clasp at the front, and a padlock once there is anything worth locking.
-      px(ctx, bx - 1, base - bodyH + 1, iron, 3, 4);
-      px(ctx, bx - 1, base - bodyH + 1, '#8a8078', 3, 1);
-      if (level >= 3) px(ctx, bx, base - bodyH + 5, '#c8c7be', 1, 2);
-      break;
-    }
-    case 'campfire': {
-      for (let i = 0; i < 8; i++) {
-        const a = (i / 8) * Math.PI * 2;
-        px(ctx, bx + Math.cos(a) * 9 - 1, baseY - 3 + Math.sin(a) * 4.5, i % 2 ? '#8b8a84' : '#a3a29a', 3, 2);
-      }
-      px(ctx, bx - 6, baseY - 6, '#6b4a2f', 12, 2);
-      px(ctx, bx - 4, baseY - 8, '#7d5936', 9, 2);
-      px(ctx, bx - 3, baseY - 13, '#e8763a', 6, 6);
-      px(ctx, bx - 2, baseY - 16, '#f2a83c', 4, 5);
-      px(ctx, bx - 1, baseY - 18, '#ffd25c', 2, 3);
-      px(ctx, bx - 1, baseY - 11, '#ffe89a', 2, 3);
-      break;
-    }
+/**
+ * The commons, at whatever it has grown into. It is a yard rather than a
+ * building: nine tiles of trodden ground with things standing round the edges
+ * of it, and the fire always in the middle. People walk through it, so the
+ * near corner and the middle stay clear at every level and everything else
+ * hugs the sides.
+ *
+ * The four levels have to be tellable apart across the map at 1×, which is why
+ * each one adds a *silhouette* — an awning, then roofs on posts, then roofs and
+ * banners — rather than more clutter at ground level. The one thing that never
+ * changes is the ring of stones with a fire in it: that is the tile the player
+ * chose in the first minute, and it stays recognisably the same object.
+ */
+function drawCommons(
+  ctx: CanvasRenderingContext2D,
+  ox: number,
+  baseY: number,
+  w: number,
+  h: number,
+  level: number,
+  season: Season,
+  seed: number,
+): void {
+  const snow = season === 'winter';
+  const at = (dx: number, dy: number): Pt => tileSpot(ox, baseY, w, h, dx, dy);
+  const g = diamond(ox, baseY, w, h, 0, 0);
+
+  // Trodden ground, and more of it worn bare the longer people have lived here.
+  fillPoly(ctx, [g.L, g.N, g.R, g.S], snow ? 'rgba(226,228,232,0.5)' : `rgba(104,84,58,${0.2 + level * 0.05})`);
+
+  // Back to front, in the same order the renderer sorts the world.
+  // --- far corner: where the kingdom keeps its things, under cover from L2 ---
+  const far = at(0, 0);
+  if (level >= 3) shelterAt(ctx, ox, baseY, w, h, 0, 0, level >= 4, snow);
+  crate(ctx, far.x - 10, far.y + 4, seed);
+  if (level >= 2) crate(ctx, far.x + 1, far.y + 5, seed + 1);
+  if (level === 2) awning(ctx, far, snow);
+
+  // --- the two beds, out of doors and staying that way ---
+  const bed = at(1, 0);
+  bedroll(ctx, bed, '#8a6a52');
+  bedroll(ctx, { x: bed.x + 9, y: bed.y + 3 }, '#6e7a68');
+
+  // --- left-hand side: eating and, later, reading ---
+  const left = at(0, 1);
+  if (level >= 3) trestle(ctx, left);
+  else firewood(ctx, left);
+
+  // --- right-hand corner: work at first, then somewhere to stand under ---
+  const right = at(2, 0);
+  if (level >= 3) shelterAt(ctx, ox, baseY, w, h, 2, 0, level >= 4, snow);
+  else if (level === 2) sawhorse(ctx, right);
+  if (level >= 4) banner(ctx, { x: right.x + 11, y: right.y + 6 }, '#b8563f');
+
+  // --- the fire, on the tile the player chose, at every level ---
+  hearth(ctx, at(1, 1), level, snow);
+
+  // --- near-left: a notice board once there is anything worth pinning up ---
+  const nearLeft = at(0, 2);
+  if (level >= 4) memorial(ctx, nearLeft);
+  else if (level === 3) noticeBoard(ctx, nearLeft);
+
+  // --- near-right: somewhere to sit, from the very first day ---
+  seat(ctx, at(2, 1), level);
+  if (level >= 3) noticeBoard(ctx, { x: at(2, 1).x + 12, y: at(2, 1).y + 7 });
+
+  // --- the front edge stays open: this is the way in ---
+  if (level >= 4) garden(ctx, at(1, 2), season, seed);
+}
+
+/** Stones, logs and flame. The one part of the commons that never changes. */
+function hearth(ctx: CanvasRenderingContext2D, c: Pt, level: number, snow: boolean): void {
+  const stoneA = snow ? '#c2c1b8' : level >= 3 ? '#b8b7ae' : '#a3a29a';
+  const stoneB = level >= 3 ? '#94938c' : '#8b8a84';
+  const r = level >= 3 ? 11 : 9;
+
+  // From level three the ring becomes masonry: a low drum the fire sits on top
+  // of, which is what makes it read as permanent rather than as a camp.
+  if (level >= 3) {
+    px(ctx, c.x - r, c.y - 3, stoneB, r * 2, 5);
+    px(ctx, c.x - r + 1, c.y - 5, stoneA, r * 2 - 2, 2);
+    if (level >= 4) px(ctx, c.x - r + 3, c.y - 7, stoneA, r * 2 - 6, 2);
+  }
+  const lift = level >= 4 ? 6 : level === 3 ? 4 : 0;
+  for (let i = 0; i < 10; i++) {
+    const a = (i / 10) * Math.PI * 2;
+    px(ctx, c.x + Math.cos(a) * r - 1, c.y - 1 - lift + Math.sin(a) * (r / 2), i % 2 ? stoneB : stoneA, 3, 2);
+  }
+  px(ctx, c.x - 6, c.y - 3 - lift, '#6b4a2f', 12, 2);
+  px(ctx, c.x - 4, c.y - 5 - lift, '#7d5936', 9, 2);
+  px(ctx, c.x - 3, c.y - 10 - lift, '#e8763a', 6, 6);
+  px(ctx, c.x - 2, c.y - 13 - lift, '#f2a83c', 4, 5);
+  px(ctx, c.x - 1, c.y - 15 - lift, '#ffd25c', 2, 3);
+  px(ctx, c.x - 1, c.y - 8 - lift, '#ffe89a', 2, 3);
+
+  // A pot over the fire: the cooking half of a camp, and the first sign that
+  // anybody intends to eat here rather than pass through.
+  if (level <= 2) {
+    px(ctx, c.x - 7, c.y - 16, '#6b5334', 1, 12);
+    px(ctx, c.x + 6, c.y - 16, '#6b5334', 1, 12);
+    px(ctx, c.x - 7, c.y - 17, '#8a6b41', 14, 1);
+    px(ctx, c.x - 3, c.y - 14, '#4a4038', 6, 4);
+    px(ctx, c.x - 3, c.y - 15, '#66605a', 6, 1);
+  }
+}
+
+/** Somewhere to sleep out of doors. Two of these, at every level. */
+function bedroll(ctx: CanvasRenderingContext2D, c: Pt, color: string): void {
+  px(ctx, c.x - 6, c.y, 'rgba(24,20,14,0.16)', 13, 1);
+  px(ctx, c.x - 6, c.y - 3, color, 12, 3);
+  px(ctx, c.x - 6, c.y - 4, shade(color, 1.2), 12, 1);
+  px(ctx, c.x + 3, c.y - 5, '#e8dcc4', 4, 3);
+}
+
+/** Canvas on two posts: the moment a camp decides it is staying. */
+function awning(ctx: CanvasRenderingContext2D, c: Pt, snow: boolean): void {
+  const post = 15;
+  px(ctx, c.x - 11, c.y - post, '#7d5936', 2, post);
+  px(ctx, c.x + 9, c.y - post, '#7d5936', 2, post);
+  px(ctx, c.x - 13, c.y - post - 3, snow ? '#dcd8ce' : '#c9b78e', 26, 3);
+  px(ctx, c.x - 12, c.y - post - 4, snow ? '#f0eee8' : '#ddcda6', 24, 1);
+  px(ctx, c.x - 13, c.y - post, 'rgba(0,0,0,0.2)', 26, 1);
+}
+
+/** An open-sided roof on four posts, standing on one tile of the footprint. */
+function shelterAt(
+  ctx: CanvasRenderingContext2D,
+  ox: number,
+  baseY: number,
+  w: number,
+  h: number,
+  dx: number,
+  dy: number,
+  big: boolean,
+  snow: boolean,
+): void {
+  const spot = tileSpot(ox, baseY, w, h, dx, dy);
+  // The tile's own one-by-one diamond: its near corner sits half a tile below
+  // the centre, which is what everything else in here is positioned from.
+  const ox2 = spot.x - HALF_W;
+  const baseY2 = spot.y + HALF_H;
+  const postH = big ? 19 : 15;
+  const g = diamond(ox2, baseY2, 1, 1, 3, 0);
+  for (const p of [g.L, g.N, g.R, g.S]) {
+    px(ctx, p.x - 1, p.y - postH, '#6b5334', 2, postH);
+    px(ctx, p.x - 1, p.y - postH, '#8a6b41', 1, postH);
+  }
+  const roof: RoofColors = snow
+    ? { far: '#ded5c0', near: '#c8bfa8', ridge: '#a99d84', gable: '#b8934f' }
+    : big
+      ? { far: '#b56b4c', near: '#8f4f36', ridge: '#68372a', gable: '#c99a72' }
+      : { far: '#d7ab5c', near: '#ab8340', ridge: '#7f5f2b', gable: '#c09455' };
+  gableRoof(ctx, ox2, baseY2, 1, 1, postH, big ? 11 : 8, big ? 4 : 3, roof);
+}
+
+/** A long table with a bench either side. Nobody eats alone at one of these. */
+function trestle(ctx: CanvasRenderingContext2D, c: Pt): void {
+  px(ctx, c.x - 11, c.y - 1, 'rgba(24,20,14,0.15)', 22, 1);
+  px(ctx, c.x - 11, c.y - 7, '#a5824f', 22, 2);
+  px(ctx, c.x - 11, c.y - 5, '#7d5936', 22, 1);
+  px(ctx, c.x - 9, c.y - 4, '#6b5334', 2, 4);
+  px(ctx, c.x + 7, c.y - 4, '#6b5334', 2, 4);
+  px(ctx, c.x - 12, c.y - 2, '#8a6b41', 8, 2);
+  px(ctx, c.x + 5, c.y - 2, '#8a6b41', 8, 2);
+}
+
+/** A log to sit on, and later a plank bench with a back to it. */
+function seat(ctx: CanvasRenderingContext2D, c: Pt, level: number): void {
+  if (level <= 1) {
+    px(ctx, c.x - 8, c.y - 3, '#7a5a38', 16, 4);
+    px(ctx, c.x - 8, c.y - 4, '#9c7748', 16, 1);
+    px(ctx, c.x + 7, c.y - 3, '#5c4028', 2, 4);
+    return;
+  }
+  px(ctx, c.x - 8, c.y - 4, '#8a6b41', 16, 2);
+  px(ctx, c.x - 8, c.y - 5, '#a5824f', 16, 1);
+  px(ctx, c.x - 7, c.y - 2, '#6b5334', 2, 3);
+  px(ctx, c.x + 5, c.y - 2, '#6b5334', 2, 3);
+  if (level >= 3) {
+    px(ctx, c.x - 8, c.y - 11, '#8a6b41', 16, 2);
+    px(ctx, c.x - 7, c.y - 11, '#6b5334', 1, 7);
+    px(ctx, c.x + 6, c.y - 11, '#6b5334', 1, 7);
+  }
+}
+
+/** Split logs stacked against the weather. */
+function firewood(ctx: CanvasRenderingContext2D, c: Pt): void {
+  px(ctx, c.x - 9, c.y - 4, '#7a5a38', 18, 4);
+  px(ctx, c.x - 9, c.y - 5, '#9c7748', 18, 1);
+  px(ctx, c.x - 7, c.y - 8, '#7a5a38', 13, 3);
+  px(ctx, c.x - 7, c.y - 9, '#9c7748', 13, 1);
+  for (let i = 0; i < 4; i++) px(ctx, c.x - 8 + i * 4, c.y - 4, '#523c26', 1, 4);
+}
+
+/** A trestle, a saw and a chopping block: the work half of a settled camp. */
+function sawhorse(ctx: CanvasRenderingContext2D, c: Pt): void {
+  px(ctx, c.x - 8, c.y - 9, '#8a6b41', 15, 2);
+  px(ctx, c.x - 7, c.y - 7, '#6b5334', 2, 7);
+  px(ctx, c.x + 4, c.y - 7, '#6b5334', 2, 7);
+  px(ctx, c.x - 5, c.y - 11, '#9c7748', 9, 2);
+  // Chopping block with an axe left in it.
+  px(ctx, c.x + 8, c.y - 5, '#7a5a38', 7, 5);
+  px(ctx, c.x + 8, c.y - 6, '#9c7748', 7, 1);
+  px(ctx, c.x + 11, c.y - 12, '#8a6b41', 1, 7);
+  px(ctx, c.x + 10, c.y - 13, '#c8ccd2', 4, 2);
+}
+
+/** Something to pin things to, whether or not anybody reads them. */
+function noticeBoard(ctx: CanvasRenderingContext2D, c: Pt): void {
+  px(ctx, c.x - 1, c.y - 12, '#7d5936', 2, 12);
+  px(ctx, c.x - 7, c.y - 21, '#8a6b41', 15, 10);
+  px(ctx, c.x - 6, c.y - 20, '#5c4028', 13, 8);
+  px(ctx, c.x - 5, c.y - 19, '#e8dcc4', 5, 4);
+  px(ctx, c.x + 1, c.y - 18, '#d8cbb0', 4, 5);
+  px(ctx, c.x - 7, c.y - 22, '#a5824f', 15, 1);
+}
+
+/** A pole with a strip of dyed cloth on it. The kingdom has a colour now. */
+function banner(ctx: CanvasRenderingContext2D, c: Pt, color: string): void {
+  px(ctx, c.x - 1, c.y - 28, '#7d5936', 2, 28);
+  px(ctx, c.x - 2, c.y - 29, '#c8c7be', 4, 2);
+  px(ctx, c.x + 1, c.y - 27, color, 7, 11);
+  px(ctx, c.x + 1, c.y - 27, shade(color, 1.25), 7, 1);
+  px(ctx, c.x + 1, c.y - 16, shade(color, 0.7), 7, 1);
+  px(ctx, c.x + 3, c.y - 22, shade(color, 1.35), 3, 4);
+}
+
+/** A stone somebody put up for somebody. Nobody has written down for whom. */
+function memorial(ctx: CanvasRenderingContext2D, c: Pt): void {
+  px(ctx, c.x - 6, c.y - 3, '#8b8a84', 12, 3);
+  px(ctx, c.x - 6, c.y - 4, '#9e9d95', 12, 1);
+  px(ctx, c.x - 3, c.y - 18, '#a3a29a', 6, 15);
+  px(ctx, c.x - 3, c.y - 18, '#c8c7be', 2, 15);
+  px(ctx, c.x - 2, c.y - 20, '#8b8a84', 4, 2);
+  px(ctx, c.x - 2, c.y - 13, '#7a7973', 3, 1);
+  px(ctx, c.x - 2, c.y - 10, '#7a7973', 3, 1);
+}
+
+/** A strip of planting along the front edge. It does nothing at all. */
+function garden(ctx: CanvasRenderingContext2D, c: Pt, season: Season, seed: number): void {
+  px(ctx, c.x - 11, c.y - 3, '#5c4028', 22, 3);
+  px(ctx, c.x - 11, c.y - 4, '#7a5a38', 22, 1);
+  const colors = FLOWER_COLORS[season];
+  for (let i = 0; i < 9; i++) {
+    const fx = c.x - 9 + i * 2;
+    const fy = c.y - 5 - ((i + seed) % 3);
+    px(ctx, fx, fy, '#5f8a3f', 1, 3);
+    px(ctx, fx, fy - 1, colors[(i + seed) % colors.length]);
   }
 }
 

@@ -20,7 +20,6 @@ export type PropId =
   | 'stump'
   | 'boulder'
   | 'pebbles'
-  | 'branches'
   | 'bush'
   | 'flowers'
   | 'reeds'
@@ -69,8 +68,7 @@ export type TraitId =
   | 'steady';
 
 export type BuildingId =
-  | 'campfire'
-  | 'chest'
+  | 'commons'
   | 'cabin'
   | 'storehouse'
   | 'lodge'
@@ -94,6 +92,16 @@ export interface Recipe {
   seconds: number;
 }
 
+/**
+ * Something the kingdom must have *done* before an improvement is allowed, as
+ * opposed to something it must have in store. `label` is the line the panel
+ * shows, so it reads as an accomplishment rather than a condition.
+ */
+export interface UpgradeReq {
+  label: string;
+  met: (g: GameState) => boolean;
+}
+
 export interface BuildingDef {
   id: BuildingId;
   name: string;
@@ -113,6 +121,13 @@ export interface BuildingDef {
    * Index 0 is level 1 → 2. Takes precedence over `upgradeCostMul`.
    */
   upgradeCosts?: Partial<Record<ResourceId, number>>[];
+  /**
+   * What the kingdom must have done before each improvement, beyond paying for
+   * it. Index 0 is level 1 → 2, matching `upgradeCosts`. A step with a
+   * requirement nothing can currently satisfy is a level the kingdom cannot
+   * reach yet, which is deliberate: the panel says so rather than hiding it.
+   */
+  upgradeReqs?: UpgradeReq[][];
   /** Name per level, when improving one changes what it is called. */
   levelNames?: string[];
   desc: string;
@@ -354,13 +369,16 @@ export interface Toast {
  * How far through founding the kingdom is. `arriving` is the founder walking up
  * the beach, `choosing` is the player picking the ground — the one spatial
  * decision the opening asks for — `settling` is the walk out to it, and `camp`
- * covers gathering the deadfall, lighting the fire and building the chest.
+ * covers felling the first tree and raising the Base Camp out of that load.
  */
 export type FoundingStage = 'arriving' | 'choosing' | 'settling' | 'camp' | 'done';
 
 export interface Founding {
   stage: FoundingStage;
-  /** The chosen ground, which is where the fire goes. Meaningless before `settling`. */
+  /**
+   * The chosen ground: the *centre* tile of the Base Camp's 3×3 footprint,
+   * which is also where the fire burns. Meaningless before `settling`.
+   */
   x: number;
   y: number;
 }

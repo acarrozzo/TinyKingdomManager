@@ -3,6 +3,7 @@
 import type {
   BuildingDef,
   BuildingId,
+  GameState,
   JobId,
   PropId,
   Rank,
@@ -11,6 +12,7 @@ import type {
   SpeciesId,
   TerrainId,
   TraitId,
+  UpgradeReq,
 } from '../types';
 
 export const CARRY_CAPACITY = 12;
@@ -32,12 +34,12 @@ export const RESOURCE_META: Record<string, { name: string; icon: string; color: 
 /** Where each resource comes from and where it goes, for the top-bar hover. */
 export const RESOURCE_INFO: Record<string, { from: string; used: string }> = {
   wood: {
-    from: 'Woodcutters at the lodge, helpers felling any tree by hand, and fallen branches picked up off the ground.',
-    used: 'Nearly every building, from a cabin at 20 up to a windmill at 50.',
+    from: 'Woodcutters at the lodge, and helpers felling any tree by hand. The first twelve came off a single tree, swung at by somebody who had only just arrived.',
+    used: 'Nearly every building, from a cabin at 20 up to a windmill at 50, and every step the commons takes.',
   },
   stone: {
     from: 'Stoneworkers at the quarry, and helpers breaking loose boulders.',
-    used: 'Improving a cabin or a chest, wells, and the workshops further along the chain.',
+    used: 'Improving the commons or a cabin, wells, and the workshops further along the chain.',
   },
   wheat: {
     from: 'Farmers sowing and reaping the plots around a wheat farm.',
@@ -111,44 +113,68 @@ export function xpGain(current: number, seconds: number): number {
   return seconds * 0.05 * falloff;
 }
 
+/** A finished building of a kind, for the requirement predicates below. */
+function standing(g: GameState, def: BuildingId): boolean {
+  return g.buildings.some((b) => b.def === def && b.stage === 'done');
+}
+
+/**
+ * What the kingdom must have done before the commons will grow, step by step.
+ * These are accomplishments rather than conditions, and they are written so
+ * that they cannot un-happen where that is possible at all: a kingdom is never
+ * told it has gone backwards.
+ *
+ * Nothing here may ask for something the same step unlocks, or the ladder eats
+ * its own tail. The last step deliberately asks for something nothing can do
+ * yet — the Kingdom Commons is the far end of the arc, written down and openly
+ * out of reach rather than quietly missing.
+ */
+const COMMONS_REQS: UpgradeReq[][] = [
+  [
+    { label: 'A cabin with a roof on it', met: (g) => standing(g, 'cabin') },
+    { label: 'Three people about the place', met: (g) => g.villagers.length >= 3 },
+  ],
+  [
+    { label: 'Bread out of an oven of your own', met: (g) => g.stats.baked >= 6 },
+    { label: 'Six people about the place', met: (g) => g.villagers.length >= 6 },
+    {
+      label: 'Somebody settled into a trade',
+      met: (g) => g.buildings.some((b) => b.stage === 'done' && !!BUILDINGS[b.def].job && b.workers.length > 0),
+    },
+  ],
+  [{ label: 'A way of building that nobody here knows', met: () => false }],
+];
+
 export const BUILDINGS: Record<BuildingId, BuildingDef> = {
-  campfire: {
-    id: 'campfire',
-    name: 'Campfire',
+  commons: {
+    id: 'commons',
+    name: 'Base Camp',
+    levelNames: ['Base Camp', 'Settled Camp', 'Village Commons', 'Kingdom Commons'],
     category: 'housing',
-    w: 1,
-    h: 1,
-    cost: { wood: 4 },
-    labour: 12,
-    maxLevel: 1,
-    // Never in the build menu: the fire goes where the campsite was chosen, and
-    // the founder lays it themselves out of the wood in their arms.
+    w: 3,
+    h: 3,
+    cost: { wood: 12 },
+    labour: 16,
+    maxLevel: 4,
+    // Every step has to be payable out of the storage the step before it left
+    // behind — and out of what hand-gathering will actually fetch, since
+    // `gatherTarget` holds helpers to half the store in wood and a third in
+    // stone. A cost above that line is a cost nobody can ever meet.
+    upgradeCosts: [
+      { wood: 25, stone: 10 },
+      { wood: 90, stone: 55 },
+      { wood: 150, stone: 110 },
+    ],
+    upgradeReqs: COMMONS_REQS,
+    // Never in the build menu: it stands where the kingdom was founded, and
+    // there is only ever the one.
     order: -1,
-    desc: 'Four armfuls of wood and somebody willing to kneel in the grass with them. Where the kingdom begins.',
-    how: 'Warmth, light, and two people can sleep beside it. It holds nothing — that is what the chest is for. You chose this spot at the very beginning and the founder laid the fire on it; there is no second one, and it cannot be taken down. Nobody chooses a fire over a roof, so the moment a house is finished with a free bed, whoever is still out here moves in, unless you have put them here yourself.',
-    housing: [2],
-    light: [{ x: 0.5, y: 0.5, radius: 46, color: '#ffb35c' }],
-    solid: false,
-  },
-  chest: {
-    id: 'chest',
-    name: 'Small Chest',
-    levelNames: ['Small Chest', 'Medium Chest', 'Large Chest'],
-    category: 'storage',
-    w: 1,
-    h: 1,
-    cost: { wood: 8 },
-    labour: 10,
-    maxLevel: 3,
-    // Wood for the first widening; the last one wants iron bands and a lock,
-    // which is to say stone, which is to say a quarry.
-    upgradeCosts: [{ wood: 24 }, { wood: 60, stone: 20 }],
-    order: 9,
     once: true,
-    unlock: 'chest',
-    desc: 'Planks, and a lid that mostly shuts. Everything the kingdom owns goes in it until there is a storehouse.',
-    how: 'The kingdom keeps one shared pool of goods, and this holds the first fifty of it — two hundred once widened, five hundred once it is a chest in name only. Until it was finished there was no such pool at all; the founder simply carried what they had gathered. Storehouses do not hold their own separate piles either; they raise the ceiling on this same pool. When it is full, gatherers stop fetching more rather than waste the walk, but anything already in somebody\'s arms still gets put away.',
-    storage: [50, 200, 500],
+    desc: 'A fire, somewhere to put things down, and room to sleep rough beside it. Where the kingdom begins, and afterwards the middle of it.',
+    how: 'The first fire, the kingdom\'s first store and two places to sleep out of doors, all on the same nine tiles. It grows with the kingdom rather than being replaced — a Settled Camp, then a Village Commons, and there is talk of something after that — and it never closes for the work: the store stays open at its current size the whole time, so nothing is ever stranded. Improving it wants materials and a settlement that has got somewhere; both are listed before you commit. People walk through it, sit at it and stand about in it whether or not they have any business there, which is rather the point. It cannot be taken down.',
+    housing: [2, 2, 2, 2],
+    storage: [60, 200, 450, 800],
+    light: [{ x: 1.5, y: 1.5, radius: 50, color: '#ffb35c' }],
     solid: false,
   },
   cabin: {
@@ -169,7 +195,7 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     order: 0,
     unlock: 'cabin',
     desc: 'A roof, a door, and somewhere dry to sleep. Sleeps two, and grows.',
-    how: 'Somewhere dry to sleep, and at first that is the whole of it. People walk home at their own bedtime and rise at their own hour, a little earlier or later than each other. Improving it adds two more beds and a good deal more building: a chimney first, then stone footings and a proper roof. Six sleep in a finished one. On the day it is done it takes in anyone still curled up by the campfire, and you can move people between cabins yourself from this panel.',
+    how: 'Somewhere dry to sleep, and at first that is the whole of it. People walk home at their own bedtime and rise at their own hour, a little earlier or later than each other. Improving it adds two more beds and a good deal more building: a chimney first, then stone footings and a proper roof. Six sleep in a finished one. On the day it is done it takes in anyone still sleeping out at the commons, and you can move people between cabins yourself from this panel.',
     housing: [2, 4, 6],
     light: [{ x: 1.0, y: 1.35, radius: 36, color: '#ffc06a' }],
     solid: true,
@@ -380,14 +406,11 @@ export const BUILD_ORDER: BuildingId[] = (Object.keys(BUILDINGS) as BuildingId[]
   .filter((k) => BUILDINGS[k].order >= 0)
   .sort((a, b) => BUILDINGS[a].order - BUILDINGS[b].order);
 
-/** The only thing the player places before the kingdom has anywhere to keep goods. */
-export const FOUNDING_BUILDS = new Set<BuildingId>(['chest']);
-
 /**
  * What to call a particular building, which is not always what to call the kind
- * of building: a chest is small, medium or large depending on how far it has
- * been improved. The build menu wants the level-1 name; anything naming a
- * building that actually stands wants this.
+ * of building: the commons is a Base Camp, a Settled Camp or a Village Commons
+ * depending on how far it has come. The build menu wants the level-1 name;
+ * anything naming a building that actually stands wants this.
  */
 export function buildingName(def: BuildingId, level = 1): string {
   const d = BUILDINGS[def];
@@ -411,6 +434,14 @@ export function upgradeCostOf(def: BuildingId, level: number): Partial<Record<Re
     out[res] = Math.ceil((d.cost[res] ?? 0) * mul);
   }
   return out;
+}
+
+/**
+ * What the kingdom must have *done* before the next improvement, as opposed to
+ * what it must have in store. Most buildings ask for nothing beyond materials.
+ */
+export function upgradeReqsOf(def: BuildingId, level: number): UpgradeReq[] {
+  return BUILDINGS[def].upgradeReqs?.[level - 1] ?? [];
 }
 
 export const CATEGORY_META: Record<string, { name: string; icon: string }> = {
@@ -488,17 +519,16 @@ export const PROP_META: Record<
   PropId,
   { name: string; desc: string; yields?: ResourceId; regrowsFrom?: PropId }
 > = {
-  tree: { name: 'Tree', desc: 'A woodcutter or a helper can fell it for wood.', yields: 'wood' },
+  tree: {
+    name: 'Tree',
+    desc: 'Anyone can fell it for wood, axe or no axe. A woodcutter is simply quicker about it.',
+    yields: 'wood',
+  },
   stump: { name: 'Stump', desc: 'Felled. Left alone, it will come back as a tree.', regrowsFrom: 'tree' },
   boulder: { name: 'Boulder', desc: 'A stoneworker or a helper can break it for stone.', yields: 'stone' },
   pebbles: {
     name: 'Pebbles',
     desc: 'Loose chippings. Where a boulder was worked, another gathers in time.',
-  },
-  branches: {
-    name: 'Fallen branches',
-    desc: 'Deadfall. Anyone can gather it by hand, which is how the first fire got lit. It does not come back.',
-    yields: 'wood',
   },
   bush: { name: 'Bush', desc: 'Scrub. Slows a walk slightly and gives small animals somewhere to hide.' },
   flowers: { name: 'Wildflowers', desc: 'No use whatsoever. Some things are fonder of a tile for having them.' },

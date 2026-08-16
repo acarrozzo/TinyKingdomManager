@@ -17,8 +17,8 @@ const SLOT_INDEX = 'tkm.slots';
 const SLOT_PREFIX = 'tkm.save.';
 const SETTINGS_KEY = 'tkm.settings';
 /**
- * 2: the kingdom is founded rather than handed over — no campfire or chest
- * until somebody builds them, and a `founding` block that version 1 has no
+ * 2: the kingdom is founded rather than handed over — nothing at all standing
+ * until somebody builds it, and a `founding` block that version 1 has no
  * equivalent for.
  * 3: one Cabin replaces the Shelter and the Cottage, so any save holding either
  * refers to a building that no longer exists.
@@ -26,9 +26,12 @@ const SETTINGS_KEY = 'tkm.settings';
  * wildlife's pacing are written down, so reopening a kingdom continues it rather
  * than re-rolling its future — and a version 3 file has neither, so its animals
  * would arrive on a different schedule than the one it was saved on.
+ * 5: one commons replaces the campfire and the chest, and deadfall is gone from
+ * the world, so a version 4 file names three things that no longer exist and
+ * has no heart to its kingdom at all.
  * Older files are refused rather than guessed at.
  */
-export const SAVE_VERSION = 4;
+export const SAVE_VERSION = 5;
 
 export interface SlotInfo {
   id: string;

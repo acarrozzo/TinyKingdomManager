@@ -88,10 +88,10 @@ npx tsx scripts/worldcheck.ts 1 8     # one seed, the way a failure reports itse
 ```
 
 Generates island after island and checks each one is a kingdom somebody could
-start on: the wood and stone the first hour needs, exactly six deadfall piles
-with at least two the founder can walk to, a campsite the game's own rule would
-accept, a beach that connects to it on foot, sane tiles, and the same seed
-giving the same world twice.
+start on: the wood and stone the first hour needs, a choice of at least six
+three-by-three campsites the game's own rule would accept, at least four trees
+the founder can walk to from where they start, a beach that connects to it on
+foot, sane tiles, and the same seed giving the same world twice.
 
 **Run this after any change to `world/terrain.ts`.** Generation leans on random
 scatter, and a scatter with a give-up guard is not a guarantee — the failures it
@@ -219,53 +219,51 @@ question — *where should this kingdom begin?* `sim/founding.ts` owns the stage
 `arriving`, `choosing`, `settling`, `camp`, `done` — and the plans that carry them
 out live in the planner with everything else.
 
-The beats: walk inland and look around → the player clicks clear grass within
-nine tiles of the island's middle (`campProblem` is the rule *and* the wording
-the player reads) → **an unlit fire ring goes down on that tile at once**, which
-is both the acknowledgement and the campfire's construction site → the founder
-walks out to it → gathers two piles of deadfall, twelve wood, and carries them →
-lays and lights the fire out of that load (4 wood) with no placement step at all
-→ the player sites the **Small Chest** beside it (8 wood, the exact remainder) →
+The beats: walk inland and look around → the player clicks open grass within nine
+tiles of the island's middle (`campProblem` is the rule *and* the wording the
+player reads) → **a rough camp goes down on those nine tiles at once**, which is
+both the acknowledgement and the Base Camp's construction site → the founder
+walks out to it → fells one ordinary tree by hand for one full load of twelve
+wood → builds the Base Camp out of that load, with no second placement at all →
 finishing it ends founding and opens the ordinary economy.
 
-**The campsite and the campfire are the same decision**, which is why the fire is
-`order: -1` and never appears in the build menu. Asking for the fire's position
-after asking for the campsite would be asking the same question twice.
+**There is exactly one placement in the opening, and the camp is all of it.** The
+Base Camp *is* the fire, the first store and the first two beds, so it is
+`order: -1` and never appears in the build menu, and nothing else is offered
+until it stands. Asking where the fire goes after asking where the camp goes
+would be asking the same question twice.
 
-**Nobody idles during the opening.** The founder gathers deadfall while the
+**The camp is a centred 3×3 and the cursor is its middle.** `campProblem` checks
+all nine tiles, `CAMP_HALF` / `CAMP_SPAN` in `world/terrain.ts` own the shape, and
+`Founding.x/y` stores the *centre* — the tile the fire ends up on — while
+`Building.x/y` is the top-left corner like every other building. Props inside the
+footprint are cleared when it is placed and yield nothing, because there is no
+store yet to put them in.
+
+**Nobody idles during the opening.** The founder fells their tree while the
 player is still choosing the ground — the wood is wanted wherever the camp ends
-up — and feeds the fire while the player decides where the chest goes. There is
+up — so a quick decision costs nothing and a slow one is spent usefully. There is
 one deliberate pause, the beat before "This seems like a good place to begin",
 and it uses the `arriving` activity rather than `watching`. The leisure planner
-is never reached before the chest is finished. Idling is the product *after* the
-kingdom exists; during the opening it reads as a broken game.
+is never reached before the camp is finished, and `planSurvey` (pacing the
+clearing) covers any wait. Idling is the product *after* the kingdom exists;
+during the opening it reads as a broken game.
 
-**The founder carries the treasury.** There is no store until the chest exists,
+**The founder carries the treasury.** There is no store until the camp exists,
 so `think()` skips its "put down anything carried" rule for the founder while
-founding runs (`isFounder`), gathering runs with `haul` off, and both founding
-builds are paid straight out of their arms — that is what `qty` on a `give` step
-is for: the fire takes four of the twelve and the rest stays held. Nothing else
-in the game has a personal inventory, and the exception ends with the chest.
-Balance is exact: 6 + 6 gathered, −4 fire, −8 chest, 0 left.
+founding runs (`isFounder`), gathering runs with `haul` off, and the camp is paid
+straight out of their arms — that is what `qty` on a `give` step is for. Nothing
+else in the game has a personal inventory, and the exception ends with the camp.
+Balance is exact: one tree, four swings, twelve wood, twelve spent.
+
+The founding fell runs at the *ordinary* chop speed rather than the untrained
+one (`slow: false`). It is the first minute of the game; it should read as
+deliberate, not as a penalty for not owning an axe yet.
 
 `availableToBuild()` in `goals.ts`, not `isUnlocked()`, is what the build menu and
 `canPlace` ask. It hides `once` buildings that already stand, and during founding
-offers only the chest. After that the menu opens a step at a time rather than all
-at once: the chest goal unlocks the Cabin, the cabin goal the Storehouse and
-Quarry, the storehouse goal the Lodge and Farm. `unlocks` on a goal therefore
-takes a key *or a list*.
-
-**Fallen branches** (`branches`) are deadfall scattered near the middle at map
-generation: six wood a pile, no axe needed, gone for good once picked up, and
-preferred over trees by every hand-gatherer. Two piles are exactly one founding.
-
-There are **exactly six**, and at least two of them are guaranteed walkable from
-a legal campsite — `generateMap` checks this against the same flood fill the
-beach is checked against, and moves a stranded pile rather than adding a seventh.
-Six is a head start rather than a supply: enough for the founding and a short
-grace period, and then somebody needs an axe. Do not raise the count to smooth
-the early game — deadfall never regrows, so more of it only moves the moment the
-lodge starts mattering, and `npm run worldcheck` asserts the number.
+offers **nothing at all** — the opening's one decision is not a building, and
+everything else would be unaffordable anyway.
 
 **The interface hides the store until there is one.** `#ui.founding` drops the
 whole resource cluster rather than showing `Store 0/0` about a pool that does not
@@ -277,14 +275,19 @@ the 820 pixel breakpoint fired and both were on screen at once.
 
 **Beds are automatic until the player says otherwise.** `assignHome()` puts
 somebody in the nearest free bed, and a finished house collects anyone still
-sleeping by the campfire. `setHome()` is the player's version and sets
+sleeping out at the commons — which is what its 400-tile distance penalty in
+`assignHome` is for: nobody chooses a bedroll by the fire over a roof, but it is
+always there when there is no roof going. Nothing gives a villager a *preference*
+for sleeping outdoors, and the outdoorsy trait deliberately does not; if that is
+ever wanted it is a new trait, designed on purpose. `setHome()` is the player's
+version — including pinning somebody at the commons — and sets
 `homeFixed`, which both of those then leave alone — without that flag the next
 cabin would quietly undo whatever arrangement was just made. The flag clears
 if the house is demolished, or through "let them settle wherever".
 
 **Nobody walks in on a kingdom that does not exist yet.** `updatePopulation`
 returns before it even decrements its clock while founding runs, so the first
-stranger is not already overdue by the time the chest is finished. And when the
+stranger is not already overdue by the time the camp is finished. And when the
 *only* thing standing in the way is a bed, it retries after about a tenth of a
 day rather than the usual gap of nearly one: the player has just built a cabin,
 and being made to wait most of a day afterwards reads as the cabin not having
@@ -292,21 +295,59 @@ worked. Neither changes how many people end up in a kingdom — the appeal roll
 still governs that — only how long the dead time is.
 
 **Buildings grow rather than being replaced.** There is one house — the **Cabin**,
-2 / 4 / 6 beds — and one first store — the **Chest**, 50 / 200 / 500, named Small,
-Medium and Large by `levelNames`. A `levelNames` def means the panel, the toasts,
-the journal and every "sleeps at the…" line must use `buildingName(def, level)`
-rather than `def.name`; `def.name` is only right in the build menu, which is
-always offering a level-1 one. Both change silhouette per level too, because a
-store that holds ten times as much and looks identical is a change you cannot
-see. Costs that a multiplier cannot express — a cabin starts as 20 wood and later
-wants stone — go in `upgradeCosts`, an explicit per-step table; otherwise
-`upgradeCostMul` compounds with level.
+2 / 4 / 6 beds — and one heart — the **Commons**, named Base Camp, Settled Camp,
+Village Commons and Kingdom Commons by `levelNames`. A `levelNames` def means the
+panel, the toasts, the journal and every "sleeps at the…" line must use
+`buildingName(def, level)` rather than `def.name`; `def.name` is only right in the
+build menu, which is always offering a level-1 one. Both change silhouette per
+level too, because a store that holds ten times as much and looks identical is a
+change you cannot see. Costs that a multiplier cannot express — a cabin starts as
+20 wood and later wants stone — go in `upgradeCosts`, an explicit per-step table;
+otherwise `upgradeCostMul` compounds with level.
+
+**The commons is the kingdom's spine, and the only building with a gate on it.**
+`upgradeReqs` on a `BuildingDef` is a per-step list of `{ label, met(g) }` —
+things the kingdom must have *done*, not have in store — and `canUpgrade` refuses
+until every one is met. `COMMONS_REQS` in `defs.ts` holds them, and each level
+hands over a tier of the build menu through `unlockCommonsTier` in `goals.ts`,
+called from `completeConstruction`:
+
+| level | asks for | opens |
+|---|---|---|
+| 1 Base Camp | the founding | Cabin |
+| 2 Settled Camp | a cabin, three people | Storehouse, Quarry, Lodge |
+| 3 Village Commons | bread of your own, six people, somebody in a trade | Standing Stone |
+| 4 Kingdom Commons | *a way of building nobody knows yet* | — |
+
+Two rules that are easy to break. **No level may require something it is itself
+responsible for unlocking** — that is why bread gates the Village Commons rather
+than the Settled Camp, and why the food chain (Farm, Windmill, Bakery) is
+unlocked by *goals* instead. And **every cost must fit inside the storage the
+previous level left behind, and under what `gatherTarget` will actually fetch**
+(half the store in wood, a third in stone): a cost above that line is one nobody
+can ever pay. The requirements are written to be things that cannot un-happen,
+because a kingdom is never told it has gone backwards.
+
+**Level 4 is deliberately out of reach.** Its requirement is `met: () => false`
+with a label saying so, and the panel shows it greyed rather than hiding it. The
+Village Commons is the end of the current arc; turning the last step on later is
+a one-line change to that predicate.
 
 **Improving a building never takes it out of service** (`isOperational`). Storage,
 housing and `nearestStore` all count a building that is mid-upgrade, at its
-current level. Without that, improving the kingdom's only chest drops capacity to
+current level. Without that, improving the kingdom's only store drops capacity to
 zero, which leaves nobody able to fetch materials for the work under way — a
-deadlock the headless run hit on the first attempt.
+deadlock the headless run hit on the first attempt. The commons makes this
+load-bearing rather than theoretical: it is the only store a young kingdom has.
+
+**The commons earns nothing, and that is most of its job.** It is in
+`LEISURE_BUILDINGS`, and unlike the other spots there people stay half again as
+long and are twice as likely to say something (`maybeSay`'s chance is a
+parameter for exactly this). Newcomers walk to it before they do anything else —
+`planArrivalWelcome`, called from `arrive()` — rather than starting wherever the
+planner would have sent them. None of this pays anything, and none of it should
+start to: celebrations, announcements and memorials all belong here later, and
+they belong here as behaviour rather than as a bonus.
 
 **Claims prevent collisions.** `claim()` / `releaseClaim()` reserve a tree, a
 farm plot, or a task so two villagers do not walk to the same one. Always release
@@ -320,12 +361,13 @@ never collapses" actually true.
 
 Hand-gathering has the same idea in `gatherTarget()`: the flat targets (120 wood,
 90 stone) are additionally capped at a share of what the kingdom can actually
-hold. With a storehouse up this never binds. It exists for the opening chest,
-which holds fifty: without it helpers cheerfully fill that with stone nothing
-needs yet and leave the kingdom unable to afford the 25-wood storehouse that
-would fix it — a stall with no way out, which is worse than a slow kingdom. This
-is the same trap `DESIGN.md`-style per-resource shelf limits keep falling into,
-and the reason any future version of them has to clear the early costs.
+hold. With a storehouse up this never binds. It exists for the Base Camp, which
+holds sixty: without it helpers cheerfully fill that with stone nothing needs yet
+and leave the kingdom unable to afford the improvement that would fix it — a
+stall with no way out, which is worse than a slow kingdom. It is also the ceiling
+every commons upgrade cost has to sit under. This is the same trap
+`DESIGN.md`-style per-resource shelf limits keep falling into, and the reason any
+future version of them has to clear the early costs.
 
 **Putting a load down never fails.** `deposit()` is clipped by capacity, but
 `deliver()` — what a villager carrying goods actually calls — always accepts the
@@ -452,15 +494,15 @@ Its hover labels live on a `.vwrap` wrapper rather than on the button, because a
 the greyed-out one is precisely the button people need explained. The zoom
 buttons disable at each end of the ladder and say the current level.
 
-**Founding's two placements arm themselves.** `Game.syncFoundingTool()` puts the
+**Founding's one placement arms itself.** `Game.syncFoundingTool()` puts the
 campsite marker on the cursor while founding is at `choosing` and takes it off
-the moment the ground is picked; `cancelTool()` deliberately re-arms *that* one
-rather than clearing it, and its hint has no Done button, because at that moment
-it is the only thing the player can do. The chest is different: it is armed once
-when the fire lights and can be dismissed, since by then there is a kingdom worth
-looking at. Both exit the tool after a successful placement — the only placements
-in the game that do, since laying out a row of houses should not mean going back
-to the menu five times.
+the moment the ground is picked; `cancelTool()` deliberately re-arms it rather
+than clearing it, and its hint has no Done button, because at that moment it is
+the only thing the player can do. It is also the only placement in the game that
+lets go of the tool afterwards — every other one stays armed, since laying out a
+row of houses should not mean going back to the menu five times. The marker
+shades all nine tiles rather than the one under the cursor, because the cursor is
+the camp's centre and the footprint is the thing worth seeing.
 
 **Speed lives in Settings → Viewing**, not on the map, along with `space` and
 `1`/`2`/`3`. **Removing a building lives at the foot of the build panel**, not in
@@ -602,7 +644,8 @@ be replaced.
   on the map hashes to the same value. This was invisible while salts were 16
   bits. Any new hashing here uses `imul` throughout.
 - **A guard that gives up is not a guarantee.** Every random scatter in
-  `terrain.ts` — trees, boulders, deadfall — is followed by a deterministic fill
+  `terrain.ts` — trees, boulders, the trees the founder can reach — is
+  followed by a deterministic fill
   from `candidateTiles`, because "throw 4000 darts and hope" fails on a few
   seeds in ten thousand and those are exactly the unplayable ones. When adding a
   guarantee, make sure the *counting* rule and the *placing* rule agree on the
@@ -648,6 +691,14 @@ uses it), and `coin` has no sink beyond a single goal reward.
 
 ## Deliberately removed
 
+**Deadfall is gone, and is not coming back.** There used to be six piles of
+fallen branches near the middle of every island — free wood, no axe needed —
+and the opening was two of them. The prop, its sprite, its scatter and its
+guarantees are all deleted: the founder now fells an ordinary tree, which
+depletes, leaves a stump and grows back like every other tree. Do not reintroduce
+a special opening-only resource; if the first minute needs to be gentler, tune
+the chop, not the world.
+
 **Roads and paths are gone, and are not coming back.** `DESIGN.md` specifies
 them at length — player-placed roads, a meaningful movement bonus — and that
 part of the brief has been dropped on purpose. There is no paint tool, no
@@ -663,12 +714,14 @@ back to grass; see `deserialize` in `save/save.ts`.
 Map 40×40 · a day is 30 real minutes at 1× (20 day / 10 night) · 6 days a season,
 24 a year · population cap 100, arriving roughly one per game-day early on ·
 Master rank is ~10–15 real hours of dedicated work in one trade · storage is a
-single shared pool fed by storage buildings: nothing at all until the Small Chest
-is finished, then 50, 200 or 500 as it is widened, and +250 per storehouse ·
-housing is Cabins alone, 2 / 4 / 6 beds · founding itself is about eighty seconds
-at 1×, twenty of them the walk up the beach · a generated island carries at least
-55 trees and 26 boulders within 14 tiles of the middle, and exactly 6 deadfall
-piles, the nearest about 3 tiles from where the kingdom begins.
+single shared pool fed by storage buildings: nothing at all until the Base Camp
+is finished, then 60 / 200 / 450 / 800 as the commons grows, and +250 per
+storehouse · housing is Cabins (2 / 4 / 6 beds) plus the commons' two beds
+outdoors, which never increase · founding itself is about a minute and a half at
+1×, twenty seconds of it the walk up the beach and twenty the tree · a generated
+island carries at least 55 trees and 26 boulders within 14 tiles of the middle, a
+choice of at least 6 legal campsites, and at least 4 trees within 9 tiles of
+where the kingdom begins — the nearest about 3.
 
 Per-resource shelf limits — one good never taking more than a share of the
 store — have been discussed and deliberately deferred. Any such limit has to

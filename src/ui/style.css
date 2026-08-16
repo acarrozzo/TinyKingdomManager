@@ -178,8 +178,8 @@ body {
  * While the kingdom is being founded there is no shared store and nothing in
  * it: the founder is carrying the only wood there is. Showing "Store 0/0" and a
  * row of zeroed resources would be describing a pool that does not exist yet,
- * so the whole left cluster waits until the chest is finished. What the founder
- * is carrying is said in the goals panel instead, and drawn on the map.
+ * so the whole left cluster waits until the Base Camp is finished. What the
+ * founder is carrying is said in the goals panel instead, and drawn on the map.
  */
 #ui.founding .topbar > .cluster:first-child {
   display: none;

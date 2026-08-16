@@ -1,10 +1,16 @@
 /**
- * Onboarding goals and milestones. Completing one unlocks the next slice of the
- * build menu, so the player is never shown a wall of buildings on day one.
+ * Onboarding goals and milestones.
+ *
+ * There are two things opening the build menu up and they are meant to be read
+ * as one. The **commons** is the structural gate: each level of it is a step the
+ * whole settlement takes, and it hands over a tier of buildings when it lands.
+ * The **goals** teach the mechanics in between and unlock the food chain, which
+ * has to come before the commons can ask for bread. Nothing unlocks something
+ * that is a prerequisite of itself; see `COMMONS_REQS` in `defs.ts`.
  */
 
 import type { BuildingId, GameState, Goal } from '../types';
-import { BUILDINGS, FOUNDING_BUILDS } from './defs';
+import { BUILDINGS } from './defs';
 import { journal, toast } from './journal';
 import { deposit } from './state';
 import { rankOf } from './defs';
@@ -18,8 +24,24 @@ function staffed(g: GameState, def: string): boolean {
 }
 
 /**
+ * The tier of building each level of the commons hands over. This is the
+ * kingdom's spine: everything else the menu offers is either a comfort, which
+ * needs no permission at all, or part of the food chain, which the goals open.
+ */
+const COMMONS_UNLOCKS: Record<number, string[]> = {
+  1: ['cabin'],
+  2: ['storehouse', 'quarry', 'lodge'],
+  3: ['statue'],
+};
+
+/** Called when the commons is finished or improved, with the level it now is. */
+export function unlockCommonsTier(g: GameState, level: number): void {
+  for (const key of COMMONS_UNLOCKS[level] ?? []) unlock(g, key);
+}
+
+/**
  * Wood in the founder's arms. During founding this is the whole of the kingdom's
- * wealth — there is no store to count instead until the chest is finished.
+ * wealth — there is no store to count instead until the camp is finished.
  */
 export function carriedByFounder(g: GameState): number {
   const founder = g.villagers.find((v) => v.id === g.founderId);
@@ -30,55 +52,52 @@ export function buildGoals(): Goal[] {
   return [
     {
       id: 'begin',
-      title: 'Choose a place to begin',
-      desc: 'Your founder is looking for somewhere to stop. Click a clear patch of grass near the middle of the island — the first fire will be laid there.',
+      title: 'Choose where the kingdom begins',
+      desc: 'Your founder is looking for somewhere to stop. Click open grass near the middle of the island — the camp needs three tiles by three, and the fire ends up in the middle of them.',
       done: false,
       check: (g) => g.founding.stage !== 'arriving' && g.founding.stage !== 'choosing',
     },
     {
-      id: 'branches',
-      title: 'Gather fallen branches',
-      desc: 'There is deadfall lying about. Your founder is already picking it up — two armfuls is all it takes.',
+      id: 'wood',
+      title: 'Fell the first tree',
+      desc: 'Your founder is already at it, with no axe and no help. One tree is one full load, and one full load is the whole camp.',
       done: false,
-      // They start gathering before the ground is chosen, so this waits for the
+      // They start felling before the ground is chosen, so this waits for the
       // campsite regardless: ticking it off first would read as out of order.
       check: (g) =>
         g.founding.stage !== 'arriving' &&
         g.founding.stage !== 'choosing' &&
-        (has(g, 'campfire') || carriedByFounder(g) >= 12),
+        (has(g, 'commons') || carriedByFounder(g) >= 12),
     },
     {
-      id: 'fire',
-      title: 'Light the first fire',
-      desc: 'No placing needed. Once the wood is gathered your founder lays the fire on the ground you chose and lights it.',
+      id: 'camp',
+      title: 'Raise the Base Camp',
+      desc: 'No placing needed. Your founder carries the wood to the ground you chose and builds it: a fire, somewhere to put things, and two places to sleep.',
       done: false,
-      check: (g) => has(g, 'campfire'),
-      unlocks: 'chest',
-    },
-    {
-      id: 'chest',
-      title: 'Build the Small Chest',
-      desc: 'Click a tile beside the fire. Your founder still has eight wood in their arms, which is exactly what it takes.',
-      done: false,
-      check: (g) => has(g, 'chest'),
-      unlocks: 'cabin',
+      check: (g) => has(g, 'commons'),
     },
     {
       id: 'cabin',
       title: 'Raise a Cabin',
-      desc: 'Somewhere to sleep. Pick a spot from the Build menu and place it; you can improve it later rather than replacing it.',
+      desc: 'Somewhere dry to sleep. Pick a spot from the Build menu and place it; you can improve it later rather than replacing it.',
       done: false,
       check: (g) => has(g, 'cabin'),
-      unlocks: ['storehouse', 'quarry'],
       reward: { wood: 10 },
+    },
+    {
+      id: 'settled',
+      title: 'Make it a Settled Camp',
+      desc: 'A camp that means to stay: awnings, crates and proper seating. Open the camp on the map and improve it — it wants a cabin standing, three people about, and the materials.',
+      done: false,
+      check: (g) => has(g, 'commons', 2),
     },
     {
       id: 'store',
       title: 'Build a Storehouse',
-      desc: 'A chest can only hold so much. A storehouse gives the kingdom real capacity.',
+      desc: 'The camp only holds so much, and it is at the middle of everything. A storehouse raises the ceiling and shortens the walk.',
       done: false,
       check: (g) => has(g, 'storehouse'),
-      unlocks: ['lodge', 'farm'],
+      unlocks: 'farm',
     },
     {
       id: 'lodge',
@@ -117,7 +136,6 @@ export function buildGoals(): Goal[] {
       desc: 'A Bakery turns flour into bread. Villagers will eat it when they are hungry.',
       done: false,
       check: (g) => g.stats.baked >= 1,
-      unlocks: 'statue',
       reward: { coin: 25 },
     },
     {
@@ -126,6 +144,13 @@ export function buildGoals(): Goal[] {
       desc: 'Spare beds and a full larder tend to attract travellers.',
       done: false,
       check: (g) => g.villagers.length >= 6,
+    },
+    {
+      id: 'village',
+      title: 'Make it a Village Commons',
+      desc: 'A permanent hearth, tables people eat at, a notice board nobody reads. The camp asks for bread of your own baking, six people about, and somebody settled into a trade.',
+      done: false,
+      check: (g) => has(g, 'commons', 3),
     },
     {
       id: 'adept',
@@ -177,18 +202,11 @@ export function updateGoals(g: GameState): void {
   }
 }
 
-/**
- * Unlocks that announce themselves some other way. The chest is put straight
- * onto the cursor with its own hint the moment the fire is lit, so a padlock
- * toast saying the same thing is one notification too many.
- */
-const QUIET_UNLOCKS = new Set(['chest']);
-
 export function unlock(g: GameState, key: string): void {
   if (g.unlocked.has(key)) return;
   g.unlocked.add(key);
   const def = (BUILDINGS as Record<string, { name: string } | undefined>)[key];
-  if (def && !QUIET_UNLOCKS.has(key)) {
+  if (def) {
     toast(g, `${def.name} unlocked`, '🔓', 'good');
     journal(g, `The kingdom learned to build a ${def.name}.`, '🔓');
   }
@@ -200,17 +218,18 @@ export function isUnlocked(g: GameState, key?: string): boolean {
 }
 
 /**
- * What the build menu may offer right now. Beyond the usual unlock key there are
- * two rules: a `once` building leaves the menu the moment it stands, and during
- * founding the chest is the only thing on offer at all. Everything the founder
- * could otherwise be shown is unaffordable anyway — there is no store, only the
- * wood in their arms — so listing it would be a way of saying no four times.
+ * What the build menu may offer right now. Beyond the usual unlock key there
+ * are two rules: a `once` building leaves the menu the moment it stands, and
+ * during founding nothing at all is on offer. The founding asks for one
+ * decision and it is not a building — everything else would be unaffordable
+ * anyway, since there is no store yet, only the wood in the founder's arms.
  */
 export function availableToBuild(g: GameState, id: BuildingId): boolean {
+  if (!foundingDone(g)) return false;
   const def = BUILDINGS[id];
   if (!isUnlocked(g, def.unlock)) return false;
   if (def.once && g.buildings.some((b) => b.def === id)) return false;
-  return foundingDone(g) || FOUNDING_BUILDS.has(id);
+  return true;
 }
 
 /** Highest rank anyone in the kingdom currently holds — shown on the goals panel. */

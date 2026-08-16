@@ -10,7 +10,7 @@ import { assignHome, housingCapacity, makeVillager } from './state';
 import { foundingActive } from './founding';
 import { isWalkable } from '../world/terrain';
 import { journal, toast } from './journal';
-import { speak } from './villager';
+import { planArrivalWelcome } from './villager';
 
 const POP_LIMIT = 100;
 /** Shortest gap between arrivals, in game seconds. An arrival should be an event. */
@@ -25,8 +25,8 @@ const BED_RETRY = DAY_LENGTH * 0.12;
 
 export function updatePopulation(g: GameState, dt: number): void {
   // Nobody walks in on a kingdom that does not exist yet. The clock does not
-  // even run: founding is about eighty seconds, and letting it tick meant the
-  // first stranger was already overdue by the time the chest was finished.
+  // even run: founding is a minute or so, and letting it tick meant the first
+  // stranger was already overdue by the time the camp was finished.
   if (foundingActive(g)) return;
 
   g.arrivalTimer -= dt;
@@ -77,7 +77,8 @@ export function arrive(g: GameState): void {
   v.history.push({ day: g.day, text: 'Walked in over the hill and decided to stay.' });
   journal(g, `${v.name} settled in the kingdom.`, '🚶');
   toast(g, `${v.name} has decided to settle here.`, '🚶', 'good');
-  speak(v, 'Room for one more?');
+  // Everybody's first walk is in to the fire, whatever else needs doing.
+  planArrivalWelcome(g, v);
 }
 
 function findEdgeTile(g: GameState, r: RNG): { x: number; y: number } {

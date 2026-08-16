@@ -279,9 +279,9 @@ export class UI {
   /** Cheap values, safe to run every frame. */
   tick(now: number): void {
     const g = this.g;
-    // Until the chest exists there is no kingdom stock to speak of — the wood
-    // is in the founder's arms — so the whole meter goes rather than sitting
-    // there reading 0/0 and quietly lying about what "0" means.
+    // Until the camp is finished there is no kingdom stock to speak of — the
+    // wood is in the founder's arms — so the whole meter goes rather than
+    // sitting there reading 0/0 and quietly lying about what "0" means.
     this.root.classList.toggle('founding', !foundingDone(g));
 
     const clock = this.hud.tick(this.game, this.env);

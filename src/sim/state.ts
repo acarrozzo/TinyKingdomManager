@@ -142,7 +142,7 @@ export function newGame(seed = Math.floor(Math.random() * 1e9)): GameState {
 
   // Nothing is here yet — no fire, no store, no bed. The founder walks up the
   // beach with empty hands and the player decides where they stop; see
-  // `sim/founding.ts` for what that turns into.
+  // `sim/founding.ts` for what that one decision turns into.
   const founder = makeVillager(g, r, map.arrival.x, map.arrival.y);
   founder.favorite = true;
   founder.activity = 'arriving';
@@ -159,10 +159,11 @@ export function newGame(seed = Math.floor(Math.random() * 1e9)): GameState {
 
 /**
  * Whether a building is doing its job. A finished one is, and so is one being
- * improved: widening a chest does not empty it, and a cabin under scaffolding
- * still has beds in it. Without this, improving the kingdom's only chest takes
- * its storage to nothing, which leaves nobody able to fetch materials for the
- * very work under way — a deadlock, and one the headless run found at once.
+ * improved: making a camp into a commons does not empty its stores, and a cabin
+ * under scaffolding still has beds in it. Without this, improving the kingdom's
+ * only store takes its capacity to nothing, which leaves nobody able to fetch
+ * materials for the very work under way — a deadlock, and one the headless run
+ * found at once.
  */
 export function isOperational(b: Building): boolean {
   return b.stage === 'done' || b.upgrading;
@@ -361,8 +362,9 @@ export function assignHome(g: GameState, v: Villager): void {
     if (!isOperational(b) || homeCapacity(b) === 0) continue;
     if (b.residents.length >= homeCapacity(b)) continue;
     const c = buildingCentre(b);
-    // Slightly prefer real houses over the campfire once they exist.
-    const penalty = b.def === 'campfire' ? 400 : 0;
+    // Nobody chooses a bedroll by the fire over a roof, so the commons is only
+    // ever a fallback once there is a house with a spare bed anywhere at all.
+    const penalty = b.def === 'commons' ? 400 : 0;
     const d = (c.x - v.x) ** 2 + (c.y - v.y) ** 2 + penalty;
     if (d < bestD) {
       bestD = d;

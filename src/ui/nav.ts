@@ -88,7 +88,7 @@ export function viewPadMarkup(game: Game): string {
   // zoom-in nearest the top and recentre nearest the thumb.
   const last = ZOOM_LEVELS.length - 1;
   return [
-    btn('recentre', '⌂', 'Back to the campfire'),
+    btn('recentre', '⌂', 'Back to the middle of the kingdom'),
     btn('zoom-out', '−', `Zoom out (now ${cam.zoom}×)`, cam.zoomIndex <= 0),
     btn('zoom-in', '+', `Zoom in (now ${cam.zoom}×)`, cam.zoomIndex >= last),
   ].join('');

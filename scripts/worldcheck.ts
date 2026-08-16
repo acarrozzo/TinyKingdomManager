@@ -18,13 +18,19 @@ import { generateMap, campSuitable, walkableFrom, MAP_W, MAP_H } from '../src/wo
 import type { PropId, TerrainId, Tile } from '../src/types';
 
 const TERRAINS: TerrainId[] = ['water', 'shallow', 'sand', 'grass', 'meadow', 'forest', 'rocky'];
-const PROPS: PropId[] = ['tree', 'stump', 'boulder', 'pebbles', 'branches', 'bush', 'flowers', 'reeds', 'lilypad'];
+const PROPS: PropId[] = ['tree', 'stump', 'boulder', 'pebbles', 'bush', 'flowers', 'reeds', 'lilypad'];
 
 /** What the opening is owed, whatever the noise did. Mirrors `world/terrain.ts`. */
 const WANT_TREES = 55;
 const WANT_BOULDERS = 26;
-const WANT_DEADFALL = 6;
-const REACHABLE_DEADFALL = 2;
+/** Trees the founder can walk to, and how far counts as walking to one. */
+const WANT_NEAR_TREES = 4;
+const NEAR_TREE_RADIUS = 9;
+/**
+ * Legal three-by-three campsites within the radius. One would satisfy the code
+ * and make a liar of the interface, which calls this a choice.
+ */
+const WANT_CAMPSITES = 6;
 const NODE_RADIUS = 14;
 const CAMP_RADIUS = 9;
 /** The opening should still be a walk rather than a step. */
@@ -53,7 +59,7 @@ function check(seed: number, m: World): string[] {
   if (tiles.length !== w * h) bad.push(`tile array is ${tiles.length}, expected ${w * h}`);
 
   // --- every tile is a tile the renderer and the pathfinder can read ---
-  let counted = { tree: 0, boulder: 0, branches: 0 };
+  let counted = { tree: 0, boulder: 0 };
   for (let y = 0; y < h; y++)
     for (let x = 0; x < w; x++) {
       const t = at(x, y);
@@ -67,16 +73,7 @@ function check(seed: number, m: World): string[] {
       if (!Number.isFinite(t.amount) || t.amount < 0) bad.push(`tile ${x},${y} amount ${t.amount}`);
       if (t.building !== 0 || t.blocked || t.plot !== 0) bad.push(`tile ${x},${y} starts occupied`);
 
-      // Bounds safety, for the passes that choose a tile rather than sweep the
-      // map: deadfall, the guarantees and both founding locations all clamp to
-      // the inner rectangle, and a pile on the outer ring means one of them
-      // stopped doing that. The terrain scatter is not held to this — a lone
-      // tree on a corner of coastline is just what the coast noise did.
-      const onRim = x === 0 || y === 0 || x === w - 1 || y === h - 1;
-      if (onRim && t.prop === 'branches') bad.push(`deadfall on the map edge at ${x},${y}`);
-
       const d = Math.hypot(x - cx, y - cy);
-      if (t.prop === 'branches') counted.branches++;
       if (d < NODE_RADIUS) {
         if (t.prop === 'tree') counted.tree++;
         else if (t.prop === 'boulder') counted.boulder++;
@@ -86,15 +83,17 @@ function check(seed: number, m: World): string[] {
   // --- the resources the first hour needs ---
   if (counted.tree < WANT_TREES) bad.push(`${counted.tree} trees within ${NODE_RADIUS}, wanted ${WANT_TREES}`);
   if (counted.boulder < WANT_BOULDERS) bad.push(`${counted.boulder} boulders within ${NODE_RADIUS}, wanted ${WANT_BOULDERS}`);
-  if (counted.branches !== WANT_DEADFALL) bad.push(`${counted.branches} deadfall piles, wanted exactly ${WANT_DEADFALL}`);
 
-  // --- somewhere to begin ---
+  // --- somewhere to begin, and a choice of somewheres ---
   const s = m.start;
   if (!Number.isInteger(s.x) || !Number.isInteger(s.y)) bad.push(`start ${s.x},${s.y} is not a tile`);
-  else if (s.x < 1 || s.y < 1 || s.x >= w - 1 || s.y >= h - 1) bad.push(`start ${s.x},${s.y} is out of bounds`);
+  else if (s.x < 2 || s.y < 2 || s.x >= w - 2 || s.y >= h - 2) bad.push(`start ${s.x},${s.y} is out of bounds`);
   else {
     if (!campSuitable(tiles, w, h, s.x, s.y)) bad.push(`start ${s.x},${s.y} is not somewhere the game would let you camp`);
     if (Math.hypot(s.x - cx, s.y - cy) > CAMP_RADIUS) bad.push(`start ${s.x},${s.y} is outside the camp radius`);
+  }
+  if (countCampsites(tiles, w, h) < WANT_CAMPSITES) {
+    bad.push(`${countCampsites(tiles, w, h)} legal campsites, wanted ${WANT_CAMPSITES}`);
   }
 
   // --- and everything else on the same piece of land as it ---
@@ -114,14 +113,38 @@ function check(seed: number, m: World): string[] {
     if (Math.hypot(a.x - cx, a.y - cy) < MIN_ARRIVAL_DISTANCE) bad.push(`arrival ${a.x},${a.y} is already at the middle`);
   }
 
-  let reachableDeadfall = 0;
-  for (let y = 0; y < h; y++)
-    for (let x = 0; x < w; x++) if (at(x, y).prop === 'branches' && reach[y * w + x] === 1) reachableDeadfall++;
-  if (reachableDeadfall < REACHABLE_DEADFALL) {
-    bad.push(`${reachableDeadfall} deadfall piles the founder can walk to, wanted ${REACHABLE_DEADFALL}`);
+  // The whole opening is one tree felled by hand, so the founder is owed trees
+  // on their own side of the water.
+  if (nearTrees(m, reach) < WANT_NEAR_TREES) {
+    bad.push(`${nearTrees(m, reach)} trees within ${NEAR_TREE_RADIUS} of the start, wanted ${WANT_NEAR_TREES}`);
   }
 
   return bad;
+}
+
+/** How many tiles the game would accept as the centre of a camp. */
+function countCampsites(tiles: Tile[], w: number, h: number): number {
+  const cx = w / 2;
+  const cy = h / 2;
+  let n = 0;
+  for (let y = 2; y < h - 2; y++)
+    for (let x = 2; x < w - 2; x++) {
+      if (Math.hypot(x - cx, y - cy) > CAMP_RADIUS) continue;
+      if (campSuitable(tiles, w, h, x, y)) n++;
+    }
+  return n;
+}
+
+/** Standing trees the founder could walk to from where the kingdom starts. */
+function nearTrees(m: World, reach: Uint8Array): number {
+  let n = 0;
+  for (let y = 0; y < m.h; y++)
+    for (let x = 0; x < m.w; x++) {
+      const t = m.tiles[y * m.w + x];
+      if (t.prop !== 'tree' || reach[y * m.w + x] !== 1) continue;
+      if (Math.hypot(x - m.start.x, y - m.start.y) < NEAR_TREE_RADIUS) n++;
+    }
+  return n;
 }
 
 /** A cheap order-sensitive digest of everything generation decided. */
@@ -157,7 +180,7 @@ const started = Date.now();
 
 // Counts worth seeing even when everything passes: an island that only ever
 // scrapes the minimum is one bad tuning change away from failing.
-const stats = { trees: [Infinity, 0], boulders: [Infinity, 0], reachable: [Infinity, 0], deadfallD: [Infinity, 0] };
+const stats = { trees: [Infinity, 0], boulders: [Infinity, 0], near: [Infinity, 0], sites: [Infinity, 0], treeD: [Infinity, 0] };
 
 for (let i = 0; i < count; i++) {
   const seed = first + i;
@@ -179,17 +202,15 @@ for (let i = 0; i < count; i++) {
   const reach = walkableFrom(m.tiles, m.w, m.h, m.start.x, m.start.y);
   let trees = 0;
   let boulders = 0;
-  let reachable = 0;
-  let nearestDeadfall = Infinity;
+  let nearestTree = Infinity;
   for (let y = 0; y < m.h; y++)
     for (let x = 0; x < m.w; x++) {
       const t = m.tiles[y * m.w + x];
       const d = Math.hypot(x - cx, y - cy);
       if (d < NODE_RADIUS && t.prop === 'tree') trees++;
       if (d < NODE_RADIUS && t.prop === 'boulder') boulders++;
-      if (t.prop === 'branches' && reach[y * m.w + x] === 1) {
-        reachable++;
-        nearestDeadfall = Math.min(nearestDeadfall, Math.hypot(x - m.start.x, y - m.start.y));
+      if (t.prop === 'tree' && reach[y * m.w + x] === 1) {
+        nearestTree = Math.min(nearestTree, Math.hypot(x - m.start.x, y - m.start.y));
       }
     }
   const note = (slot: number[], v: number) => {
@@ -198,8 +219,9 @@ for (let i = 0; i < count; i++) {
   };
   note(stats.trees, trees);
   note(stats.boulders, boulders);
-  note(stats.reachable, reachable);
-  note(stats.deadfallD, nearestDeadfall);
+  note(stats.near, nearTrees(m, reach));
+  note(stats.sites, countCampsites(m.tiles, m.w, m.h));
+  note(stats.treeD, nearestTree);
 
   if (i > 0 && i % 2000 === 0) console.log(`  …${i}`);
 }
@@ -208,5 +230,6 @@ const secs = ((Date.now() - started) / 1000).toFixed(1);
 console.log(`\n✓ ${count} worlds, all sound (${secs}s)`);
 console.log(`  trees within ${NODE_RADIUS}        ${stats.trees[0]}–${stats.trees[1]}`);
 console.log(`  boulders within ${NODE_RADIUS}     ${stats.boulders[0]}–${stats.boulders[1]}`);
-console.log(`  deadfall the founder can reach  ${stats.reachable[0]}–${stats.reachable[1]} of ${WANT_DEADFALL}`);
-console.log(`  walk to the nearest pile        ${stats.deadfallD[0].toFixed(1)}–${stats.deadfallD[1].toFixed(1)} tiles`);
+console.log(`  campsites to choose between      ${stats.sites[0]}–${stats.sites[1]}`);
+console.log(`  trees within ${NEAR_TREE_RADIUS} of the start   ${stats.near[0]}–${stats.near[1]}`);
+console.log(`  walk to the nearest tree        ${stats.treeD[0].toFixed(1)}–${stats.treeD[1].toFixed(1)} tiles`);
