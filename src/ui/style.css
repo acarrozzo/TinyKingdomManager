@@ -3,8 +3,10 @@
 
 :root {
   --ink: #f4e9d6;
-  --dim: #b5a892;
-  --faint: #857a69;
+  --dim: #bcb09b;
+  /* Secondary copy still has to be readable on the panel behind it; the old
+     value sat just under four to one against it, which is a shade too quiet. */
+  --faint: #9c907d;
   --panel: rgba(30, 26, 21, 0.92);
   --panel-solid: #211d18;
   --edge: rgba(255, 236, 200, 0.1);
@@ -18,6 +20,17 @@
   --shadow: 0 8px 28px rgba(0, 0, 0, 0.42);
   --font: ui-rounded, "Segoe UI", "SF Pro Text", system-ui, -apple-system, sans-serif;
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* Measured furniture: the interface positions itself off these rather than
+     off numbers that were true of one screen on one day. */
+  --dock-h: 0px;
+  --top-h: 46px;
+  --goals-h: 0px;
+  --sheet-h: 0px;
+  --safe-t: env(safe-area-inset-top, 0px);
+  --safe-b: env(safe-area-inset-bottom, 0px);
+  --safe-l: env(safe-area-inset-left, 0px);
+  --safe-r: env(safe-area-inset-right, 0px);
 }
 
 * {
@@ -63,14 +76,26 @@ body {
   inset: 0;
   pointer-events: none;
   font-size: 13px;
-  /*
-   * `manipulation` keeps taps and scrolling but switches off double-tap-to-
-   * zoom, which otherwise fires whenever you press the same button twice
-   * quickly and blows up the whole interface. iOS ignores `user-scalable=no`,
-   * so this is the only thing that actually stops it.
-   */
-  touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
+}
+/*
+ * `manipulation` switches off double-tap-to-zoom, which otherwise fires
+ * whenever you press the same button twice quickly and blows up the layout.
+ * It is scoped to the controls rather than the whole interface: pinching to
+ * enlarge the text of a panel is a reasonable thing to want, and the page
+ * viewport is no longer locked against it.
+ */
+#ui button,
+#ui .navbtn,
+#ui .vbtn,
+#ui select,
+#ui input,
+#ui label,
+#ui .res,
+#ui .tabs,
+#ui .brow,
+#ui .pcard {
+  touch-action: manipulation;
 }
 /* Repeated taps would otherwise start selecting button labels. */
 #ui button,
@@ -95,13 +120,45 @@ body {
   transition: opacity 0.35s ease, transform 0.35s ease;
 }
 
+/* Visible only to a screen reader: labels for controls that show an icon. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/*
+ * Keyboard focus has to be visible everywhere, including on the dark panels
+ * where a hairline outline disappears. Mouse and touch presses do not get it.
+ */
+#ui :focus-visible,
+#ui button:focus-visible,
+#ui select:focus-visible,
+#ui input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+#ui .modal:focus,
+#ui .panel:focus,
+#ui .card2:focus {
+  outline: none;
+}
+
 /* ---------------------------------------------------------------- top bar */
 
 .topbar {
   position: absolute;
-  top: 10px;
-  left: 10px;
-  right: 10px;
+  top: calc(10px + var(--safe-t));
+  left: calc(10px + var(--safe-l));
+  right: calc(10px + var(--safe-r));
   display: flex;
   gap: 8px;
   align-items: flex-start;
@@ -114,6 +171,7 @@ body {
   gap: 6px;
   align-items: center;
   flex-wrap: wrap;
+  min-width: 0;
 }
 
 /*
@@ -125,6 +183,11 @@ body {
  */
 #ui.founding .topbar > .cluster:first-child {
   display: none;
+}
+/* With the left cluster gone the clock is the only thing in the row, and
+   space-between would leave it stranded on the wrong side. */
+#ui.founding .topbar > .cluster:last-child {
+  margin-left: auto;
 }
 
 .pill {
@@ -138,6 +201,32 @@ body {
   backdrop-filter: blur(8px);
   box-shadow: var(--shadow);
   white-space: nowrap;
+}
+
+.stripwrap {
+  position: relative;
+  min-width: 0;
+  display: flex;
+}
+/* The cue that there is more strip than screen. */
+.stripwrap .moreres {
+  display: none;
+}
+.stripwrap.overflowing .moreres {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 34px;
+  padding-right: 7px;
+  border-radius: 0 999px 999px 0;
+  background: linear-gradient(90deg, rgba(30, 26, 21, 0), rgba(30, 26, 21, 0.96) 62%);
+  color: var(--accent);
+  font-size: 15px;
+  pointer-events: none;
 }
 
 .res {
@@ -164,8 +253,12 @@ body {
   line-height: 1;
   filter: saturate(0.9);
 }
+.res .nm {
+  color: var(--dim);
+  font-size: 11.5px;
+}
 .res .val {
-  min-width: 22px;
+  min-width: 18px;
   font-weight: 600;
 }
 .res.locked {
@@ -189,6 +282,15 @@ body {
 }
 .pill:hover .storage {
   color: var(--ink);
+}
+/* Said in words as well as in the length of a bar, and only when it matters. */
+.storage .state {
+  display: none;
+}
+.storage .state.on {
+  display: inline;
+  color: var(--warn);
+  font-weight: 600;
 }
 
 /* Hover detail for the top bar. Scoped under #ui so it outranks
@@ -319,7 +421,7 @@ button {
   padding: 7px 9px;
 }
 .btn[disabled] {
-  opacity: 0.4;
+  opacity: 0.45;
   cursor: default;
 }
 .btn.small {
@@ -327,10 +429,23 @@ button {
   font-size: 11.5px;
   border-radius: 8px;
 }
+/*
+ * Three weights, and they have to be told apart without reading the label:
+ * primary is the thing you came here to do, danger is the thing you cannot
+ * undo, and everything else is quiet.
+ */
 .btn.primary {
   background: rgba(232, 182, 97, 0.18);
   border-color: rgba(232, 182, 97, 0.45);
   color: #f6dfae;
+}
+.btn.danger {
+  color: #f0bcb2;
+  border-color: rgba(224, 130, 114, 0.32);
+}
+.btn.danger.primary {
+  background: rgba(224, 130, 114, 0.2);
+  border-color: rgba(224, 130, 114, 0.5);
 }
 .btn.danger:hover {
   background: rgba(224, 130, 114, 0.18);
@@ -354,13 +469,20 @@ button {
   color: var(--dim);
   min-width: 30px;
 }
+.speed button.on {
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+.speed button:hover:not(.on) {
+  background: rgba(255, 255, 255, 0.06);
+}
 
 /* ------------------------------------------------------------- view pad */
 
 .viewpad {
   position: absolute;
-  right: 10px;
-  bottom: 12px;
+  right: calc(10px + var(--safe-r));
+  bottom: calc(12px + var(--safe-b));
   z-index: 20;
   display: flex;
   align-items: center;
@@ -425,22 +547,10 @@ button {
   opacity: 0.32;
   cursor: default;
 }
-.speed button.on {
-  background: var(--accent-dim);
-  color: var(--accent);
-}
-.speed button:hover:not(.on) {
-  background: rgba(255, 255, 255, 0.06);
-}
-
-/* Removing lives at the foot of the build list: the same place you go to put
-   something up, and rarer than putting up. */
-.build-remove {
-  padding: 11px 13px 13px;
-}
-.build-remove .btn {
-  width: 100%;
-  justify-content: center;
+/* A finger needs the full target even on a tablet that kept its side rails. */
+#ui.touch .vbtn {
+  width: 44px;
+  height: 44px;
 }
 
 /* ---------------------------------------------------------------- panels */
@@ -482,21 +592,29 @@ button {
 #ui .side,
 #ui .goals,
 #ui .toasts,
+#ui .dock,
 #ui .tool-hint-host,
+#ui .nav-host,
+#ui .modal-host,
 #ui .viewpad {
   pointer-events: none;
 }
+/* Toasts are never clickable: they are told, not asked, and one drifting over
+   a panel must not eat the tap meant for it. */
 #ui .side > *,
 #ui .goals > *,
-#ui .toasts > *,
 #ui .tool-hint-host > *,
+#ui .nav-host > *,
+#ui .modal-host > *,
 #ui .viewpad > * {
   pointer-events: auto;
 }
 
 .side {
   position: absolute;
-  top: 62px;
+  /* Off the measured top bar: it wraps to two rows on a narrow window, and a
+     fixed 62 put the build rail straight through it. */
+  top: calc(var(--top-h) + 16px + var(--safe-t));
   bottom: 14px;
   width: 252px;
   display: flex;
@@ -504,10 +622,10 @@ button {
   gap: 8px;
 }
 .side.left {
-  left: 10px;
+  left: calc(10px + var(--safe-l));
 }
 .side.right {
-  right: 10px;
+  right: calc(10px + var(--safe-r));
   width: 274px;
   /* Clears the view controls in the corner below. */
   bottom: 62px;
@@ -575,19 +693,47 @@ button {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-.build-item .cost.short {
+.build-item.short .cost {
   color: var(--bad);
 }
+/*
+ * The description is not a tooltip. On a touchscreen there is no hover to
+ * reveal it, and "what does a lodge actually do" is the question the menu
+ * exists to answer.
+ */
 .build-item .desc {
+  display: block;
   font-size: 11px;
   color: var(--faint);
   line-height: 1.4;
   margin-top: 3px;
-  display: none;
 }
-.build-item:hover .desc,
-.build-item.on .desc {
+.build-item .warnline {
   display: block;
+  margin-top: 4px;
+  font-size: 10.5px;
+  color: var(--bad);
+}
+.build-item.locked {
+  opacity: 0.62;
+  cursor: default;
+}
+.build-item.locked:hover {
+  background: none;
+  border-color: transparent;
+}
+.build-item .cdot {
+  color: var(--faint);
+}
+
+/* Removing lives at the foot of the build list: the same place you go to put
+   something up, and rarer than putting up. */
+.build-remove {
+  padding: 11px 13px 13px;
+}
+.build-remove .btn {
+  width: 100%;
+  justify-content: center;
 }
 
 /* ------------------------------------------------------------ inspector */
@@ -685,6 +831,9 @@ button {
   border-color: rgba(232, 182, 97, 0.35);
   color: var(--accent);
 }
+button.tag {
+  cursor: pointer;
+}
 
 .hist {
   font-size: 11.5px;
@@ -723,24 +872,6 @@ button {
   border-color: rgba(232, 182, 97, 0.5);
 }
 
-.worker {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 5px 0;
-  font-size: 12px;
-  border-top: 1px solid var(--edge);
-}
-.worker:first-of-type {
-  border-top: none;
-}
-.worker .who {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .needs {
   display: flex;
   flex-direction: column;
@@ -775,12 +906,12 @@ button {
 
 .goals {
   position: absolute;
-  left: 10px;
+  left: calc(10px + var(--safe-l));
   bottom: 12px;
   width: 262px;
 }
 .goals.shifted {
-  left: 272px;
+  left: calc(272px + var(--safe-l));
 }
 .goal {
   display: flex;
@@ -799,6 +930,9 @@ button {
   place-items: center;
   font-size: 10px;
   color: var(--panel-solid);
+}
+.goal.now .mark {
+  border-color: var(--accent);
 }
 .goal.done .mark {
   background: var(--good);
@@ -821,20 +955,103 @@ button {
   text-decoration: line-through;
 }
 .goal-more {
-  padding: 7px 12px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 12px 8px;
   font-size: 11px;
   color: var(--faint);
   border-top: 1px solid var(--edge);
 }
+.goallist .goal {
+  padding: 7px 0;
+}
 
-/* ----------------------------------------------------- active tool hint */
+/* The phone's objective: one line, always there, foldable to a pip. */
+.goalchip {
+  display: flex;
+  align-items: stretch;
+  max-width: 100%;
+  background: var(--panel);
+  border: 1px solid var(--edge);
+  border-radius: 999px;
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(8px);
+  overflow: hidden;
+}
+.goalchip .gc-main {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 8px 4px 8px 13px;
+  text-align: left;
+}
+.goalchip .lb {
+  font-size: 9.5px;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+.goalchip .t {
+  font-size: 12px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.goalchip .aside {
+  flex-shrink: 0;
+  font-size: 11.5px;
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
+}
+.goalchip .gc-x {
+  padding: 0 12px;
+  color: var(--faint);
+  font-size: 15px;
+  line-height: 1;
+}
+.goalchip.mini {
+  width: 34px;
+  height: 34px;
+  justify-content: center;
+  align-items: center;
+  color: var(--accent);
+  padding: 0;
+}
 
-.tool-hint-host {
+/* ------------------------------------------- the dock: hints and the nav */
+
+/*
+ * Everything pinned to the bottom edge is one column. Stacking these by hand
+ * meant measuring each box and telling the next how far up to sit, and a hint
+ * that ran to four lines on a phone was written straight over by it.
+ */
+.dock {
   position: absolute;
-  bottom: 14px;
-  left: 50%;
-  transform: translateX(-50%);
-  max-width: min(520px, calc(100vw - 620px));
+  left: calc(8px + var(--safe-l));
+  right: calc(8px + var(--safe-r));
+  bottom: 0;
+  padding-bottom: var(--safe-b);
+  z-index: 25;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.tool-hint-host:empty,
+.nav-host:empty {
+  display: none;
+}
+.tool-hint-host {
+  max-width: min(560px, 100%);
+  margin-bottom: 14px;
+}
+.nav-host {
+  width: 100%;
 }
 .toolbar-hint {
   display: flex;
@@ -848,28 +1065,57 @@ button {
   backdrop-filter: blur(10px);
   animation: rise 0.25s ease;
 }
+.toolbar-hint.good {
+  border-color: rgba(147, 209, 137, 0.5);
+}
+.toolbar-hint.bad {
+  border-color: rgba(224, 130, 114, 0.5);
+}
+.toolbar-hint.warn {
+  border-color: rgba(234, 164, 100, 0.5);
+}
 .toolbar-hint .ic {
   font-size: 17px;
   line-height: 1;
+  flex-shrink: 0;
 }
 .toolbar-hint .txt {
   display: flex;
   flex-direction: column;
   gap: 2px;
   min-width: 0;
+  flex: 1;
 }
 .toolbar-hint .txt b {
   font-size: 12.5px;
   color: var(--accent);
   letter-spacing: 0.2px;
 }
-.toolbar-hint .txt span {
+.toolbar-hint .say {
   font-size: 11.5px;
   color: var(--dim);
   line-height: 1.45;
 }
-.toolbar-hint .btn {
+/* The mark says which of the three this is without depending on the colour. */
+.toolbar-hint .mk {
+  font-weight: 700;
+  margin-right: 5px;
+}
+.toolbar-hint.good .mk {
+  color: var(--good);
+}
+.toolbar-hint.bad .mk {
+  color: var(--bad);
+}
+.toolbar-hint.warn .mk {
+  color: var(--warn);
+}
+.toolbar-hint .acts {
+  display: flex;
+  gap: 6px;
   flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .divider {
@@ -879,28 +1125,64 @@ button {
   background: var(--edge);
 }
 
-/* --------------------------------------------------------------- toasts */
-
-/*
- * Toasts stack above the active-tool hint, and how far above depends on how
- * tall that hint actually is — the campsite hint runs to four lines on a phone,
- * where a fixed offset put a toast straight across its title. `--hint-h` is
- * measured and set whenever the hint is rendered.
- */
-.tool-hint-host:not(:empty) ~ .toasts {
-  bottom: calc(24px + var(--hint-h, 62px));
+/* The phone's navigation. Five destinations, labelled, thumb-sized. */
+.bottomnav {
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 2px;
+  padding: 4px 4px 5px;
+  background: rgba(24, 20, 16, 0.94);
+  border: 1px solid var(--edge);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(12px);
 }
+.navbtn {
+  flex: 1;
+  min-width: 44px;
+  min-height: 46px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 4px 2px;
+  border-radius: 12px;
+  color: var(--dim);
+  border: 1px solid transparent;
+}
+.navbtn .ic {
+  font-size: 16px;
+  line-height: 1;
+}
+.navbtn .lb {
+  font-size: 10px;
+  letter-spacing: 0.2px;
+}
+.navbtn.on {
+  background: var(--accent-dim);
+  border-color: rgba(232, 182, 97, 0.42);
+  color: var(--accent);
+}
+.navbtn:active {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* --------------------------------------------------------------- toasts */
 
 .toasts {
   position: absolute;
-  bottom: 16px;
+  /* Above the dock, and above the goals panel when the window is too narrow
+     for the two of them to sit side by side. */
+  bottom: calc(16px + var(--dock-h) + var(--goals-h));
   left: 50%;
   transform: translateX(-50%);
   display: flex;
   flex-direction: column;
   gap: 6px;
   align-items: center;
-  pointer-events: none;
+  max-width: calc(100vw - 24px);
 }
 .toast {
   background: var(--panel);
@@ -932,6 +1214,10 @@ button {
 
 /* ---------------------------------------------------------------- modal */
 
+.modal-host {
+  position: absolute;
+  inset: 0;
+}
 .scrim {
   position: absolute;
   inset: 0;
@@ -1021,10 +1307,16 @@ button {
 .modal .foot {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 7px;
   padding: 11px 18px;
   border-top: 1px solid var(--edge);
   background: rgba(0, 0, 0, 0.14);
+}
+.confirm-line {
+  font-size: 11.5px;
+  color: var(--warn);
+  line-height: 1.4;
 }
 
 .entry {
@@ -1059,7 +1351,7 @@ button {
   background: rgba(255, 255, 255, 0.028);
 }
 .card.unknown {
-  opacity: 0.42;
+  opacity: 0.5;
 }
 .card .cn {
   font-weight: 600;
@@ -1130,6 +1422,8 @@ button {
   cursor: pointer;
   font-weight: 600;
   overflow: hidden;
+  text-align: left;
+  color: var(--ink);
 }
 .brow .who .nm {
   overflow: hidden;
@@ -1184,6 +1478,17 @@ button {
   cursor: pointer;
   color: var(--accent);
   border-bottom: 1px dotted currentColor;
+  font-size: inherit;
+  font-family: inherit;
+  padding: 0;
+}
+.link.plain {
+  color: var(--ink);
+  border-bottom: none;
+  text-align: left;
+}
+.link.plain:hover {
+  color: var(--accent);
 }
 
 .people-row {
@@ -1203,6 +1508,136 @@ button {
   border-bottom-color: var(--edge);
   padding-bottom: 8px;
 }
+
+/* The phone's roster: a card each, name and doing-what first. */
+.pcards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pcard {
+  border: 1px solid var(--edge);
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.028);
+  overflow: hidden;
+}
+.pcard .who {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 9px 11px;
+  text-align: left;
+  color: var(--ink);
+  min-height: 44px;
+}
+.pcard .who .tx {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+.pcard .nm {
+  font-weight: 600;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pcard .ac {
+  font-size: 11px;
+  color: var(--dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pcard .go {
+  color: var(--faint);
+  font-size: 16px;
+}
+.pcard .pjob {
+  display: flex;
+  gap: 7px;
+  padding: 0 11px 10px;
+}
+.pcard .pjob select {
+  flex: 1;
+  min-width: 0;
+  min-height: 36px;
+}
+
+/* The stores sheet: what each of those numbers actually is. */
+.storerow {
+  padding: 9px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+.storerow .sr-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: baseline;
+  margin-bottom: 3px;
+}
+.storerow .nm {
+  font-weight: 600;
+  font-size: 12.5px;
+}
+.storerow .amt {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.storerow b {
+  color: var(--dim);
+  font-weight: 600;
+}
+
+/* The "More" sheet: everything that is neither the loop nor management. */
+.morelist {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.morerow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 11px 13px;
+  min-height: 52px;
+  text-align: left;
+  border: 1px solid var(--edge);
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.028);
+  color: var(--ink);
+}
+.morerow:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+.morerow .ic {
+  font-size: 17px;
+}
+.morerow .tx {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+.morerow .t {
+  font-weight: 600;
+  font-size: 13px;
+}
+.morerow .d {
+  font-size: 11px;
+  color: var(--faint);
+  line-height: 1.4;
+}
+.morerow .go {
+  color: var(--faint);
+  font-size: 16px;
+}
+
 select {
   font-family: inherit;
   font-size: 12px;
@@ -1251,7 +1686,7 @@ select:focus {
   color: var(--dim);
 }
 .tiny {
-  font-size: 11px;
+  font-size: 11.5px;
 }
 .hint {
   font-size: 11.5px;
@@ -1284,8 +1719,8 @@ input[type="checkbox"] {
    clicks aimed at the buttons underneath it. */
 #ui .clean-chip {
   position: absolute;
-  top: 12px;
-  right: 12px;
+  top: calc(12px + var(--safe-t));
+  right: calc(12px + var(--safe-r));
   display: flex;
   align-items: center;
   gap: 10px;
@@ -1333,6 +1768,8 @@ input[type="checkbox"] {
 }
 .intro .card2 {
   width: min(460px, 90vw);
+  max-height: 88vh;
+  overflow-y: auto;
   background: var(--panel-solid);
   border: 1px solid var(--edge-strong);
   border-radius: 18px;
@@ -1366,171 +1803,374 @@ kbd {
   padding: 1px 5px;
 }
 
-@media (max-width: 820px) {
-  .side.left,
+/* --------------------------------------------------------- narrow desktop */
+
+/*
+ * The goals panel and the active-tool bar both live along the bottom edge, and
+ * while a tool is up they are saying the same thing in two places. The bar
+ * wins: it is the thing with a Cancel button on it.
+ */
+#ui.has-hint:not(.compact) .goals {
+  display: none;
+}
+/* A touchscreen that kept its side rails still has fingers on it. */
+#ui.touch .toolbar-hint .btn {
+  min-height: 44px;
+}
+
+@media (max-width: 1080px) {
+  .side.left {
+    width: 228px;
+  }
   .side.right {
-    width: 216px;
+    width: 244px;
   }
-  .goals {
+  /* The strip has to stay one row: wrapping it pushes the clock onto a second
+     line and the side rails down with it. The names come back with the width,
+     and on a touchscreen the strip opens a sheet that says them all anyway. */
+  .res .nm {
     display: none;
-  }
-  /*
-   * …except while the kingdom is being founded, when it holds the only
-   * instruction there is and what the founder is carrying. A narrow screen with
-   * nothing on it but a person picking up sticks explains nothing at all. When
-   * a tool hint is up it is saying the same thing in the same place, so only one
-   * of the two ever shows, and the toasts stack above whichever it is.
-   */
-  #ui.founding .goals {
-    display: block;
-    bottom: 62px;
-    width: min(262px, calc(100vw - 20px));
-  }
-  #ui.founding.has-hint .goals {
-    display: none;
-  }
-  #ui.founding .toasts {
-    bottom: calc(74px + var(--goals-h, 0px) + var(--hint-h, 0px));
-  }
-  .tool-hint-host {
-    max-width: calc(100vw - 24px);
   }
 }
 
 /*
- * Phones. The map is the whole point, so the interface gets out of its way:
- * one compact bar of chips at the top, one row of view controls along the
- * bottom, and panels that rise from the bottom edge instead of standing in two
- * columns that would overlap each other on a 390px screen.
+ * The phone layout. Driven by a class rather than by width alone: a large
+ * phone held sideways is 844 across and still wants this, and a desktop window
+ * squeezed to the same shape does not.
+ *
+ * The map is the whole point, so the interface gets out of its way: one strip
+ * of chips at the top, one line of objective under it, one navigation bar at
+ * the bottom, and one sheet at a time rising above that bar.
  */
-@media (max-width: 600px) {
-  .topbar {
-    top: 6px;
-    left: 6px;
-    right: 6px;
-    gap: 5px;
-  }
-  .cluster {
-    gap: 5px;
-    max-width: 100%;
-  }
-  .pill {
-    max-width: 100%;
-    padding: 4px 9px;
-    gap: 5px;
-    /* Late-game there are six resources; let them scroll rather than clip. */
-    overflow-x: auto;
-    scrollbar-width: none;
-  }
-  .pill::-webkit-scrollbar {
-    display: none;
-  }
-  .res {
-    font-size: 11px;
-    gap: 3px;
-    padding: 1px 3px;
-  }
-  .res .icon {
-    font-size: 11px;
-  }
-  .res .val {
-    min-width: 13px;
-  }
-  .storage {
-    font-size: 11px;
-  }
-  .bar {
-    width: 44px;
-  }
-  .clock .t {
-    font-size: 13px;
-  }
-  .btn {
-    padding: 7px 10px;
-    font-size: 12px;
-  }
+#ui.compact .topbar {
+  top: calc(6px + var(--safe-t));
+  left: calc(6px + var(--safe-l));
+  right: calc(6px + var(--safe-r));
+  gap: 5px;
+  flex-wrap: nowrap;
+  align-items: flex-start;
+}
+#ui.compact .topbar > .cluster:first-child {
+  flex: 1;
+  min-width: 0;
+  flex-wrap: nowrap;
+}
+#ui.compact .pill {
+  padding: 5px 9px;
+  gap: 5px;
+}
+/* Late-game there are six resources; let them scroll rather than clip. */
+#ui.compact .res-strip {
+  overflow-x: auto;
+  scrollbar-width: none;
+  min-width: 0;
+}
+#ui.compact .res-strip::-webkit-scrollbar {
+  display: none;
+}
+#ui.compact .store-pill,
+#ui.compact .clock-pill {
+  flex-shrink: 0;
+}
+#ui.compact .res {
+  font-size: 11.5px;
+  gap: 3px;
+  padding: 1px 3px;
+}
+#ui.compact .res .icon {
+  font-size: 11.5px;
+}
+#ui.compact .res .nm {
+  display: none;
+}
+#ui.compact .res .val {
+  min-width: 13px;
+}
+#ui.compact .storage {
+  font-size: 11px;
+  gap: 5px;
+}
+/*
+ * The bar is the first thing to go on a narrow strip: the two numbers beside
+ * it say the same thing more precisely, and what has to survive is the word —
+ * "Full" is the difference between a kingdom that has stalled and one that has
+ * not, and a red bar alone is not a sentence.
+ */
+#ui.compact .storage .bar {
+  display: none;
+}
+#ui.compact .clock .t {
+  font-size: 12.5px;
+}
+#ui.compact .clock .s {
+  font-size: 9.5px;
+}
+#ui.compact .btn {
+  padding: 7px 10px;
+  font-size: 12px;
+}
 
-  /* View controls become one row along the bottom, thumb height. */
-  .viewpad {
-    left: 6px;
-    right: 6px;
-    bottom: 8px;
-    flex-direction: row;
-    justify-content: center;
-    flex-wrap: wrap;
-    gap: 5px;
-  }
-  .vbtn {
-    width: 44px;
-    height: 44px;
-    font-size: 18px;
-  }
+/* The objective sits under the strip, out of the thumb's way. */
+#ui.compact .goals {
+  top: calc(48px + var(--safe-t));
+  bottom: auto;
+  left: calc(8px + var(--safe-l));
+  right: calc(8px + var(--safe-r));
+  width: auto;
+  display: flex;
+}
+/* One instruction at a time: while a tool is up it is saying the same thing. */
+#ui.compact.has-hint .goals {
+  display: none;
+}
 
-  /* Panels rise from the bottom, above the view controls. */
-  .side.left,
-  .side.right {
-    left: 6px;
-    right: 6px;
-    width: auto;
-    top: auto;
-    bottom: 58px;
-    max-height: 52vh;
+/*
+ * Zoom and recentre stack up the right-hand edge, clear of the navigation. On
+ * a touchscreen these are the only way to move the map with one hand, so
+ * nothing is ever allowed to sit on top of them.
+ */
+#ui.compact .viewpad {
+  flex-direction: column-reverse;
+  right: calc(8px + var(--safe-r));
+  bottom: calc(14px + var(--dock-h));
+  gap: 7px;
+  z-index: 26;
+}
+#ui.compact .vbtn {
+  width: 44px;
+  height: 44px;
+  font-size: 18px;
+}
+/* Never over a sheet: the pad is for looking at the map, and a sheet means the
+   player is doing something else. It comes back the moment the sheet closes. */
+#ui.compact.sheet-open .viewpad {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease;
+}
+#ui.compact .vtip {
+  display: none !important;
+}
+
+/* Sheets rise from above the dock, and only ever one of them. */
+#ui.compact .side.left,
+#ui.compact .side.right {
+  left: calc(8px + var(--safe-l));
+  right: calc(8px + var(--safe-r));
+  width: auto;
+  top: auto;
+  bottom: calc(var(--dock-h) + 8px);
+  max-height: 54vh;
+}
+/* Belt and braces: the shell closes one when the other opens, and this makes
+   an overlap impossible even for a frame. */
+#ui.compact.build-open .side.right {
+  display: none;
+}
+#ui.compact .side > .panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+#ui.compact .sheet-body {
+  overflow-y: auto;
+  min-height: 0;
+}
+#ui.compact .panel h3 {
+  padding: 12px 13px 10px;
+  font-size: 12px;
+}
+/* No Esc key on a phone, so every sheet gets a real way out. */
+#ui.compact .esc-hint {
+  display: none;
+}
+#ui.compact .sheet-close {
+  display: inline-flex;
+  justify-content: center;
+  min-height: 44px;
+  min-width: 60px;
+}
+
+#ui.compact .tool-hint-host {
+  max-width: 100%;
+  width: 100%;
+  margin-bottom: 0;
+}
+#ui.compact .toolbar-hint {
+  flex-wrap: wrap;
+  padding: 10px 12px;
+}
+#ui.compact .toolbar-hint .txt {
+  flex: 1 1 60%;
+}
+#ui.compact .toolbar-hint .acts {
+  flex: 1 1 100%;
+  justify-content: stretch;
+}
+#ui.compact .toolbar-hint .acts .btn {
+  flex: 1;
+  justify-content: center;
+  min-height: 44px;
+  font-size: 12.5px;
+}
+/*
+ * Toasts move to the top on a phone. The bottom half of the screen belongs to
+ * the navigation, the active-tool bar and whichever sheet is up, and a message
+ * that drifts over the panel you are reading is worse than one you have to
+ * glance up for.
+ */
+#ui.compact .toasts {
+  top: calc(var(--top-h) + 54px + var(--safe-t));
+  bottom: auto;
+  max-width: calc(100vw - 24px);
+}
+#ui.compact.has-hint .toasts {
+  top: calc(var(--top-h) + 12px + var(--safe-t));
+}
+/* With a sheet up they sit on its top edge instead: held sideways there is no
+   band of map left to put them in. */
+#ui.compact.sheet-open .toasts {
+  top: auto;
+  bottom: calc(var(--dock-h) + var(--sheet-h) + 12px);
+}
+
+/* Global panels become near-full-height sheets that keep a slice of map. */
+#ui.compact .scrim {
+  align-items: end;
+  padding-bottom: calc(var(--dock-h) + 6px);
+}
+#ui.compact .modal {
+  width: 100%;
+  max-width: none;
+  max-height: min(72vh, calc(100vh - var(--dock-h) - 70px));
+  border-radius: 16px 16px 0 0;
+  border-bottom: none;
+  margin: 0 calc(-1 * var(--safe-l)) 0 calc(-1 * var(--safe-r));
+  animation: sheet-up 0.24s ease;
+}
+@keyframes sheet-up {
+  from {
+    transform: translateY(24px);
+    opacity: 0;
   }
-  /* Both at once would sit on top of each other; the build menu wins. */
-  #ui.build-open .side.right {
-    display: none;
+}
+#ui.compact .modal header {
+  padding: 13px 15px 11px;
+}
+#ui.compact .modal .body {
+  padding: 13px 15px 18px;
+}
+#ui.compact .modal .foot {
+  padding: 10px 15px calc(10px + var(--safe-b));
+}
+#ui.compact .modal .foot .btn,
+#ui.compact .modal .tabs button {
+  min-height: 40px;
+}
+/* At 390px a roster row cannot hold three columns; the control drops under. */
+#ui.compact .brow {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 8px;
+}
+/* Those rows are half again as tall, so the fixed box has to grow to match. */
+#ui.compact .bhere {
+  height: 146px;
+}
+#ui.compact .brow .what {
+  grid-column: 1;
+  grid-row: 2;
+}
+#ui.compact .brow .ctl {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+}
+#ui.compact .brow .ctl select {
+  max-width: 132px;
+  min-height: 36px;
+}
+#ui.compact .entry {
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+#ui.compact .entry .when {
+  width: 100%;
+}
+#ui.compact .grid {
+  grid-template-columns: 1fr 1fr;
+}
+#ui.compact .tip {
+  display: none !important;
+}
+#ui.compact .btn.small {
+  min-height: 34px;
+}
+/* Beats the rule above on specificity: a sheet's only way out is a primary
+   control and gets the full target whatever else it is styled as. */
+#ui.compact .btn.small.sheet-close {
+  min-height: 44px;
+}
+
+/* Phone landscape: 390 tall, and half of that is furniture if it is allowed. */
+#ui.compact.short .navbtn {
+  min-height: 44px;
+  flex-direction: row;
+  gap: 6px;
+}
+#ui.compact.short .navbtn .lb {
+  font-size: 11px;
+}
+#ui.compact.short .side.left,
+#ui.compact.short .side.right {
+  max-height: 62vh;
+}
+#ui.compact.short .modal {
+  max-height: calc(100vh - var(--dock-h) - 40px);
+}
+#ui.compact.short .goals {
+  top: calc(44px + var(--safe-t));
+}
+/* Held sideways, a sheet reaches most of the way up. The objective stands down
+   while it is open rather than being written over; More → What to do next
+   still has the whole list. */
+#ui.compact.short.sheet-open .goals {
+  display: none;
+}
+/*
+ * Sideways there is width to spare and almost no height, so the buttons go
+ * back beside the words instead of taking a row of their own — a bar three
+ * rows deep is a third of the screen at 390 tall.
+ */
+#ui.compact.short .toolbar-hint .acts {
+  flex: 0 0 auto;
+  justify-content: flex-end;
+}
+#ui.compact.short .toolbar-hint .acts .btn {
+  flex: 0 0 auto;
+  min-height: 44px;
+  padding-left: 14px;
+  padding-right: 14px;
+}
+#ui.compact.short .toolbar-hint .txt {
+  flex: 1 1 auto;
+}
+
+/* --------------------------------------------------------- reduced motion */
+
+/*
+ * The kingdom itself keeps moving — that is the point of it — but nothing in
+ * the interface needs to slide, fade or rise for somebody who has asked it not
+ * to.
+ */
+@media (prefers-reduced-motion: reduce) {
+  #ui *,
+  #ui *::before,
+  #ui *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
   }
-  .tool-hint-host {
-    bottom: 58px;
-  }
-  .toasts {
-    bottom: 62px;
-  }
-  .tool-hint-host:not(:empty) ~ .toasts {
-    bottom: calc(70px + var(--hint-h, 62px));
-  }
-  /* No Esc key on a phone, so the sheet gets a real way out. */
-  .esc-hint {
-    display: none;
-  }
-  .sheet-close {
-    display: inline-flex;
-  }
-  .modal {
-    width: 96vw;
-    max-height: 88vh;
-  }
-  .modal header {
-    padding: 12px 14px 10px;
-  }
-  .modal .body {
-    padding: 12px 14px 16px;
-  }
-  .modal .foot {
-    padding: 10px 14px;
-  }
-  /* At 390px a roster row cannot hold three columns; the control drops under. */
-  .brow {
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 4px 8px;
-  }
-  /* Those rows are half again as tall, so the fixed box has to grow to match. */
-  .bhere {
-    height: 146px;
-  }
-  .brow .what {
-    grid-column: 1;
-    grid-row: 2;
-  }
-  .brow .ctl {
-    grid-column: 2;
-    grid-row: 1 / span 2;
-  }
-  .brow .ctl select {
-    max-width: 132px;
-  }
-  #ui .tip,
-  #ui .vtip {
-    display: none !important;
+  .hide-in-clean {
+    transition: none;
   }
 }

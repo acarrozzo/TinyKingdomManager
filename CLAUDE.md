@@ -133,7 +133,15 @@ src/
     renderer.ts       depth sorting, lighting, weather, labels
   audio/audio.ts      WebAudio synthesis (no files)
   save/save.ts        slots, RLE tile packing, export/import
-  ui/ui.ts            all DOM interface
+  ui/ui.ts            the shell: what is open, where it goes, what a click means
+  ui/context.ts       UIEnv (compact/short/touch), esc/el, activity labels
+  ui/hud.ts           top strip — resources, store meter, clock, stores sheet
+  ui/nav.ts           desktop toolbar, phone bottom nav, view pad, More sheet
+  ui/goals.ts         goal panel, phone objective chip, full goal sheet
+  ui/build.ts         build list, placement bar, tool hints
+  ui/inspector.ts     villager / animal / tile cards
+  ui/modals.ts        building panel, people, journal, wildlife, settings
+  ui/a11y.ts          focus trap, focus restore, live region
   ui/portraits.ts     map art painted into interface canvases
   ui/style.css        all styling
   game.ts             clock, input routing, every player-facing operation
@@ -226,10 +234,11 @@ preferred over trees by every hand-gatherer. Two piles are exactly one founding.
 
 **The interface hides the store until there is one.** `#ui.founding` drops the
 whole resource cluster rather than showing `Store 0/0` about a pool that does not
-exist, the goals panel shows one instruction instead of two and says what the
-founder is carrying, and on a phone that panel is the only instruction there is —
-so it is exempt from the rule that hides goals on narrow screens, and the toasts
-stack above whichever of it or the tool hint is up (`--goals-h`, `--hint-h`).
+exist, and the goals panel shows one instruction instead of two and says what the
+founder is carrying. During founding the placement bar *is* the instruction, so
+the objective is hidden while it is up (`has-hint`) rather than saying the same
+thing twice — which is what went wrong at 844×390, where neither the old 600 nor
+the 820 pixel breakpoint fired and both were on screen at once.
 
 **Beds are automatic until the player says otherwise.** `assignHome()` puts
 somebody in the nearest free bed, and a finished house collects anyone still
@@ -366,8 +375,10 @@ exception there used to abort the whole gesture.
 
 **The bottom-right view pad is the entire interface on a touchscreen**: zoom out,
 zoom in, recentre — three separate buttons, no group chrome. It is a row in the
-corner on desktop and a centred row along the bottom on phones. Do not let
-panels overlap it; `.side.right` stops short for exactly that reason.
+corner on desktop and a column up the right-hand edge on a phone, sitting above
+the dock. It fades out while a sheet is open (`#ui.compact.sheet-open`), because
+the pad is for looking at the map and a sheet means the player is doing
+something else; it must never be *covered* by one.
 
 Its hover labels live on a `.vwrap` wrapper rather than on the button, because a
 `disabled` button takes no pointer events and so can never show a tooltip — and
@@ -396,7 +407,11 @@ the whole modal.** Clicking a building on the map fires `game.onBuildingClicked`
 interrupted by a panel — and the UI opens a **People · Work · About** panel
 (**Site · About** while it is still being built). The margin has no building
 card at all any more. Closing the panel clears the selection, so nothing is left
-outlined on the map with nothing to explain it.
+outlined on the map with nothing to explain it. On a phone that margin card
+becomes a bottom sheet with a Close button of its own, and the roster in the
+People panel becomes stacked cards — name, what they are doing, one job
+dropdown — because four columns in 340 pixels makes all four illegible rather
+than one of them.
 
 That panel is a *live* view: `refreshPanels()` redraws it a few times a second so
 "Here now", batch progress and site materials keep up. Two consequences worth
@@ -429,10 +444,66 @@ so a house hemmed in by other buildings has residents who bed down several tiles
 away. Do not label a bed row "asleep here" — say what they are doing and let
 "Here now" answer where they are.
 
-**`touch-action: manipulation` on `#ui` is load-bearing.** Without it, tapping
-the same button twice quickly triggers the browser's double-tap-to-zoom and
-wrecks the layout. iOS ignores `user-scalable=no` in the viewport meta, so this
-declaration is the only thing that actually prevents it.
+**`touch-action: manipulation` is load-bearing, and is scoped to the controls.**
+Without it, tapping the same button twice quickly triggers the browser's
+double-tap-to-zoom and wrecks the layout; iOS ignores `user-scalable=no`, so it
+is the only thing that prevents it. It is applied to buttons, selects, inputs
+and the rows that behave like buttons rather than to the whole of `#ui`, and the
+viewport meta no longer locks scaling — enlarging the interface text is a
+reasonable thing to want, and the game camera does its own pinch handling on the
+canvas, which is a separate element with `touch-action: none`.
+
+---
+
+## The two shapes of the interface
+
+`UIEnv` in `ui/context.ts` decides which one, from three media queries rather
+than from width alone:
+
+- **`compact`** — `max-width: 820px`, *or* a short viewport with a coarse
+  pointer. Below 820 there is no room for a build rail, an inspector and a map
+  between them, and a large phone held sideways is 844 across and still wants
+  the phone layout.
+- **`short`** — `max-height: 520px`. Phone landscape: the bar puts its buttons
+  back beside its words, and the objective chip stands down while a sheet is up.
+- **`touch`** — `pointer: coarse`. Drives preview-and-confirm placement and
+  44-pixel targets, independently of size, so a touchscreen laptop gets the
+  safer placement without losing its rails.
+
+**On a phone there is exactly one major sheet at a time.** `setModal`,
+`toggleBuild` and `closeWhatIsCovered` enforce it in the shell — selecting
+somebody on the map closes whatever was covering the map — and the stylesheet
+makes an overlap impossible even for a frame. The five destinations along the
+bottom (Build · People · Journal · Wildlife · More) are labelled, not just
+iconed, and show which section is open.
+
+**Everything pinned to the bottom edge lives in one flex column, `.dock`.**
+Before, each box measured itself and told the next how far up to sit, and a hint
+that ran to four lines was written straight over. Four measured custom
+properties carry what CSS cannot know: `--dock-h`, `--top-h` (the strip wraps to
+two rows on a narrow window), `--sheet-h` and `--goals-h`. Position off those,
+never off a number that was true of one screen.
+
+**Placement on a touchscreen is preview-and-confirm.** `Game.requireConfirm` is
+set from `pointer: coarse`. A tap sets `Game.candidate` instead of building:
+the ghost lands, `placeProblem()` says in words why that tile will not do —
+"The cabin is already there. Somewhere clear." — and nothing happens until
+Confirm. `placeProblem` is written the same way as `campProblem`: it says what
+is wrong, not what the rule is. A mouse still builds on click, because the
+cursor has been showing the ghost for as long as the player cared to look.
+
+**Removal always asks, on every device.** `demolishAt` and the Remove button
+both call `askDemolish`, which only sets `Game.demolishTarget`; the question
+appears in the building's own footer if that panel is open and in the bottom bar
+if it is not. It is the one action here that waiting does not undo.
+
+**Accessibility lives in `ui/a11y.ts`.** `Focus` moves focus into an opened
+panel, traps `Tab` inside true modals, and hands focus back on close — via a
+`data-act` key rather than a node reference, since opening a panel re-renders
+the bar it was opened from and detaches the original button. `keepFocus` does
+the same for the panels that redraw themselves several times a second. Release
+focus *after* the redraw, never before, or it lands on a node that is about to
+be replaced.
 
 ---
 

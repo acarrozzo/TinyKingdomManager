@@ -2,7 +2,12 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <!-- Browser zoom is left alone deliberately: the game camera has its own
+         pinch handling on the canvas, and locking the page against scaling only
+         ever stopped somebody enlarging the interface text. `viewport-fit`
+         lets the layout run under a notch, which the safe-area insets then
+         account for. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Tiny Kingdom Manager</title>
     <meta name="description" content="A peaceful isometric kingdom simulation." />
   </head>

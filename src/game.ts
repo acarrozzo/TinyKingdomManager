@@ -38,7 +38,14 @@ import {
   villagerById,
 } from './sim/state';
 import { completeConstruction, siteNeeds, updateVillagers } from './sim/villager';
-import { awaitingChest, canChooseCamp, chooseCamp, foundingDone, protectedBuilding } from './sim/founding';
+import {
+  awaitingChest,
+  campProblem,
+  canChooseCamp,
+  chooseCamp,
+  foundingDone,
+  protectedBuilding,
+} from './sim/founding';
 import { updateWildlife, resetWildlifeCache } from './sim/wildlife';
 import { updatePopulation } from './sim/population';
 import { updateGoals, availableToBuild } from './sim/goals';
@@ -87,6 +94,24 @@ export class Game {
   cleanMode = false;
   slotId: string;
   slotName: string;
+
+  /**
+   * Whether placing something takes two steps: choose the tile, look at it,
+   * then confirm. Set by the interface from the pointer type. A mouse commits
+   * on click because the cursor has already shown you the ghost for as long as
+   * you cared to look; a finger has shown you nothing until it lands, and it
+   * lands on top of the very thing it is aiming at.
+   */
+  requireConfirm = false;
+  /** The tile being considered, while a placement is waiting to be confirmed. */
+  candidate: { x: number; y: number } | null = null;
+  /** The building the player has asked to remove, pending confirmation. */
+  demolishTarget = 0;
+  /**
+   * Why the last attempt did not work, in words. Kept until the player does
+   * something else: a thud says only that something was refused.
+   */
+  blockReason: string | null = null;
 
   /** Notifies the interface that something worth redrawing has changed. */
   onChange: (() => void) | null = null;
@@ -177,6 +202,9 @@ export class Game {
     this.slotName = slotName;
     this.selection = { kind: null, id: 0 };
     this.tool = { kind: 'none' };
+    this.candidate = null;
+    this.demolishTarget = 0;
+    this.blockReason = null;
     this.chestPrompted = false;
     this.camera.stopFollowing();
     resetWildlifeCache();
@@ -389,15 +417,18 @@ export class Game {
       demolish: this.tool.kind === 'demolish',
     };
 
-    if (this.tool.kind === 'build' && this.hover) {
-      const x = this.hover.x;
-      const y = this.hover.y;
+    // With confirmation on, the chosen tile is the preview and stays put; a
+    // stale hover left behind by a finger would otherwise draw a second ghost.
+    const spot = this.requireConfirm ? this.candidate : this.hover;
+    if (this.tool.kind === 'build' && spot) {
+      const { x, y } = spot;
       opts.ghost = { def: this.tool.def, x, y, valid: this.canPlace(this.tool.def, x, y) };
     }
-    if (this.tool.kind === 'camp' && this.hover) {
-      const { x, y } = this.hover;
+    if (this.tool.kind === 'camp' && spot) {
+      const { x, y } = spot;
       opts.marker = { x, y, valid: canChooseCamp(this.state, x, y) };
     }
+    if (this.demolishTarget) opts.selection = { kind: 'building', id: this.demolishTarget };
 
     this.renderer.render(this.state, this.camera, opts, realDt);
   }
@@ -588,20 +619,32 @@ export class Game {
   private handleClick(cssX: number, cssY: number): void {
     if (this.tool.kind === 'camp') {
       const t = this.tileUnder(cssX, cssY);
-      if (t && chooseCamp(this.state, t.x, t.y)) {
-        this.camera.stopFollowing();
-        this.camera.glideToTile(t.x, t.y);
-        audio.chime(4, 0.03);
-        this.cancelTool();
+      if (!t) return;
+      if (this.requireConfirm) {
+        // Even a hopeless tile is worth taking: the marker lands, and the bar
+        // explains what is wrong with it. Nothing to hear, everything to read.
+        this.candidate = t;
+        this.blockReason = campProblem(this.state, t.x, t.y);
+        if (this.blockReason) audio.thud(0.6, 0.03);
+        else audio.tick();
         this.notify();
-      } else {
-        audio.thud(0.6, 0.03);
+        return;
       }
+      this.commitCamp(t.x, t.y);
       return;
     }
     if (this.tool.kind === 'build') {
       const t = this.tileUnder(cssX, cssY);
-      if (t) this.place(this.tool.def, t.x, t.y);
+      if (!t) return;
+      if (this.requireConfirm) {
+        this.candidate = t;
+        this.blockReason = this.placeProblem(this.tool.def, t.x, t.y);
+        if (this.blockReason) audio.thud(0.6, 0.03);
+        else audio.tick();
+        this.notify();
+        return;
+      }
+      this.place(this.tool.def, t.x, t.y);
       return;
     }
     if (this.tool.kind === 'demolish') {
@@ -710,24 +753,66 @@ export class Game {
   }
 
   canPlace(def: BuildingId, x: number, y: number): boolean {
+    return this.placeProblem(def, x, y) === null;
+  }
+
+  /**
+   * Why this building will not go here, in the words the player reads, or null
+   * when it will. Written the same way as `campProblem`: it says what is wrong
+   * rather than restating the rule, because "not on water" is an answer and
+   * "buildings require buildable ground" is not.
+   */
+  placeProblem(def: BuildingId, x: number, y: number): string | null {
     const g = this.state;
     const d = BUILDINGS[def];
-    if (!availableToBuild(g, def)) return false;
+    if (!availableToBuild(g, def)) return 'The kingdom cannot build that just yet.';
+
     for (let dy = 0; dy < d.h; dy++)
       for (let dx = 0; dx < d.w; dx++) {
         const t = tileAt(g, x + dx, y + dy);
-        if (!t) return false;
-        if (t.terrain === 'water' || t.terrain === 'shallow') return false;
-        if (t.building || t.plot) return false;
+        if (!t) return 'Part of it would hang off the edge of the world.';
+        if (t.terrain === 'water' || t.terrain === 'shallow') return 'Nothing gets built standing in the water.';
+        if (t.building) {
+          const other = buildingById(g, t.building);
+          const name = other ? BUILDINGS[other.def].name.toLowerCase() : 'something';
+          return `The ${name} is already there. Somewhere clear.`;
+        }
+        if (t.plot) return 'A farm plot is in the way.';
       }
-    return this.canAffordNew(def);
+
+    // Materials promised to sites that have not been supplied yet are already
+    // spoken for, so this is what is genuinely free rather than what is stacked.
+    const reserved = this.reservedMaterials();
+    const short: string[] = [];
+    if (foundingDone(g)) {
+      for (const k in d.cost) {
+        const res = k as ResourceId;
+        const free = g.stock[res] - (reserved[res] ?? 0);
+        const want = d.cost[res] ?? 0;
+        if (free < want) short.push(`${Math.ceil(want - free)} more ${res}`);
+      }
+    }
+    if (short.length) {
+      return `Not enough in store — it needs ${short.length === 2 ? `${short[0]} and ${short[1]}` : short.join(', ')}.`;
+    }
+    return null;
+  }
+
+  /** The founding campsite rule, so the interface has one place to ask. */
+  campProblem(x: number, y: number): string | null {
+    return campProblem(this.state, x, y);
   }
 
   place(def: BuildingId, x: number, y: number): boolean {
-    if (!this.canPlace(def, x, y)) {
+    const problem = this.placeProblem(def, x, y);
+    if (problem) {
+      this.blockReason = problem;
       audio.thud(0.6, 0.03);
+      this.notify();
       return false;
     }
+    this.blockReason = null;
+    this.candidate = null;
     const g = this.state;
     const d = BUILDINGS[def];
     const b = makeBuilding(g, def, x, y, rng);
@@ -769,14 +854,82 @@ export class Game {
     return true;
   }
 
+  /**
+   * Picking a building to remove never removes it. Taking something down is the
+   * one action here that cannot be undone by waiting, and a mis-tap on a phone
+   * is a certainty rather than a risk, so this only ever proposes.
+   */
   demolishAt(x: number, y: number): void {
     const g = this.state;
     const t = tileAt(g, x, y);
     if (!t) return;
-
-    if (!t.building) return;
+    if (!t.building) {
+      this.blockReason = 'Nothing to take down there.';
+      this.demolishTarget = 0;
+      audio.thud(0.6, 0.03);
+      this.notify();
+      return;
+    }
     const b = buildingById(g, t.building);
+    if (b) this.askDemolish(b.id);
+  }
+
+  /** Proposes a removal. The interface asks; `confirmDemolish` carries it out. */
+  askDemolish(id: number): void {
+    const b = buildingById(this.state, id);
+    if (!b) return;
+    const kept = protectedBuilding(b);
+    if (kept) {
+      this.blockReason = kept;
+      this.demolishTarget = 0;
+      audio.thud(0.6, 0.03);
+      this.notify();
+      return;
+    }
+    this.blockReason = null;
+    this.demolishTarget = id;
+    this.notify();
+  }
+
+  confirmDemolish(): void {
+    const b = buildingById(this.state, this.demolishTarget);
+    this.demolishTarget = 0;
     if (b) this.removeBuilding(b, true);
+    else this.notify();
+  }
+
+  /** Builds, or makes camp, on the tile the player has been looking at. */
+  confirmPlacement(): boolean {
+    const spot = this.candidate;
+    if (!spot) return false;
+    if (this.tool.kind === 'camp') return this.commitCamp(spot.x, spot.y);
+    if (this.tool.kind === 'build') return this.place(this.tool.def, spot.x, spot.y);
+    return false;
+  }
+
+  /** Drops the proposed tile or building without doing anything to the map. */
+  clearPending(): void {
+    this.candidate = null;
+    this.demolishTarget = 0;
+    this.blockReason = null;
+    this.notify();
+  }
+
+  private commitCamp(x: number, y: number): boolean {
+    if (!chooseCamp(this.state, x, y)) {
+      this.blockReason = campProblem(this.state, x, y);
+      audio.thud(0.6, 0.03);
+      this.notify();
+      return false;
+    }
+    this.candidate = null;
+    this.blockReason = null;
+    this.camera.stopFollowing();
+    this.camera.glideToTile(x, y);
+    audio.chime(4, 0.03);
+    this.cancelTool();
+    this.notify();
+    return true;
   }
 
   removeBuilding(b: Building, refund: boolean): void {
@@ -820,6 +973,10 @@ export class Game {
   setTool(tool: Tool): void {
     this.tool = tool;
     if (tool.kind !== 'none') this.selection = { kind: null, id: 0 };
+    // A tile chosen for one building means nothing to the next one.
+    this.candidate = null;
+    this.demolishTarget = 0;
+    this.blockReason = null;
     this.syncCursor();
     this.notify();
   }
@@ -828,6 +985,9 @@ export class Game {
     // While the founder is standing about waiting to be told where to stop,
     // there is nothing else to do, so the marker cannot be put away.
     this.tool = this.state.founding.stage === 'choosing' ? { kind: 'camp' } : { kind: 'none' };
+    this.candidate = null;
+    this.demolishTarget = 0;
+    this.blockReason = null;
     this.syncCursor();
     this.notify();
   }
