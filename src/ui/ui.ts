@@ -20,12 +20,13 @@ import {
   TERRAIN_META,
   TERRAIN_SPEED,
   TRAIT_META,
+  buildingName,
   rankOf,
 } from '../sim/defs';
 import { buildingById, homeCapacity, jobSlots, villagerById, xpOf } from '../sim/state';
 import { labourNeeded, siteNeeds } from '../sim/villager';
-import { availableToBuild, isUnlocked } from '../sim/goals';
-import { foundingDone } from '../sim/founding';
+import { availableToBuild, carriedByFounder, isUnlocked } from '../sim/goals';
+import { foundingDone, protectedBuilding } from '../sim/founding';
 import { fmt, fmtDuration } from '../core/util';
 import type { Game } from '../game';
 import { audio } from '../audio/audio';
@@ -237,6 +238,11 @@ export class UI {
   /** Cheap values, safe to run every frame. */
   tick(now: number): void {
     const g = this.g;
+    // Until the chest exists there is no kingdom stock to speak of — the wood
+    // is in the founder's arms — so the whole meter goes rather than sitting
+    // there reading 0/0 and quietly lying about what "0" means.
+    const founding = !foundingDone(g);
+    this.root.classList.toggle('founding', founding);
     for (const res of RESOURCE_ORDER) {
       const node = this.resNodes.get(res)!;
       const hidden = res !== 'wood' && res !== 'stone' && g.stock[res] <= 0 && !this.everSeen(res);
@@ -422,9 +428,15 @@ export class UI {
       const short = !this.game.canAffordNew(t.def);
       icon = '🔨';
       title = `Placing a ${def.name}`;
-      body = short
-        ? `Not enough in store right now — needs ${cost}.`
-        : `Click a clear spot on the map. Costs ${cost || 'nothing'}; villagers will carry the materials over and build it.`;
+      if (!foundingDone(this.g)) {
+        // The founding chest is paid for out of the founder's arms, so the
+        // usual "villagers will carry the materials over" is not what happens.
+        body = 'Click a tile beside the fire. Your founder has the wood for it already.';
+      } else {
+        body = short
+          ? `Not enough in store right now — needs ${cost}.`
+          : `Click a clear spot on the map. Costs ${cost || 'nothing'}; villagers will carry the materials over and build it.`;
+      }
     } else if (t.kind === 'demolish') {
       icon = '⛏';
       title = 'Removing';
@@ -435,6 +447,10 @@ export class UI {
       body = 'Click a clear patch of grass near the middle of the island. Your founder will walk over and make camp there.';
     }
 
+    // A phone has room for the tool hint or the founding instruction, not both,
+    // and they say the same thing — so the hint's presence is a layout fact the
+    // stylesheet needs, not just a rendered node.
+    this.root.classList.toggle('has-hint', !!title);
     if (!title) {
       this.toolHost.innerHTML = '';
       this.root.style.setProperty('--hint-h', '0px');
@@ -511,7 +527,7 @@ export class UI {
       body += `<div class="build-group"><div class="tiny muted" style="line-height:1.55">${
         body
           ? 'Everything else waits until the kingdom has a chest to keep things in.'
-          : 'Nothing can be built yet. Your founder needs somewhere to stop and a few armfuls of wood first.'
+          : 'Nothing to build yet. Your founder is still gathering, and the fire goes up on its own.'
       }</div></div>`;
     } else {
       const locked = BUILD_ORDER.filter((id) => !isUnlocked(g, BUILDINGS[id].unlock)).length;
@@ -606,7 +622,7 @@ export class UI {
         <div class="h">Work</div>
         <select data-act="assign" data-id="${v.id}" style="width:100%">${jobOptions}</select>
         ${work ? `<div class="tiny muted" style="margin-top:5px">Working at the
-          <span class="link" data-act="select-building" data-id="${work.id}">${esc(BUILDINGS[work.def].name.toLowerCase())}</span></div>` : ''}
+          <span class="link" data-act="select-building" data-id="${work.id}">${esc(buildingName(work.def, work.level).toLowerCase())}</span></div>` : ''}
       </div>
 
       <div class="section">
@@ -616,7 +632,7 @@ export class UI {
       <div class="section">
         <div class="kv"><span class="k">Home</span><span class="v">${
           home
-            ? `<span class="link" data-act="select-building" data-id="${home.id}">${esc(BUILDINGS[home.def].name)}</span>${v.homeFixed ? ' <span class="muted tiny">· your choice</span>' : ''}`
+            ? `<span class="link" data-act="select-building" data-id="${home.id}">${esc(buildingName(home.def, home.level))}</span>${v.homeFixed ? ' <span class="muted tiny">· your choice</span>' : ''}`
             : 'None yet'
         }</span></div>
         <div class="kv"><span class="k">Rested</span><span class="v">${Math.round(v.energy * 100)}%</span></div>
@@ -797,7 +813,7 @@ export class UI {
   /**
    * Who is physically at the building, which is not the same as who belongs to
    * it. The ring of one tile matters: buildings are solid, so somebody asleep in
-   * a cottage is really standing at its door.
+   * a cabin is really standing at its door.
    */
   private peopleAt(b: Building): Villager[] {
     const def = BUILDINGS[b.def];
@@ -969,7 +985,7 @@ export class UI {
     for (const o of g.buildings) {
       if (o.id === b.id || o.stage !== 'done' || homeCapacity(o) === 0) continue;
       if (o.residents.length >= homeCapacity(o)) continue;
-      out += `<option value="${o.id}">Move to the ${esc(BUILDINGS[o.def].name.toLowerCase())}</option>`;
+      out += `<option value="${o.id}">Move to the ${esc(buildingName(o.def, o.level).toLowerCase())}</option>`;
     }
     out += `<option value="0">Let them settle wherever</option>`;
     return out;
@@ -981,7 +997,7 @@ export class UI {
     const people = g.villagers.filter((v) => v.home !== b.id).sort((p, q) => p.name.localeCompare(q.name));
     for (const v of people) {
       const home = buildingById(g, v.home);
-      const where = home ? `sleeps at the ${BUILDINGS[home.def].name.toLowerCase()}` : 'no bed at all';
+      const where = home ? `sleeps at the ${buildingName(home.def, home.level).toLowerCase()}` : 'no bed at all';
       out += `<option value="${v.id}">${esc(v.name)} — ${esc(where)}</option>`;
     }
     return out;
@@ -1191,15 +1207,35 @@ export class UI {
         <span class="d">The kingdom is yours to keep tending.</span></span></div></div>`;
       return;
     }
-    const next = pending.slice(0, 2);
+    // Founding shows one instruction at a time. There is only ever one thing to
+    // be doing, and a second line would read as a second thing to do.
+    const founding = !foundingDone(g);
+    const next = pending.slice(0, founding ? 1 : 2);
     const items = next
       .map(
         (goal) => `<div class="goal"><span class="mark"></span>
           <span><span class="t">${esc(goal.title)}</span><span class="d">${esc(goal.desc)}</span></span></div>`,
       )
       .join('');
+
+    // The founder's arms are the treasury until the chest is built, so the one
+    // number worth showing during founding is what is in them.
+    const carried = carriedByFounder(g);
+    const foot = founding
+      ? carried > 0
+        ? `Carrying ${RESOURCE_META.wood.icon} ${carried} wood`
+        : 'Nothing gathered yet'
+      : `${done} of ${g.goals.length} done · ${g.villagers.length} villager${g.villagers.length === 1 ? '' : 's'} · ${fmtDuration(g.played)} played`;
+
     this.goalsHost.innerHTML = `<div class="panel">${items}
-      <div class="goal-more">${done} of ${g.goals.length} done · ${g.villagers.length} villager${g.villagers.length === 1 ? '' : 's'} · ${fmtDuration(g.played)} played</div></div>`;
+      <div class="goal-more">${foot}</div></div>`;
+    // On a phone this panel is the founding instruction and sits where the
+    // toasts stack, so they have to be told how far to move up.
+    const panel = this.goalsHost.firstElementChild as HTMLElement | null;
+    this.root.style.setProperty(
+      '--goals-h',
+      founding && panel ? `${Math.round(panel.getBoundingClientRect().height)}px` : '0px',
+    );
   }
 
   // -------------------------------------------------------------------------
@@ -1245,7 +1281,7 @@ export class UI {
         const def = BUILDINGS[b.def];
         const names = this.buildingTabs(b);
         const tab = names[Math.min(this.modalTab, names.length - 1)];
-        title = def.name;
+        title = buildingName(b.def, b.level);
         sub =
           b.stage === 'done'
             ? def.maxLevel > 1
@@ -1348,7 +1384,7 @@ export class UI {
         : ''
     }
       <button class="btn small" data-act="goto" data-x="${b.x}" data-y="${b.y}">Show me</button>
-      ${def.order < 0 ? '' : `<button class="btn small danger" data-act="demolish" data-id="${b.id}">Remove</button>`}`;
+      ${protectedBuilding(b) ? '' : `<button class="btn small danger" data-act="demolish" data-id="${b.id}">Remove</button>`}`;
   }
 
   private journalBody(): string {
@@ -1729,7 +1765,9 @@ export class UI {
     this.game.save();
     const state = loadFromSlot(slotId);
     if (!state) {
-      alert('That kingdom could not be opened.');
+      // In practice this is nearly always a kingdom from before the founding
+      // sequence, which cannot be brought forward — it has no beginning to it.
+      alert('That kingdom could not be opened. Kingdoms saved before the founding update cannot be loaded.');
       return;
     }
     const info = listSlots().find((s) => s.id === slotId);

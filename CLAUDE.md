@@ -179,38 +179,81 @@ steps plain data and consequences exactly aligned with the end of the action tha
 caused them.
 
 **The kingdom is founded, not handed over.** A new game has no fire, no store and
-no bed: one person walks up a beach and the player chooses where they stop.
-`sim/founding.ts` owns the stages — `arriving`, `choosing`, `settling`, `camp`,
-`done` — and the plans that carry them out live in the planner with everything
-else. The beats are: walk inland and look around → the player clicks clear grass
-within nine tiles of the island's middle (`campProblem` is the rule and the
-wording the player reads) → the founder walks there, stands a moment, and starts
-a **woodpile**, a 12-capacity store that is not really a building → they gather
-fallen branches by hand → the player places the **campfire** (5 wood) and they
-lay and light it → then the **rough chest** (10 wood, holds 50), which quietly
-removes the woodpile and opens the rest of the build menu.
+no bed: one person walks up a beach, and the opening asks the player exactly one
+question — *where should this kingdom begin?* `sim/founding.ts` owns the stages —
+`arriving`, `choosing`, `settling`, `camp`, `done` — and the plans that carry them
+out live in the planner with everything else.
 
-Three things about that are load-bearing. The woodpile has to exist *before*
-anybody sets off to gather, because wood with no store to land in goes nowhere
-watchable. During founding the helper ladder runs with its gathering step
-switched off (`planHelper(g, v, false)`) and wood is fetched to a flat target
-instead — the ordinary rules stop gathering with more room free than a
-twelve-stick pile has, which would strand the founder unable to afford the chest
-that fixes it. And `availableToBuild()` in `goals.ts`, not `isUnlocked()`, is
-what the build menu and `canPlace` ask: it also hides the fire and the chest once
-they stand (`once` on the def) and everything else until the chest does.
+The beats: walk inland and look around → the player clicks clear grass within
+nine tiles of the island's middle (`campProblem` is the rule *and* the wording
+the player reads) → **an unlit fire ring goes down on that tile at once**, which
+is both the acknowledgement and the campfire's construction site → the founder
+walks out to it → gathers two piles of deadfall, twelve wood, and carries them →
+lays and lights the fire out of that load (4 wood) with no placement step at all
+→ the player sites the **Small Chest** beside it (8 wood, the exact remainder) →
+finishing it ends founding and opens the ordinary economy.
+
+**The campsite and the campfire are the same decision**, which is why the fire is
+`order: -1` and never appears in the build menu. Asking for the fire's position
+after asking for the campsite would be asking the same question twice.
+
+**Nobody idles during the opening.** The founder gathers deadfall while the
+player is still choosing the ground — the wood is wanted wherever the camp ends
+up — and feeds the fire while the player decides where the chest goes. There is
+one deliberate pause, the beat before "This seems like a good place to begin",
+and it uses the `arriving` activity rather than `watching`. The leisure planner
+is never reached before the chest is finished. Idling is the product *after* the
+kingdom exists; during the opening it reads as a broken game.
+
+**The founder carries the treasury.** There is no store until the chest exists,
+so `think()` skips its "put down anything carried" rule for the founder while
+founding runs (`isFounder`), gathering runs with `haul` off, and both founding
+builds are paid straight out of their arms — that is what `qty` on a `give` step
+is for: the fire takes four of the twelve and the rest stays held. Nothing else
+in the game has a personal inventory, and the exception ends with the chest.
+Balance is exact: 6 + 6 gathered, −4 fire, −8 chest, 0 left.
+
+`availableToBuild()` in `goals.ts`, not `isUnlocked()`, is what the build menu and
+`canPlace` ask. It hides `once` buildings that already stand, and during founding
+offers only the chest. After that the menu opens a step at a time rather than all
+at once: the chest goal unlocks the Cabin, the cabin goal the Storehouse and
+Quarry, the storehouse goal the Lodge and Farm. `unlocks` on a goal therefore
+takes a key *or a list*.
 
 **Fallen branches** (`branches`) are deadfall scattered near the middle at map
-generation: six wood, no axe needed, gone for good once picked up, and preferred
-over trees by every hand-gatherer. They are why the opening does not require a
-woodcutter's lodge to get started.
+generation: six wood a pile, no axe needed, gone for good once picked up, and
+preferred over trees by every hand-gatherer. Two piles are exactly one founding.
+
+**The interface hides the store until there is one.** `#ui.founding` drops the
+whole resource cluster rather than showing `Store 0/0` about a pool that does not
+exist, the goals panel shows one instruction instead of two and says what the
+founder is carrying, and on a phone that panel is the only instruction there is —
+so it is exempt from the rule that hides goals on narrow screens, and the toasts
+stack above whichever of it or the tool hint is up (`--goals-h`, `--hint-h`).
 
 **Beds are automatic until the player says otherwise.** `assignHome()` puts
 somebody in the nearest free bed, and a finished house collects anyone still
 sleeping by the campfire. `setHome()` is the player's version and sets
 `homeFixed`, which both of those then leave alone — without that flag the next
-cottage would quietly undo whatever arrangement was just made. The flag clears
+cabin would quietly undo whatever arrangement was just made. The flag clears
 if the house is demolished, or through "let them settle wherever".
+
+**Buildings grow rather than being replaced.** There is one house — the **Cabin**,
+2 / 4 / 6 beds — and one first store — the **Chest**, 50 / 200 / 500, named Small,
+Medium and Large by `levelNames`. A `levelNames` def means the panel, the toasts,
+the journal and every "sleeps at the…" line must use `buildingName(def, level)`
+rather than `def.name`; `def.name` is only right in the build menu, which is
+always offering a level-1 one. Both change silhouette per level too, because a
+store that holds ten times as much and looks identical is a change you cannot
+see. Costs that a multiplier cannot express — a cabin starts as 20 wood and later
+wants stone — go in `upgradeCosts`, an explicit per-step table; otherwise
+`upgradeCostMul` compounds with level.
+
+**Improving a building never takes it out of service** (`isOperational`). Storage,
+housing and `nearestStore` all count a building that is mid-upgrade, at its
+current level. Without that, improving the kingdom's only chest drops capacity to
+zero, which leaves nobody able to fetch materials for the work under way — a
+deadlock the headless run hit on the first attempt.
 
 **Claims prevent collisions.** `claim()` / `releaseClaim()` reserve a tree, a
 farm plot, or a task so two villagers do not walk to the same one. Always release
@@ -331,12 +374,15 @@ Its hover labels live on a `.vwrap` wrapper rather than on the button, because a
 the greyed-out one is precisely the button people need explained. The zoom
 buttons disable at each end of the ladder and say the current level.
 
-**The campsite marker is the one tool that arms itself.** `Game.syncCampTool()`
-puts it on the cursor while founding is at `choosing` and takes it off the moment
-the ground is picked; `cancelTool()` deliberately re-arms it rather than clearing
-it, and its toolbar hint has no Done button. At that moment it is the only thing
-the player can do, so an interface that let them put it away would only be a way
-of getting stuck with nothing on screen to explain why.
+**Founding's two placements arm themselves.** `Game.syncFoundingTool()` puts the
+campsite marker on the cursor while founding is at `choosing` and takes it off
+the moment the ground is picked; `cancelTool()` deliberately re-arms *that* one
+rather than clearing it, and its hint has no Done button, because at that moment
+it is the only thing the player can do. The chest is different: it is armed once
+when the fire lights and can be dismissed, since by then there is a kingdom worth
+looking at. Both exit the tool after a successful placement — the only placements
+in the game that do, since laying out a row of houses should not mean going back
+to the menu five times.
 
 **Speed lives in Settings → Viewing**, not on the map, along with `space` and
 `1`/`2`/`3`. **Removing a building lives at the foot of the build panel**, not in
@@ -464,9 +510,10 @@ back to grass; see `deserialize` in `save/save.ts`.
 Map 40×40 · a day is 30 real minutes at 1× (20 day / 10 night) · 6 days a season,
 24 a year · population cap 100, arriving roughly one per game-day early on ·
 Master rank is ~10–15 real hours of dedicated work in one trade · storage is a
-single shared pool fed by storage buildings: 12 in the founding woodpile, 50 in
-the chest that replaces it, +250 per storehouse. Founding itself is four or five
-real minutes at 1×.
+single shared pool fed by storage buildings: nothing at all until the Small Chest
+is finished, then 50, 200 or 500 as it is widened, and +250 per storehouse ·
+housing is Cabins alone, 2 / 4 / 6 beds · founding itself is about eighty seconds
+at 1×, twenty of them the walk up the beach.
 
 Per-resource shelf limits — one good never taking more than a share of the
 store — have been discussed and deliberately deferred. Any such limit has to

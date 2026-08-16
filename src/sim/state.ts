@@ -93,49 +93,6 @@ export function makeBuilding(g: GameState, def: BuildingId, x: number, y: number
   };
 }
 
-/**
- * Drops a chest on a free tile beside the fire and hands back the building.
- * Only the save loader calls this now, fitting one to kingdoms that predate the
- * chest — without it they would have no storage at all. A new kingdom's chest is
- * built by hand, like everything else.
- */
-export function placeChest(g: GameState, fire: Building, r: RNG): Building | null {
-  // Grid neighbours first: on an isometric map those sit diagonally beside the
-  // fire on screen, where a diagonal neighbour lands directly behind it and the
-  // two sprites merge into one confusing object.
-  const offsets: [number, number][] = [
-    [1, 0],
-    [0, 1],
-    [-1, 0],
-    [0, -1],
-    [1, -1],
-    [-1, 1],
-    [1, 1],
-    [-1, -1],
-  ];
-  for (let ring = 2; ring <= 4; ring++) {
-    for (let d = -ring; d <= ring; d++) {
-      offsets.push([d, -ring], [d, ring], [-ring, d], [ring, d]);
-    }
-  }
-
-  for (const [dx, dy] of offsets) {
-    const x = fire.x + dx;
-    const y = fire.y + dy;
-    const t = tileAt(g, x, y);
-    if (!t || t.building || t.plot) continue;
-    if (t.terrain === 'water' || t.terrain === 'shallow') continue;
-
-    const chest = makeBuilding(g, 'chest', x, y, r);
-    chest.stage = 'done';
-    g.buildings.push(chest);
-    t.building = chest.id;
-    t.prop = null;
-    return chest;
-  }
-  return null;
-}
-
 export function newGame(seed = Math.floor(Math.random() * 1e9)): GameState {
   const r = new RNG(seed);
   const map = generateMap(seed);
@@ -194,11 +151,22 @@ export function newGame(seed = Math.floor(Math.random() * 1e9)): GameState {
 // Storage
 // ---------------------------------------------------------------------------
 
-/** Total shared storage from every completed building that provides it. */
+/**
+ * Whether a building is doing its job. A finished one is, and so is one being
+ * improved: widening a chest does not empty it, and a cabin under scaffolding
+ * still has beds in it. Without this, improving the kingdom's only chest takes
+ * its storage to nothing, which leaves nobody able to fetch materials for the
+ * very work under way — a deadlock, and one the headless run found at once.
+ */
+export function isOperational(b: Building): boolean {
+  return b.stage === 'done' || b.upgrading;
+}
+
+/** Total shared storage from every building that provides it and is in service. */
 export function storageCapacity(g: GameState): number {
   let cap = 0;
   for (const b of g.buildings) {
-    if (b.stage !== 'done') continue;
+    if (!isOperational(b)) continue;
     const def = BUILDINGS[b.def];
     if (def.storage) cap += def.storage[Math.min(b.level, def.storage.length) - 1];
   }
@@ -279,8 +247,7 @@ export function villagerById(g: GameState, id: number): Villager | null {
 /**
  * Takes a building off the map: tiles freed, staff and sleepers turned loose,
  * everybody made to think again. Refunds are the player's business and stay in
- * `Game.removeBuilding`; this is the part the simulation needs too, for the
- * chest quietly replacing the woodpile it grew out of.
+ * `Game.removeBuilding`, which calls this for the rest of it.
  */
 export function removeBuilding(g: GameState, b: Building): void {
   const def = BUILDINGS[b.def];
@@ -313,12 +280,12 @@ export function buildingCentre(b: Building): { x: number; y: number } {
   return { x: b.x + def.w / 2, y: b.y + def.h / 2 };
 }
 
-/** Nearest completed storage building to a point, or null if the kingdom has none. */
+/** Nearest usable storage building to a point, or null if the kingdom has none. */
 export function nearestStore(g: GameState, x: number, y: number): Building | null {
   let best: Building | null = null;
   let bestD = Infinity;
   for (const b of g.buildings) {
-    if (b.stage !== 'done') continue;
+    if (!isOperational(b)) continue;
     const def = BUILDINGS[b.def];
     if (!def.storage) continue;
     const c = buildingCentre(b);
@@ -334,7 +301,7 @@ export function nearestStore(g: GameState, x: number, y: number): Building | nul
 export function housingCapacity(g: GameState): number {
   let cap = 0;
   for (const b of g.buildings) {
-    if (b.stage !== 'done') continue;
+    if (!isOperational(b)) continue;
     const def = BUILDINGS[b.def];
     if (def.housing) cap += def.housing[Math.min(b.level, def.housing.length) - 1];
   }
@@ -379,13 +346,13 @@ export function assignJob(g: GameState, v: Villager, buildingId: number): boolea
 export function assignHome(g: GameState, v: Villager): void {
   const prev = buildingById(g, v.home);
   if (prev && prev.residents.includes(v.id)) {
-    if (prev.stage === 'done' && prev.residents.length <= homeCapacity(prev)) return;
+    if (isOperational(prev) && prev.residents.length <= homeCapacity(prev)) return;
     prev.residents = prev.residents.filter((id) => id !== v.id);
   }
   let best: Building | null = null;
   let bestD = Infinity;
   for (const b of g.buildings) {
-    if (b.stage !== 'done' || homeCapacity(b) === 0) continue;
+    if (!isOperational(b) || homeCapacity(b) === 0) continue;
     if (b.residents.length >= homeCapacity(b)) continue;
     const c = buildingCentre(b);
     // Slightly prefer real houses over the campfire once they exist.
@@ -405,7 +372,7 @@ export function assignHome(g: GameState, v: Villager): void {
  * hand them back to `assignHome` and let them settle wherever suits.
  *
  * A hand-placed bed sets `homeFixed`, which is the whole point of it: without
- * that flag a finished cottage would quietly collect anyone sleeping rough and
+ * that flag a finished cabin would quietly collect anyone sleeping rough and
  * undo the arrangement the player just made.
  */
 export function setHome(g: GameState, v: Villager, buildingId: number): boolean {
@@ -419,7 +386,7 @@ export function setHome(g: GameState, v: Villager, buildingId: number): boolean 
     return true;
   }
   const b = buildingById(g, buildingId);
-  if (!b || b.stage !== 'done' || homeCapacity(b) === 0) return false;
+  if (!b || !isOperational(b) || homeCapacity(b) === 0) return false;
   if (b.id === v.home) {
     // Already living here — the player is only pinning them in place.
     v.homeFixed = true;

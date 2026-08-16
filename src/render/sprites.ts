@@ -647,10 +647,14 @@ function gableRoof(
 function shapeFor(def: BuildingId, level: number): { wall: number; roof: number; ov: number; extra: number } {
   const up = level > 1;
   switch (def) {
-    case 'shelter':
-      return { wall: up ? 21 : 17, roof: up ? 11 : 9, ov: 3, extra: 0 };
-    case 'cottage':
-      return { wall: up ? 28 : 23, roof: up ? 13 : 11, ov: 4, extra: 11 };
+    // A cabin grows over its three levels rather than being replaced, so the
+    // walls climb and the roof deepens with each improvement.
+    case 'cabin':
+      return level >= 3
+        ? { wall: 28, roof: 13, ov: 4, extra: 11 }
+        : level === 2
+          ? { wall: 22, roof: 11, ov: 4, extra: 11 }
+          : { wall: 17, roof: 9, ov: 3, extra: 0 };
     case 'storehouse':
       return { wall: up ? 24 : 20, roof: up ? 11 : 9, ov: 4, extra: 0 };
     case 'lodge':
@@ -672,9 +676,7 @@ function shapeFor(def: BuildingId, level: number): { wall: number; roof: number;
     case 'campfire':
       return { wall: 0, roof: 0, ov: 0, extra: 16 };
     case 'chest':
-      return { wall: 0, roof: 0, ov: 0, extra: 10 };
-    case 'woodpile':
-      return { wall: 0, roof: 0, ov: 0, extra: 14 };
+      return { wall: 0, roof: 0, ov: 0, extra: level >= 3 ? 16 : level === 2 ? 13 : 10 };
     case 'bench':
       return { wall: 0, roof: 0, ov: 0, extra: 13 };
     case 'sapling':
@@ -716,7 +718,9 @@ function drawBuilding(
 ): BuildingSprite {
   const spanW = (w + h) * HALF_W;
   const spanH = (w + h) * HALF_H;
-  const rise = riseFor(def, level);
+  // The fire ring is barely off the ground, and a sprite as tall as the lit
+  // campfire would hang its progress bar in mid-air well above it.
+  const rise = stage === 'site' && def === 'campfire' ? 4 : riseFor(def, level);
   const c = mkCanvas(spanW + PAD * 2, spanH + rise);
   const ctx = ctxOf(c);
   const baseY = spanH + rise;
@@ -729,7 +733,7 @@ function drawBuilding(
     return { canvas: c, rise, padX: PAD, windows, anchor: null };
   }
   if (stage === 'site') {
-    drawSite(ctx, ox, baseY, w, h, rise, seed);
+    drawSite(ctx, ox, baseY, w, h, rise, seed, def);
     return { canvas: c, rise, padX: PAD, windows, anchor: null };
   }
   drawFinished(ctx, ox, baseY, w, h, def, level, season, seed, windows, anchor);
@@ -762,7 +766,15 @@ function drawSite(
   h: number,
   rise: number,
   seed: number,
+  def?: BuildingId,
 ): void {
+  // The campsite is not a building site with posts and railings around it — it
+  // is a ring of stones somebody laid on the ground the moment you chose the
+  // spot, waiting for an armful of wood. It has to read as *the decision*.
+  if (def === 'campfire') {
+    drawFireRing(ctx, ox, baseY, w, h);
+    return;
+  }
   drawFootprint(ctx, ox, baseY, w, h, '#8a7350', '#6a5539');
   const g = diamond(ox, baseY, w, h, 2, 0);
   const postH = Math.max(9, Math.min(rise - 8, 18));
@@ -783,6 +795,31 @@ function drawSite(
   px(ctx, px0, baseY - 7, '#8d673c', 11, 3);
   px(ctx, px0 + 1, baseY - 9, '#a97f4d', 9, 2);
   px(ctx, px0 + 2, baseY - 11, '#c39a63', 7, 2);
+}
+
+/**
+ * The unlit campsite: scuffed ground, the same ring of stones the lit fire has,
+ * and wood leaned together waiting for a spark. It stands up rather than lying
+ * flat because this is the one mark of the player's only real decision in the
+ * opening, and it has to be findable at 1× across a green island.
+ */
+function drawFireRing(ctx: CanvasRenderingContext2D, ox: number, baseY: number, w: number, h: number): void {
+  const g = diamond(ox, baseY, w, h, 0, 0);
+  const bx = g.S.x;
+  fillPoly(ctx, [g.L, g.N, g.R, g.S], 'rgba(96,78,54,0.34)');
+
+  // Stone ring, the same one the lit fire keeps, so nothing is replaced later.
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2;
+    px(ctx, bx + Math.cos(a) * 9 - 1, baseY - 4 + Math.sin(a) * 4.5, i % 2 ? '#9a9992' : '#b4b3ab', 3, 3);
+  }
+  // Cold ash inside it.
+  px(ctx, bx - 4, baseY - 4, '#6a625a', 8, 2);
+  // Three sticks leaned into a cone, unlit.
+  px(ctx, bx - 4, baseY - 11, '#6b4a2f', 2, 8);
+  px(ctx, bx + 2, baseY - 11, '#7d5936', 2, 8);
+  px(ctx, bx - 1, baseY - 13, '#8a6440', 2, 10);
+  px(ctx, bx - 2, baseY - 13, '#5c4028', 4, 2);
 }
 
 function drawFinished(
@@ -823,24 +860,24 @@ function drawFinished(
     : { far: '#7d9260', near: '#5e7147', ridge: '#465433', gable: '#8fa373' };
 
   switch (def) {
-    case 'shelter': {
-      isoWalls(ctx, ox, baseY, w, h, s.wall, { left: M.plankL, right: M.plankR }, 2);
-      gableRoof(ctx, ox, baseY, w, h, s.wall, s.roof, s.ov, thatch);
+    case 'cabin': {
+      // One house that grows. Planks and thatch to begin with; a chimney and a
+      // second window when it is improved; stone footings, plaster and a tiled
+      // roof at the top. The silhouette has to change enough that you can tell
+      // across the map which of your cabins has been seen to and which has not.
+      if (level >= 3) {
+        isoWalls(ctx, ox, baseY, w, h, 5, { left: M.stoneL, right: M.stoneR }, 1);
+        isoWalls(ctx, ox, baseY - 5, w, h, s.wall - 5, { left: M.plasterL, right: M.plasterR }, 2);
+      } else {
+        isoWalls(ctx, ox, baseY, w, h, s.wall, { left: M.plankL, right: M.plankR }, 2);
+      }
+      const roof = gableRoof(ctx, ox, baseY, w, h, s.wall, s.roof, s.ov, level >= 3 ? tile : thatch);
       addDoor(ctx, bx, baseY, front, 7, s.wall - 2, M.door);
-      addWindow(ctx, bx, baseY, front - 11, s.wall, 3, windows, M.window);
-      if (level > 1) addWindow(ctx, bx, baseY, front + 9, s.wall, 3, windows, M.window);
-      break;
-    }
-    case 'cottage': {
-      isoWalls(ctx, ox, baseY, w, h, 5, { left: M.stoneL, right: M.stoneR }, 1);
-      isoWalls(ctx, ox, baseY - 5, w, h, s.wall - 5, { left: M.plasterL, right: M.plasterR }, 2);
-      const roof = gableRoof(ctx, ox, baseY, w, h, s.wall, s.roof, s.ov, tile);
-      // Window, door, window along the front, and one on the gable end.
-      addDoor(ctx, bx, baseY, front, 7, s.wall - 2, M.door);
-      addWindow(ctx, bx, baseY, front - 11, s.wall, 4, windows, M.window);
-      addWindow(ctx, bx, baseY, front + 9, s.wall, 4, windows, M.window);
-      addWindow(ctx, bx, baseY, bx + 12, s.wall, 4, windows, M.window);
-      chimney(ctx, roof.ridgeA.x + 5, roof.ridgeA.y - 1, 9, snow);
+      const pane = level >= 3 ? 4 : 3;
+      addWindow(ctx, bx, baseY, front - 11, s.wall, pane, windows, M.window);
+      if (level >= 2) addWindow(ctx, bx, baseY, front + 9, s.wall, pane, windows, M.window);
+      if (level >= 3) addWindow(ctx, bx, baseY, bx + 12, s.wall, pane, windows, M.window);
+      if (level >= 2) chimney(ctx, roof.ridgeA.x + 5, roof.ridgeA.y - 1, level >= 3 ? 9 : 7, snow);
       break;
     }
     case 'storehouse': {
@@ -992,52 +1029,39 @@ function drawFinished(
     case 'chest': {
       // Low, wide and banded. It has to read as a chest at a glance next to a
       // 16px villager, so it stays well under head height — anything taller
-      // starts looking like a little shed.
+      // starts looking like a little shed. Small, medium and large are the same
+      // chest getting wider and more heavily ironed, because a store that holds
+      // ten times as much and looks identical is a change you cannot see.
       const body = snow ? '#9c7748' : '#a37f4e';
       const lit = snow ? '#c6a06d' : '#c39a63';
       const dark = '#6b4a2f';
       const iron = '#5c5148';
-      px(ctx, bx - 8, baseY - 2, 'rgba(24,20,14,0.18)', 16, 2);
+      const halfW = level >= 3 ? 11 : level === 2 ? 9 : 7;
+      const bodyH = level >= 3 ? 10 : level === 2 ? 8 : 7;
+      const base = baseY - 2;
+
+      px(ctx, bx - halfW - 1, baseY - 2, 'rgba(24,20,14,0.18)', halfW * 2 + 2, 2);
       // Body.
-      px(ctx, bx - 7, baseY - 9, body, 14, 7);
-      px(ctx, bx - 7, baseY - 3, dark, 14, 1);
+      px(ctx, bx - halfW, base - bodyH, body, halfW * 2, bodyH);
+      px(ctx, bx - halfW, base - 1, dark, halfW * 2, 1);
       // Domed lid, two steps so the curve reads without antialiasing.
-      px(ctx, bx - 7, baseY - 12, body, 14, 3);
-      px(ctx, bx - 6, baseY - 14, body, 12, 2);
-      px(ctx, bx - 6, baseY - 14, snow ? '#e8e4dc' : lit, 12, 1);
-      px(ctx, bx - 7, baseY - 10, dark, 14, 1);
-      // Iron bands over lid and body, and a clasp at the front.
-      px(ctx, bx - 5, baseY - 14, iron, 1, 11);
-      px(ctx, bx + 4, baseY - 14, iron, 1, 11);
-      px(ctx, bx - 1, baseY - 11, iron, 3, 4);
-      px(ctx, bx - 1, baseY - 11, '#8a8078', 3, 1);
-      break;
-    }
-    case 'woodpile': {
-      // Cut ends facing out, stacked between two stakes driven into the ground.
-      // Scattered deadfall lies flat and grey-brown; this has to read as
-      // somebody's doing from across the map, without reading as a building.
-      const bark = snow ? '#8a6a44' : '#7a5a38';
-      const lit = snow ? '#b89468' : '#a37f4e';
-      const cut = snow ? '#d0ab7a' : '#c39a63';
-      const dark = '#4f3a24';
-      px(ctx, bx - 9, baseY - 2, 'rgba(24,20,14,0.18)', 18, 2);
-      // Two stakes holding the stack in.
-      px(ctx, bx - 9, baseY - 13, dark, 2, 12);
-      px(ctx, bx + 7, baseY - 13, dark, 2, 12);
-      // Three courses of logs, each a little shorter than the one below.
-      const rows: [number, number, number][] = [
-        [-8, 4, 16],
-        [-7, 8, 14],
-        [-5, 11, 10],
-      ];
-      for (const [x0, up, w] of rows) {
-        px(ctx, bx + x0, baseY - up, bark, w, 3);
-        px(ctx, bx + x0, baseY - up, lit, w, 1);
-        // The sawn ends catch the light along the near side of each course.
-        for (let i = 1; i < w - 1; i += 3) px(ctx, bx + x0 + i, baseY - up + 1, cut, 2, 1);
+      const lidY = base - bodyH;
+      px(ctx, bx - halfW, lidY - 3, body, halfW * 2, 3);
+      px(ctx, bx - halfW + 1, lidY - 5, body, halfW * 2 - 2, 2);
+      px(ctx, bx - halfW + 1, lidY - 5, snow ? '#e8e4dc' : lit, halfW * 2 - 2, 1);
+      px(ctx, bx - halfW, lidY - 1, dark, halfW * 2, 1);
+      // Iron bands over lid and body — one pair, then two, then two and corners.
+      const bandH = bodyH + 5;
+      const bands = level >= 2 ? [-halfW + 2, -1, halfW - 3] : [-halfW + 2, halfW - 3];
+      for (const bxo of bands) px(ctx, bx + bxo, lidY - 5, iron, 1, bandH);
+      if (level >= 3) {
+        px(ctx, bx - halfW, lidY - 5, iron, 1, bandH);
+        px(ctx, bx + halfW - 1, lidY - 5, iron, 1, bandH);
       }
-      if (snow) px(ctx, bx - 5, baseY - 12, '#e8e4dc', 10, 1);
+      // Clasp at the front, and a padlock once there is anything worth locking.
+      px(ctx, bx - 1, base - bodyH + 1, iron, 3, 4);
+      px(ctx, bx - 1, base - bodyH + 1, '#8a8078', 3, 1);
+      if (level >= 3) px(ctx, bx, base - bodyH + 5, '#c8c7be', 1, 2);
       break;
     }
     case 'campfire': {

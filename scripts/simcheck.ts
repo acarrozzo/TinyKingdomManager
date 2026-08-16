@@ -10,10 +10,10 @@ import { newGame, assignJob, buildingById, makeBuilding, storageCapacity } from 
 import { completeConstruction, updateVillagers } from '../src/sim/villager';
 import { updateWildlife } from '../src/sim/wildlife';
 import { updatePopulation } from '../src/sim/population';
-import { updateGoals } from '../src/sim/goals';
+import { availableToBuild, updateGoals } from '../src/sim/goals';
 import { chooseCamp, suggestCamp } from '../src/sim/founding';
 import { updateTerrain, tileAt } from '../src/world/terrain';
-import { BUILDINGS, CARRY_CAPACITY, DAY_LENGTH } from '../src/sim/defs';
+import { BUILDINGS, CARRY_CAPACITY, DAY_LENGTH, upgradeCostOf } from '../src/sim/defs';
 import { rng } from '../src/core/util';
 import type { BuildingId, GameState } from '../src/types';
 import { seasonForDay } from '../src/sim/state';
@@ -75,9 +75,29 @@ function usedStorage(state: GameState): number {
   return ['wood', 'stone', 'wheat', 'flour', 'bread'].reduce((n, k) => n + state.stock[k as 'wood'], 0);
 }
 
+/** Starts an improvement on the least-improved building of a kind, if affordable. */
+function improve(state: GameState, def: BuildingId): boolean {
+  const d = BUILDINGS[def];
+  const candidates = state.buildings
+    .filter((b) => b.def === def && b.stage === 'done' && !b.upgrading && b.level < d.maxLevel)
+    .sort((a, b) => a.level - b.level);
+  for (const b of candidates) {
+    const cost = upgradeCostOf(def, b.level);
+    let afford = true;
+    for (const k in cost) if (state.stock[k as 'wood'] < (cost[k as 'wood'] ?? 0)) afford = false;
+    if (!afford) continue;
+    b.upgrading = true;
+    b.stage = 'building';
+    b.labour = 0;
+    b.delivered = {};
+    return true;
+  }
+  return false;
+}
+
 function autoplay(state: GameState): void {
-  // The founding sequence: the player's only job is to say where, and then to
-  // place the fire and the chest once there is wood for them.
+  // Founding asks the player for two clicks and nothing else: where to begin,
+  // and where the chest goes once the fire is lit.
   if (state.founding.stage === 'arriving' || state.founding.stage === 'settling') return;
   if (state.founding.stage === 'choosing') {
     const spot = suggestCamp(state);
@@ -92,9 +112,8 @@ function autoplay(state: GameState): void {
   if (building) return;
 
   const wants: BuildingId[] = [];
-  if (!has('campfire')) wants.push('campfire');
-  else if (!has('chest')) wants.push('chest');
-  else if (!has('shelter')) wants.push('shelter');
+  if (!has('chest')) wants.push('chest');
+  else if (!has('cabin')) wants.push('cabin');
   else if (!has('storehouse')) wants.push('storehouse');
   else if (!has('lodge')) wants.push('lodge');
   else if (!has('quarry') && state.unlocked.has('quarry')) wants.push('quarry');
@@ -110,14 +129,24 @@ function autoplay(state: GameState): void {
   else {
     const beds = state.buildings
       .filter((b) => b.stage === 'done' && BUILDINGS[b.def].housing)
-      .reduce((n, b) => n + (BUILDINGS[b.def].housing![Math.min(b.level, 2) - 1] ?? 0), 0);
-    if (beds - state.villagers.length < 2) wants.push(state.unlocked.has('cottage') ? 'cottage' : 'shelter');
+      .reduce((n, b) => n + (BUILDINGS[b.def].housing![Math.min(b.level, BUILDINGS[b.def].housing!.length) - 1] ?? 0), 0);
+    // Improve what stands before laying out more of it — that is what a player
+    // does with a building that grows, and it is the only thing that exercises
+    // the upgrade path at all.
+    if (beds - state.villagers.length < 2 && !improve(state, 'cabin')) wants.push('cabin');
   }
+  // Widen the chest when the store is getting tight, before adding storehouses.
+  if (storageCapacity(state) > 0 && usedStorage(state) > storageCapacity(state) * 0.7) improve(state, 'chest');
 
   for (const def of wants) {
+    // Play by the same rules the interface enforces: the menu opens a step at a
+    // time, so the harness cannot reach for a storehouse before it is offered.
+    if (!availableToBuild(state, def)) continue;
     const cost = BUILDINGS[def].cost;
     let afford = true;
-    for (const k in cost) if (state.stock[k as 'wood'] < (cost[k as 'wood'] ?? 0)) afford = false;
+    // The founding chest comes out of the founder's arms, not the store.
+    if (state.founding.stage !== 'done') afford = def === 'chest';
+    else for (const k in cost) if (state.stock[k as 'wood'] < (cost[k as 'wood'] ?? 0)) afford = false;
     if (!afford) continue;
     // Woodcutters want trees; quarries want rock.
     let near = { x: fire.x, y: fire.y };
@@ -136,9 +165,8 @@ function autoplay(state: GameState): void {
         }
       if (best) near = best;
     }
-    // The fire and the chest go right beside the woodpile; everything else
-    // needs elbow room.
-    const minR = def === 'campfire' || def === 'chest' ? 1 : def === 'lodge' || def === 'quarry' ? 2 : 3;
+    // The chest goes right beside the fire; everything else needs elbow room.
+    const minR = def === 'chest' ? 1 : def === 'lodge' || def === 'quarry' ? 2 : 3;
     const spot = findSpot(def, near, minR);
     if (spot) place(def, spot.x, spot.y);
     break;
@@ -209,14 +237,18 @@ line(`Storage ${Object.entries(g.stock).map(([k, v]) => `${k} ${Math.floor(v)}`)
 line(`Stats: built ${g.stats.built}  harvested ${g.stats.harvested}  baked ${g.stats.baked}  arrivals ${g.stats.arrivals}`);
 
 line('\nBuildings');
-const byDef = new Map<string, { done: number; site: number }>();
+const byDef = new Map<string, { done: number; site: number; levels: number[] }>();
 for (const b of g.buildings) {
-  const e = byDef.get(b.def) ?? { done: 0, site: 0 };
+  const e = byDef.get(b.def) ?? { done: 0, site: 0, levels: [] };
   if (b.stage === 'done') e.done++;
   else e.site++;
+  if (b.level > 1) e.levels.push(b.level);
   byDef.set(b.def, e);
 }
-for (const [def, e] of byDef) line(`  ${def.padEnd(12)} ${e.done} built${e.site ? `, ${e.site} under construction` : ''}`);
+for (const [def, e] of byDef) {
+  const improved = e.levels.length ? `, improved: ${e.levels.sort().map((l) => `L${l}`).join(' ')}` : '';
+  line(`  ${def.padEnd(12)} ${e.done} built${e.site ? `, ${e.site} under construction` : ''}${improved}`);
+}
 
 line('\nPeople');
 for (const v of g.villagers) {
@@ -274,8 +306,10 @@ if (used > storageCapacity(g) + inFlight + 1) {
 }
 // The full-store deadlock: the planner will not give a new plan to anybody
 // holding goods, so a carrier who has run out of ideas is stuck for good.
+// (Founding is exempt: the founder is meant to be holding wood, and holding it
+// is the only sensible thing to do while waiting to be told where the chest goes.)
 for (const v of g.villagers) {
-  if (v.carrying && v.activity === 'idle') {
+  if (v.carrying && v.activity === 'idle' && g.founding.stage === 'done') {
     problems.push(`${v.name} is stuck holding ${Math.round(v.carrying.qty)} ${v.carrying.res}`);
   }
 }

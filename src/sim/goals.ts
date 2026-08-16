@@ -17,45 +17,59 @@ function staffed(g: GameState, def: string): boolean {
   return g.buildings.some((b) => b.def === def && b.stage === 'done' && b.workers.length > 0);
 }
 
+/**
+ * Wood in the founder's arms. During founding this is the whole of the kingdom's
+ * wealth — there is no store to count instead until the chest is finished.
+ */
+export function carriedByFounder(g: GameState): number {
+  const founder = g.villagers.find((v) => v.id === g.founderId);
+  return founder?.carrying?.res === 'wood' ? Math.floor(founder.carrying.qty) : 0;
+}
+
 export function buildGoals(): Goal[] {
   return [
     {
       id: 'begin',
       title: 'Choose a place to begin',
-      desc: 'Your founder is looking for somewhere to stop. Click a clear patch of grass near the middle of the island.',
+      desc: 'Your founder is looking for somewhere to stop. Click a clear patch of grass near the middle of the island — the first fire will be laid there.',
       done: false,
       check: (g) => g.founding.stage !== 'arriving' && g.founding.stage !== 'choosing',
     },
     {
       id: 'branches',
-      title: 'Gather a few fallen branches',
-      desc: 'There is deadfall lying about. Your founder will pick it up by hand and stack it. Give them a moment.',
+      title: 'Gather fallen branches',
+      desc: 'There is deadfall lying about. Your founder is already picking it up — two armfuls is all it takes.',
       done: false,
-      check: (g) => g.stock.wood >= 5,
-      unlocks: 'campfire',
+      // They start gathering before the ground is chosen, so this waits for the
+      // campsite regardless: ticking it off first would read as out of order.
+      check: (g) =>
+        g.founding.stage !== 'arriving' &&
+        g.founding.stage !== 'choosing' &&
+        (has(g, 'campfire') || carriedByFounder(g) >= 12),
     },
     {
       id: 'fire',
       title: 'Light the first fire',
-      desc: 'Open the Build menu and put a campfire near the woodpile. Warmth, light, and somewhere to sleep until there is a roof.',
+      desc: 'No placing needed. Once the wood is gathered your founder lays the fire on the ground you chose and lights it.',
       done: false,
       check: (g) => has(g, 'campfire'),
       unlocks: 'chest',
     },
     {
       id: 'chest',
-      title: 'Build a rough chest',
-      desc: 'The woodpile holds twelve. A chest from the Build menu takes its place and holds fifty.',
+      title: 'Build the Small Chest',
+      desc: 'Click a tile beside the fire. Your founder still has eight wood in their arms, which is exactly what it takes.',
       done: false,
       check: (g) => has(g, 'chest'),
+      unlocks: 'cabin',
     },
     {
-      id: 'shelter',
-      title: 'Raise a Shelter',
-      desc: 'Somewhere to sleep. Pick a spot from the Build menu and place it.',
+      id: 'cabin',
+      title: 'Raise a Cabin',
+      desc: 'Somewhere to sleep. Pick a spot from the Build menu and place it; you can improve it later rather than replacing it.',
       done: false,
-      check: (g) => has(g, 'shelter'),
-      unlocks: 'quarry',
+      check: (g) => has(g, 'cabin'),
+      unlocks: ['storehouse', 'quarry'],
       reward: { wood: 10 },
     },
     {
@@ -64,7 +78,7 @@ export function buildGoals(): Goal[] {
       desc: 'A chest can only hold so much. A storehouse gives the kingdom real capacity.',
       done: false,
       check: (g) => has(g, 'storehouse'),
-      unlocks: 'farm',
+      unlocks: ['lodge', 'farm'],
     },
     {
       id: 'lodge',
@@ -72,7 +86,6 @@ export function buildGoals(): Goal[] {
       desc: 'Build a lodge near trees, then assign a villager to it from the Jobs panel.',
       done: false,
       check: (g) => staffed(g, 'lodge'),
-      unlocks: 'cottage',
       reward: { stone: 15 },
     },
     {
@@ -152,7 +165,7 @@ export function updateGoals(g: GameState): void {
     if (goal.done) continue;
     if (!goal.check(g)) continue;
     goal.done = true;
-    if (goal.unlocks) unlock(g, goal.unlocks);
+    if (goal.unlocks) for (const key of [goal.unlocks].flat()) unlock(g, key);
     if (goal.reward) {
       for (const k in goal.reward) {
         const res = k as keyof typeof goal.reward;
@@ -164,11 +177,18 @@ export function updateGoals(g: GameState): void {
   }
 }
 
+/**
+ * Unlocks that announce themselves some other way. The chest is put straight
+ * onto the cursor with its own hint the moment the fire is lit, so a padlock
+ * toast saying the same thing is one notification too many.
+ */
+const QUIET_UNLOCKS = new Set(['chest']);
+
 export function unlock(g: GameState, key: string): void {
   if (g.unlocked.has(key)) return;
   g.unlocked.add(key);
   const def = (BUILDINGS as Record<string, { name: string } | undefined>)[key];
-  if (def) {
+  if (def && !QUIET_UNLOCKS.has(key)) {
     toast(g, `${def.name} unlocked`, '🔓', 'good');
     journal(g, `The kingdom learned to build a ${def.name}.`, '🔓');
   }
@@ -181,10 +201,10 @@ export function isUnlocked(g: GameState, key?: string): boolean {
 
 /**
  * What the build menu may offer right now. Beyond the usual unlock key there are
- * two rules: the fire and the chest leave the menu once they stand, and nothing
- * else appears until the kingdom has somewhere to keep what it gathers. A
- * shelter costs twenty wood against a woodpile that holds twelve, so offering it
- * during founding would only be a way of saying no four times.
+ * two rules: a `once` building leaves the menu the moment it stands, and during
+ * founding the chest is the only thing on offer at all. Everything the founder
+ * could otherwise be shown is unaffordable anyway — there is no store, only the
+ * wood in their arms — so listing it would be a way of saying no four times.
  */
 export function availableToBuild(g: GameState, id: BuildingId): boolean {
   const def = BUILDINGS[id];
@@ -192,9 +212,6 @@ export function availableToBuild(g: GameState, id: BuildingId): boolean {
   if (def.once && g.buildings.some((b) => b.def === id)) return false;
   return foundingDone(g) || FOUNDING_BUILDS.has(id);
 }
-
-/** Goals the founding sequence completes; already-founded saves start them done. */
-export const FOUNDING_GOALS = ['begin', 'branches', 'fire', 'chest'];
 
 /** Highest rank anyone in the kingdom currently holds — shown on the goals panel. */
 export function topRank(g: GameState): string {

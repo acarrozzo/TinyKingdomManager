@@ -33,11 +33,11 @@ export const RESOURCE_META: Record<string, { name: string; icon: string; color: 
 export const RESOURCE_INFO: Record<string, { from: string; used: string }> = {
   wood: {
     from: 'Woodcutters at the lodge, helpers felling any tree by hand, and fallen branches picked up off the ground.',
-    used: 'Nearly every building, from a shelter at 20 up to a windmill at 50.',
+    used: 'Nearly every building, from a cabin at 20 up to a windmill at 50.',
   },
   stone: {
     from: 'Stoneworkers at the quarry, and helpers breaking loose boulders.',
-    used: 'Cottages, wells, and the workshops further along the chain.',
+    used: 'Improving a cabin or a chest, wells, and the workshops further along the chain.',
   },
   wheat: {
     from: 'Farmers sowing and reaping the plots around a wheat farm.',
@@ -118,83 +118,60 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     category: 'housing',
     w: 1,
     h: 1,
-    cost: { wood: 5 },
+    cost: { wood: 4 },
     labour: 12,
     maxLevel: 1,
-    order: 2,
-    once: true,
-    unlock: 'campfire',
-    desc: 'Five armfuls of wood and somebody willing to kneel in the grass with them. Where the kingdom begins.',
-    how: 'Warmth, light, and two people can sleep beside it. It holds nothing — that is what the chest is for. Nobody chooses a fire over a roof, so the moment a house is finished with a free bed, whoever is still out here moves in, unless you have put them here yourself. Once lit it cannot be taken down.',
+    // Never in the build menu: the fire goes where the campsite was chosen, and
+    // the founder lays it themselves out of the wood in their arms.
+    order: -1,
+    desc: 'Four armfuls of wood and somebody willing to kneel in the grass with them. Where the kingdom begins.',
+    how: 'Warmth, light, and two people can sleep beside it. It holds nothing — that is what the chest is for. You chose this spot at the very beginning and the founder laid the fire on it; there is no second one, and it cannot be taken down. Nobody chooses a fire over a roof, so the moment a house is finished with a free bed, whoever is still out here moves in, unless you have put them here yourself.',
     housing: [2],
     light: [{ x: 0.5, y: 0.5, radius: 46, color: '#ffb35c' }],
     solid: false,
   },
-  woodpile: {
-    id: 'woodpile',
-    name: 'Woodpile',
-    category: 'storage',
-    w: 1,
-    h: 1,
-    cost: {},
-    labour: 0,
-    maxLevel: 1,
-    order: -1,
-    desc: 'Branches stacked on the bare ground, because there is nowhere else to put them.',
-    how: 'It holds twelve of anything and it is not really a building. The founder starts one the moment they choose their ground, and it goes when the first chest is finished — everything in it simply carries on being the kingdom\'s.',
-    storage: [12],
-    solid: false,
-  },
   chest: {
     id: 'chest',
-    name: 'Rough Chest',
+    name: 'Small Chest',
+    levelNames: ['Small Chest', 'Medium Chest', 'Large Chest'],
     category: 'storage',
     w: 1,
     h: 1,
-    cost: { wood: 10 },
+    cost: { wood: 8 },
     labour: 10,
-    maxLevel: 1,
+    maxLevel: 3,
+    // Wood for the first widening; the last one wants iron bands and a lock,
+    // which is to say stone, which is to say a quarry.
+    upgradeCosts: [{ wood: 24 }, { wood: 60, stone: 20 }],
     order: 9,
     once: true,
     unlock: 'chest',
     desc: 'Planks, and a lid that mostly shuts. Everything the kingdom owns goes in it until there is a storehouse.',
-    how: 'The kingdom keeps one shared pool of goods, and this holds the first fifty of it. It takes the place of the woodpile the moment it is finished. Storehouses do not hold their own separate piles; they raise the ceiling on this same pool. When it is full, gatherers stop fetching more rather than waste the walk, but anything already in somebody\'s arms still gets put away.',
-    storage: [50],
+    how: 'The kingdom keeps one shared pool of goods, and this holds the first fifty of it — two hundred once widened, five hundred once it is a chest in name only. Until it was finished there was no such pool at all; the founder simply carried what they had gathered. Storehouses do not hold their own separate piles either; they raise the ceiling on this same pool. When it is full, gatherers stop fetching more rather than waste the walk, but anything already in somebody\'s arms still gets put away.',
+    storage: [50, 200, 500],
     solid: false,
   },
-  shelter: {
-    id: 'shelter',
-    name: 'Shelter',
+  cabin: {
+    id: 'cabin',
+    name: 'Cabin',
     category: 'housing',
     w: 2,
     h: 2,
     cost: { wood: 20 },
     labour: 45,
-    maxLevel: 2,
-    upgradeCostMul: 2.2,
+    maxLevel: 3,
+    // A cabin grows into a cottage rather than being replaced by one: planks
+    // and thatch, then a chimney, then stone footings and a tiled roof.
+    upgradeCosts: [
+      { wood: 45, stone: 25 },
+      { wood: 90, stone: 55 },
+    ],
     order: 0,
-    desc: 'A roof, a door, and somewhere dry to sleep. Houses two.',
-    how: 'Somewhere dry to sleep, and that is the whole of it. People walk home at their own bedtime and rise at their own hour, a little earlier or later than each other. Improving it puts two more beds under the same roof.',
-    housing: [2, 4],
-    light: [{ x: 1.0, y: 1.35, radius: 34, color: '#ffc06a' }],
-    solid: true,
-  },
-  cottage: {
-    id: 'cottage',
-    name: 'Cottage',
-    category: 'housing',
-    w: 2,
-    h: 2,
-    cost: { wood: 45, stone: 25 },
-    labour: 90,
-    maxLevel: 2,
-    upgradeCostMul: 2.0,
-    order: 1,
-    desc: 'Proper walls and a chimney. Houses four, and villagers rest better here.',
-    how: 'The same work as a shelter, with more room. Four sleep here, six once improved. On the day it is finished it takes in anyone still curled up by the campfire, and you can move people between houses yourself from this panel.',
-    housing: [4, 6],
-    unlock: 'cottage',
-    light: [{ x: 1.0, y: 1.35, radius: 40, color: '#ffc06a' }],
+    unlock: 'cabin',
+    desc: 'A roof, a door, and somewhere dry to sleep. Sleeps two, and grows.',
+    how: 'Somewhere dry to sleep, and at first that is the whole of it. People walk home at their own bedtime and rise at their own hour, a little earlier or later than each other. Improving it adds two more beds and a good deal more building: a chimney first, then stone footings and a proper roof. Six sleep in a finished one. On the day it is done it takes in anyone still curled up by the campfire, and you can move people between cabins yourself from this panel.',
+    housing: [2, 4, 6],
+    light: [{ x: 1.0, y: 1.35, radius: 36, color: '#ffc06a' }],
     solid: true,
   },
   storehouse: {
@@ -211,6 +188,7 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     desc: 'Everything the kingdom keeps ends up here. Build them near where goods are made.',
     how: 'Adds 250 to the shared store, or 550 once improved. Goods are one pool for the whole kingdom, so this raises the ceiling rather than holding anything of its own. Villagers carry loads to whichever store is nearest, which is the only reason where you put it matters.',
     storage: [250, 550],
+    unlock: 'storehouse',
     solid: true,
   },
   lodge: {
@@ -229,6 +207,7 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     slots: [2, 3],
     job: 'woodcutter',
     harvests: 'tree',
+    unlock: 'lodge',
     solid: true,
   },
   quarry: {
@@ -401,8 +380,38 @@ export const BUILD_ORDER: BuildingId[] = (Object.keys(BUILDINGS) as BuildingId[]
   .filter((k) => BUILDINGS[k].order >= 0)
   .sort((a, b) => BUILDINGS[a].order - BUILDINGS[b].order);
 
-/** The two things that can be built before the kingdom has anywhere to keep goods. */
-export const FOUNDING_BUILDS = new Set<BuildingId>(['campfire', 'chest']);
+/** The only thing the player places before the kingdom has anywhere to keep goods. */
+export const FOUNDING_BUILDS = new Set<BuildingId>(['chest']);
+
+/**
+ * What to call a particular building, which is not always what to call the kind
+ * of building: a chest is small, medium or large depending on how far it has
+ * been improved. The build menu wants the level-1 name; anything naming a
+ * building that actually stands wants this.
+ */
+export function buildingName(def: BuildingId, level = 1): string {
+  const d = BUILDINGS[def];
+  return d.levelNames?.[Math.min(level, d.levelNames.length) - 1] ?? d.name;
+}
+
+/**
+ * What the next improvement costs. An explicit table wins where there is one,
+ * because a multiplier on the base cost cannot introduce a material the
+ * building did not need at first. Otherwise the multiplier compounds with
+ * level, so the second improvement is dearer than the first.
+ */
+export function upgradeCostOf(def: BuildingId, level: number): Partial<Record<ResourceId, number>> {
+  const d = BUILDINGS[def];
+  const explicit = d.upgradeCosts?.[level - 1];
+  if (explicit) return explicit;
+  const mul = (d.upgradeCostMul ?? 2) ** level;
+  const out: Partial<Record<ResourceId, number>> = {};
+  for (const k in d.cost) {
+    const res = k as ResourceId;
+    out[res] = Math.ceil((d.cost[res] ?? 0) * mul);
+  }
+  return out;
+}
 
 export const CATEGORY_META: Record<string, { name: string; icon: string }> = {
   housing: { name: 'Housing', icon: '🏠' },

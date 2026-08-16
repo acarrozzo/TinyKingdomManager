@@ -116,6 +116,17 @@ body {
   flex-wrap: wrap;
 }
 
+/*
+ * While the kingdom is being founded there is no shared store and nothing in
+ * it: the founder is carrying the only wood there is. Showing "Store 0/0" and a
+ * row of zeroed resources would be describing a pool that does not exist yet,
+ * so the whole left cluster waits until the chest is finished. What the founder
+ * is carrying is said in the goals panel instead, and drawn on the map.
+ */
+#ui.founding .topbar > .cluster:first-child {
+  display: none;
+}
+
 .pill {
   background: var(--panel);
   border: 1px solid var(--edge);
@@ -1362,6 +1373,24 @@ kbd {
   }
   .goals {
     display: none;
+  }
+  /*
+   * …except while the kingdom is being founded, when it holds the only
+   * instruction there is and what the founder is carrying. A narrow screen with
+   * nothing on it but a person picking up sticks explains nothing at all. When
+   * a tool hint is up it is saying the same thing in the same place, so only one
+   * of the two ever shows, and the toasts stack above whichever it is.
+   */
+  #ui.founding .goals {
+    display: block;
+    bottom: 62px;
+    width: min(262px, calc(100vw - 20px));
+  }
+  #ui.founding.has-hint .goals {
+    display: none;
+  }
+  #ui.founding .toasts {
+    bottom: calc(74px + var(--goals-h, 0px) + var(--hint-h, 0px));
   }
   .tool-hint-host {
     max-width: calc(100vw - 24px);

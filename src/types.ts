@@ -70,10 +70,8 @@ export type TraitId =
 
 export type BuildingId =
   | 'campfire'
-  | 'woodpile'
   | 'chest'
-  | 'shelter'
-  | 'cottage'
+  | 'cabin'
   | 'storehouse'
   | 'lodge'
   | 'quarry'
@@ -107,8 +105,16 @@ export interface BuildingDef {
   labour: number;
   /** Levels beyond 1 that this building can be upgraded to. */
   maxLevel: number;
-  /** Cost multiplier applied per upgrade step. */
+  /** Cost multiplier applied per upgrade step, compounding with level. */
   upgradeCostMul?: number;
+  /**
+   * Exact cost of each upgrade step, when a multiplier on the base cost cannot
+   * say it — a cabin starts as twenty wood and later wants stone as well.
+   * Index 0 is level 1 → 2. Takes precedence over `upgradeCostMul`.
+   */
+  upgradeCosts?: Partial<Record<ResourceId, number>>[];
+  /** Name per level, when improving one changes what it is called. */
+  levelNames?: string[];
   desc: string;
   /** Longer explanation of how the building actually behaves, for its own panel. */
   how: string;
@@ -202,7 +208,8 @@ export type Step =
   | { t: 'move'; x: number; y: number; adjacent?: boolean; goals?: { x: number; y: number }[] }
   | { t: 'act'; dur: number; kind: ActivityKind; xp?: JobId; face?: number }
   | { t: 'take'; res: ResourceId; qty: number; from: 'store' | 'building' | 'tile'; id?: number; x?: number; y?: number }
-  | { t: 'give'; to: 'store' | 'building' | 'site'; id?: number }
+  /** Without `qty` the whole load goes; with it, the rest stays in their arms. */
+  | { t: 'give'; to: 'store' | 'building' | 'site'; id?: number; qty?: number }
   | { t: 'labour'; id: number }
   | { t: 'sleep' }
   | { t: 'say'; text: string }
@@ -332,7 +339,8 @@ export interface Goal {
   /** Evaluated each second. */
   check: (g: GameState) => boolean;
   reward?: Partial<Record<ResourceId, number>>;
-  unlocks?: string;
+  /** Build-menu keys this goal opens up. The menu reveals itself a step at a time. */
+  unlocks?: string | string[];
 }
 
 export interface Toast {
@@ -344,15 +352,15 @@ export interface Toast {
 
 /**
  * How far through founding the kingdom is. `arriving` is the founder walking up
- * the beach, `choosing` is the player picking the ground, `settling` is the walk
- * out to it, `camp` is everything between the first armful of branches and the
- * chest that replaces the woodpile.
+ * the beach, `choosing` is the player picking the ground — the one spatial
+ * decision the opening asks for — `settling` is the walk out to it, and `camp`
+ * covers gathering the deadfall, lighting the fire and building the chest.
  */
 export type FoundingStage = 'arriving' | 'choosing' | 'settling' | 'camp' | 'done';
 
 export interface Founding {
   stage: FoundingStage;
-  /** The chosen ground. Meaningless until the stage is past `choosing`. */
+  /** The chosen ground, which is where the fire goes. Meaningless before `settling`. */
   x: number;
   y: number;
 }

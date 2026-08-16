@@ -10,7 +10,7 @@
 
 import { RNG, clamp, dist, rng } from '../core/util';
 import type { Building, GameState, JobId, PropId, ResourceId, Step, Villager } from '../types';
-import { BUILDINGS, CARRY_CAPACITY, TERRAIN_SPEED, skillMul, xpGain } from './defs';
+import { BUILDINGS, CARRY_CAPACITY, TERRAIN_SPEED, buildingName, skillMul, upgradeCostOf, xpGain } from './defs';
 import {
   abandonPlan,
   addXp,
@@ -33,12 +33,15 @@ import { findPath, footprintApproach } from '../world/path';
 import { CHATTER } from './names';
 import { journal, note, toast } from './journal';
 import {
-  FOUNDING_WOOD,
+  campfireOf,
   foundingActive,
+  foundingSite,
+  foundingWoodNeeded,
   markArrived,
   markSettled,
   onFoundingBuild,
   suggestCamp,
+  woodShortfall,
 } from './founding';
 
 const BASE_SPEED = 1.15; // tiles per second on plain grass
@@ -324,17 +327,29 @@ function doTake(g: GameState, v: Villager, step: Extract<Step, { t: 'take' }>): 
 
 function doGive(g: GameState, v: Villager, step: Extract<Step, { t: 'give' }>): void {
   if (!v.carrying) return;
-  const { res, qty } = v.carrying;
+  const res = v.carrying.res;
+  // A step with no `qty` hands over the whole load, which is what hauling always
+  // does. The founding builds ask for an exact amount and leave the rest in the
+  // founder's arms — the fire takes four of the twelve, the chest takes eight.
+  const qty = step.qty === undefined ? v.carrying.qty : Math.min(step.qty, v.carrying.qty);
+  if (qty <= 0) return;
+  v.carrying.qty -= qty;
+  if (v.carrying.qty <= 0) v.carrying = null;
+
   if (step.to === 'store') {
     deliver(g, res, qty);
-    v.carrying = null;
     return;
   }
   const b = buildingById(g, step.id ?? 0);
-  if (!b) return;
+  if (!b) {
+    // The building went away mid-walk. Keep hold of the load and re-decide;
+    // handing it to a store is not always possible, and never during founding.
+    if (v.carrying && v.carrying.res === res) v.carrying.qty += qty;
+    else v.carrying = { res, qty };
+    return;
+  }
   if (step.to === 'site') b.delivered[res] = (b.delivered[res] ?? 0) + qty;
   else b.input[res] = (b.input[res] ?? 0) + qty;
-  v.carrying = null;
 }
 
 function doEffect(g: GameState, v: Villager, step: Extract<Step, { t: 'effect' }>): void {
@@ -469,8 +484,11 @@ export function completeConstruction(g: GameState, b: Building): void {
 
   if (wasUpgrade) {
     b.level = Math.min(def.maxLevel, b.level + 1);
-    toast(g, `${def.name} improved`, '⬆️', 'good');
-    journal(g, `The ${def.name.toLowerCase()} was improved.`, '⬆️');
+    // Named after the improvement, not before it: a widened chest is a Medium
+    // Chest from the moment the lid shuts.
+    const now = buildingName(b.def, b.level);
+    toast(g, def.levelNames ? `Now a ${now}` : `${now} improved`, '⬆️', 'good');
+    journal(g, def.levelNames ? `A ${now.toLowerCase()} took the place of the old one.` : `The ${now.toLowerCase()} was improved.`, '⬆️');
   } else {
     if (def.plots) makePlots(g, b);
     // The fire and the chest are the two buildings that deserve better words
@@ -570,8 +588,11 @@ function think(g: GameState, v: Villager): void {
   v.actTotal = 0;
   v.actLeft = 0;
 
-  // Never carry goods across a decision — put them somewhere first.
-  if (v.carrying) {
+  // Never carry goods across a decision — put them somewhere first. The founder
+  // during founding is the one exception in the whole game: there is nowhere to
+  // put anything down yet, so the wood stays in their arms and pays for the fire
+  // and the chest directly. The exception ends with the chest.
+  if (v.carrying && !isFounder(g, v)) {
     const store = nearestStore(g, v.x, v.y);
     if (store) {
       planWalkTo(g, v, store, [{ t: 'give', to: 'store' }]);
@@ -597,6 +618,16 @@ function think(g: GameState, v: Villager): void {
   planLeisure(g, v);
 }
 
+/** The one person the founding rules apply to, and only while they apply. */
+function isFounder(g: GameState, v: Villager): boolean {
+  return foundingActive(g) && v.id === g.founderId;
+}
+
+/** Wood in the founder's arms, which during founding is the whole treasury. */
+function carriedWood(v: Villager): number {
+  return v.carrying?.res === 'wood' ? v.carrying.qty : 0;
+}
+
 /**
  * The founder's opening. Each stage is a plan ending in an `effect` step, so the
  * kingdom only moves on at the exact moment the action that earns it finishes —
@@ -610,46 +641,101 @@ function planFounding(g: GameState, v: Villager): boolean {
       const inland = suggestCamp(g);
       v.plan = [
         { t: 'move', x: inland.x, y: inland.y },
-        { t: 'act', dur: 5, kind: 'watching' },
+        // The one pause in the opening, and it earns the line that follows it.
+        // `arriving` rather than `watching`: they have just got here, they are
+        // not passing the time.
+        { t: 'act', dur: 5, kind: 'arriving' },
         { t: 'say', text: 'This seems like a good place to begin.' },
         { t: 'effect', kind: 'arrived' },
       ];
       return true;
     }
     case 'choosing':
-      // Waiting to be told where. They stay put and look at things rather than
-      // wandering off, so the player's marker never has to chase them.
-      planLoiter(g, v);
-      return true;
+      // Waiting on the player, but not idling: the wood will be wanted wherever
+      // the camp ends up, so they get on with collecting it. A quick decision
+      // therefore costs nothing and a slow one is spent usefully.
+      return planCamp(g, v);
     case 'settling': {
+      // The fire ring is already on this tile; they are walking out to stand in
+      // it, which is the last thing that happens before any work does.
       const { x, y } = g.founding;
       v.plan = [
-        { t: 'move', x, y },
-        { t: 'act', dur: 6, kind: 'watching' },
+        { t: 'move', x, y, goals: neighbours(g, x, y) },
+        { t: 'act', dur: 4, kind: 'building' },
         { t: 'say', text: 'Flat enough, and out of the wind.' },
         { t: 'effect', kind: 'settled' },
       ];
       return true;
     }
     case 'camp':
-      // The fire and the chest are built like anything else, so ordinary helper
-      // work comes first — but not its gathering ladder, which would have the
-      // founder filling a twelve-stick woodpile with stone nothing needs yet.
-      // Wood, then, and when there is enough of that, they simply wait about.
-      if (planHelper(g, v, false)) return true;
-      if (g.stock.wood < FOUNDING_WOOD && planGatherWood(g, v, 'helper')) return true;
-      planLeisure(g, v);
-      return true;
+      return planCamp(g, v);
   }
   return false;
 }
 
-/** Small circles near where they are standing. Not leisure — waiting. */
-function planLoiter(g: GameState, v: Villager): void {
+/**
+ * Deadfall in, fire and chest out, all of it paid for from the founder's arms.
+ * Runs from the moment they stop walking, before the ground is even chosen: they
+ * fill up first and build second, and one load of twelve covers the four the
+ * fire wants and the eight the chest wants, so nothing is left over and nobody
+ * walks the same ground twice.
+ */
+function planCamp(g: GameState, v: Villager): boolean {
+  const held = carriedWood(v);
+  const site = foundingSite(g);
+  const short = site ? woodShortfall(site) : 0;
+
+  // Top the load up while there is still something to pay for. Deadfall is the
+  // intended source and there is always plenty near the middle of the island;
+  // the tree is insurance against a camp chosen at the far edge of the radius
+  // with every pile already picked up, which must not leave them with nothing
+  // to do and no way to finish.
+  const want = Math.min(CARRY_CAPACITY, foundingWoodNeeded(g));
+  if (held < want) {
+    if (planGatherNode(g, v, 'branches', 20, 'helper', false, false)) return true;
+    if (planGatherNode(g, v, 'tree', 24, 'helper', true, false)) return true;
+  }
+
+  if (site) {
+    // Materials, then hands: the same two jobs any other site needs, minus the
+    // walk to a store that does not exist.
+    if (short > 0 && held > 0) {
+      v.plan = [
+        approachSteps(g, site),
+        { t: 'give', to: 'site', id: site.id, qty: Math.min(short, held) },
+        { t: 'labour', id: site.id },
+      ];
+      return true;
+    }
+    if (short === 0) {
+      claim(g, v, 'labour', site.id);
+      planWalkTo(g, v, site, [{ t: 'labour', id: site.id }]);
+      return true;
+    }
+  }
+
+  // Nothing to fetch and nothing to build, which means they are waiting on the
+  // player. Nobody sits down during the founding: with a fire lit they feed and
+  // bank it, and before that they walk the ground looking for the spot.
+  const fire = campfireOf(g);
+  if (fire && fire.stage === 'done') {
+    planWalkTo(g, v, fire, [{ t: 'act', dur: rng.range(6, 12), kind: 'working' }]);
+  } else {
+    planSurvey(g, v);
+  }
+  return true;
+}
+
+/**
+ * Pacing the clearing while the player decides. Deliberately not leisure: no
+ * benches, no pond-watching, no standing still — the opening should read as
+ * somebody with something on their mind, not somebody on their break.
+ */
+function planSurvey(g: GameState, v: Villager): void {
   const r = rng;
-  for (let i = 0; i < 8; i++) {
+  for (let i = 0; i < 10; i++) {
     const a = r.range(0, Math.PI * 2);
-    const d = r.range(1, 3);
+    const d = r.range(2, 5);
     const x = Math.round(v.x + Math.cos(a) * d);
     const y = Math.round(v.y + Math.sin(a) * d);
     if (!isWalkable(g, x, y)) continue;
@@ -657,13 +743,10 @@ function planLoiter(g: GameState, v: Villager): void {
     // deciding where to found a kingdom is not the picture this moment wants.
     const t = tileAt(g, x, y);
     if (!t || t.terrain === 'shallow' || t.terrain === 'water') continue;
-    v.plan = [
-      { t: 'move', x, y },
-      { t: 'act', dur: r.range(5, 11), kind: 'watching' },
-    ];
+    v.plan = [{ t: 'move', x, y }];
     return;
   }
-  v.plan = [{ t: 'act', dur: 7, kind: 'watching' }];
+  v.plan = [{ t: 'act', dur: 3, kind: 'arriving' }];
 }
 
 function approachSteps(g: GameState, b: Building): Extract<Step, { t: 'move' }> {
@@ -779,7 +862,8 @@ const NODE_WORK: Partial<Record<PropId, { res: ResourceId; per: number; seconds:
  * Hand-gathering: walk to the nearest node of a kind, work it until an armful
  * is up, and haul that to the nearest store. `slow` is the untrained penalty —
  * it does not apply to deadfall, because picking sticks up off the ground is
- * not a skill anybody is short of.
+ * not a skill anybody is short of. `haul` is off only during founding, where
+ * there is no store to walk to and the load stays in the founder's arms.
  */
 function planGatherNode(
   g: GameState,
@@ -788,6 +872,7 @@ function planGatherNode(
   radius: number,
   xp: JobId,
   slow: boolean,
+  haul = true,
 ): boolean {
   const work = NODE_WORK[prop];
   if (!work) return false;
@@ -795,19 +880,21 @@ function planGatherNode(
   if (!node) return false;
   const goals = neighbours(g, node.x, node.y);
   if (goals.length === 0) return false;
-  const store = nearestStore(g, node.x, node.y);
-  if (!store) return false;
+  const store = haul ? nearestStore(g, node.x, node.y) : null;
+  if (haul && !store) return false;
 
   claim(g, v, 'node', node.y * g.w + node.x, node.x, node.y);
-  // Never swing at a node for longer than it has left in it.
+  // Never swing at a node for longer than it has left in it, nor for more than
+  // there is room in your arms for.
   const left = tileAt(g, node.x, node.y)?.amount ?? 0;
-  const trips = clamp(Math.min(Math.floor(CARRY_CAPACITY / work.per), Math.ceil(left / work.per)), 1, 4);
+  const room = CARRY_CAPACITY - (v.carrying?.res === work.res ? v.carrying.qty : 0);
+  const trips = clamp(Math.min(Math.floor(room / work.per), Math.ceil(left / work.per)), 1, 4);
   const steps: Step[] = [{ t: 'move', x: node.x, y: node.y, goals }];
   for (let i = 0; i < trips; i++) {
     steps.push({ t: 'act', dur: work.seconds * (slow ? 1.25 : 1), kind: 'gathering', xp });
     steps.push({ t: 'take', res: work.res, qty: work.per, from: 'tile', x: node.x, y: node.y });
   }
-  steps.push(...storeLeg(g, store));
+  if (store) steps.push(...storeLeg(g, store));
   v.plan = steps;
   return true;
 }
@@ -932,11 +1019,8 @@ function planProduce(g: GameState, v: Villager, b: Building): boolean {
   return planHelper(g, v);
 }
 
-/**
- * Everything nobody else is doing, in rough order of urgency. `gather` is off
- * only during founding, where what to pick up is decided elsewhere.
- */
-function planHelper(g: GameState, v: Villager, gather = true): boolean {
+/** Everything nobody else is doing, in rough order of urgency. */
+function planHelper(g: GameState, v: Villager): boolean {
   // 1. Construction sites short of materials.
   for (const b of g.buildings) {
     if (b.stage !== 'building') continue;
@@ -1014,7 +1098,6 @@ function planHelper(g: GameState, v: Villager, gather = true): boolean {
   }
 
   // 5. Gather by hand whatever the kingdom is shortest of.
-  if (!gather) return false;
   if (storageFree(g) < 6) noticeStoreFull(g);
   else {
     const wants: { res: ResourceId; deficit: number }[] = [];
@@ -1036,26 +1119,28 @@ function planHelper(g: GameState, v: Villager, gather = true): boolean {
   return false;
 }
 
+/** What a site is being paid: its own cost, or the cost of the improvement under way. */
+export function siteCost(b: Building): Partial<Record<ResourceId, number>> {
+  return b.upgrading ? upgradeCostOf(b.def, b.level) : BUILDINGS[b.def].cost;
+}
+
 function missingMaterials(b: Building): { res: ResourceId; qty: number } | null {
-  const def = BUILDINGS[b.def];
-  const mul = b.upgrading ? def.upgradeCostMul ?? 2 : 1;
-  for (const k in def.cost) {
+  const cost = siteCost(b);
+  for (const k in cost) {
     const res = k as ResourceId;
-    const need = Math.ceil((def.cost[res] ?? 0) * mul);
     const have = b.delivered[res] ?? 0;
-    if (have < need) return { res, qty: need - have };
+    if (have < (cost[res] ?? 0)) return { res, qty: (cost[res] ?? 0) - have };
   }
   return null;
 }
 
 /** Material checklist for a site, for the selection panel. */
 export function siteNeeds(b: Building): { res: ResourceId; need: number; have: number }[] {
-  const def = BUILDINGS[b.def];
-  const mul = b.upgrading ? def.upgradeCostMul ?? 2 : 1;
+  const cost = siteCost(b);
   const out: { res: ResourceId; need: number; have: number }[] = [];
-  for (const k in def.cost) {
+  for (const k in cost) {
     const res = k as ResourceId;
-    out.push({ res, need: Math.ceil((def.cost[res] ?? 0) * mul), have: b.delivered[res] ?? 0 });
+    out.push({ res, need: cost[res] ?? 0, have: b.delivered[res] ?? 0 });
   }
   return out;
 }

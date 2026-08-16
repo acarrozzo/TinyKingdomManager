@@ -20,6 +20,8 @@ import {
   DAY_LENGTH,
   DAYS_PER_SEASON,
   JOB_META,
+  buildingName,
+  upgradeCostOf,
 } from './sim/defs';
 import {
   abandonPlan,
@@ -36,7 +38,7 @@ import {
   villagerById,
 } from './sim/state';
 import { completeConstruction, siteNeeds, updateVillagers } from './sim/villager';
-import { canChooseCamp, chooseCamp, protectedBuilding } from './sim/founding';
+import { awaitingChest, canChooseCamp, chooseCamp, foundingDone, protectedBuilding } from './sim/founding';
 import { updateWildlife, resetWildlifeCache } from './sim/wildlife';
 import { updatePopulation } from './sim/population';
 import { updateGoals, availableToBuild } from './sim/goals';
@@ -105,6 +107,8 @@ export class Game {
   private wheelMode: 'wheel' | 'trackpad' | 'pinch' = 'wheel';
   private wheelAt = 0;
   private zoomAcc = 0;
+  /** Whether the chest placement has already been offered, so it is offered once. */
+  private chestPrompted = false;
   private autosaveTimer = AUTOSAVE_INTERVAL;
   private lastFrame = 0;
   private running = false;
@@ -173,6 +177,7 @@ export class Game {
     this.slotName = slotName;
     this.selection = { kind: null, id: 0 };
     this.tool = { kind: 'none' };
+    this.chestPrompted = false;
     this.camera.stopFollowing();
     resetWildlifeCache();
     this.rebuildTileFlags();
@@ -249,20 +254,32 @@ export class Game {
       }
     }
 
-    this.syncCampTool();
+    this.syncFoundingTool();
     this.camera.update(realDt, this.followTarget(), g.w, g.h);
     this.updateAudio(realDt);
   }
 
   /**
-   * The campsite marker arms itself, because at that moment it is the only
-   * thing the player can do — and disarms itself the instant the ground is
-   * chosen, so nothing is left hanging on the cursor.
+   * Founding puts its two placements on the cursor rather than in a menu. The
+   * campsite marker arms itself while the founder waits to be told where to
+   * stop — at that moment it is the only thing the player can do — and the
+   * chest arms itself once the fire is lit. The marker cannot be dismissed; the
+   * chest can, and is armed once rather than forced, since by then the player
+   * has a kingdom to look at and may want to look at it.
    */
-  private syncCampTool(): void {
+  private syncFoundingTool(): void {
     const choosing = this.state.founding.stage === 'choosing';
     if (choosing && this.tool.kind !== 'camp') this.setTool({ kind: 'camp' });
     else if (!choosing && this.tool.kind === 'camp') this.cancelTool();
+
+    if (awaitingChest(this.state)) {
+      if (!this.chestPrompted) {
+        this.chestPrompted = true;
+        if (this.tool.kind === 'none') this.setTool({ kind: 'build', def: 'chest' });
+      }
+    } else {
+      this.chestPrompted = false;
+    }
   }
 
   private simulate(dt: number): void {
@@ -680,6 +697,9 @@ export class Game {
 
   /** True when the kingdom could actually supply this building right now. */
   canAffordNew(def: BuildingId): boolean {
+    // During founding there is no store to check: the founder is carrying the
+    // wood, and will go and fetch the rest if they are short.
+    if (!foundingDone(this.state)) return true;
     const cost = BUILDINGS[def].cost;
     const reserved = this.reservedMaterials();
     for (const k in cost) {
@@ -741,6 +761,10 @@ export class Game {
 
     audio.thud(1.2, 0.05);
     this.selection = { kind: 'building', id: b.id };
+    // Founding placements are one-offs, so the cursor lets go afterwards. Every
+    // other building keeps the tool armed, because laying out a row of houses
+    // should not mean going back to the menu five times.
+    if (!foundingDone(g)) this.cancelTool();
     this.notify();
     return true;
   }
@@ -752,18 +776,20 @@ export class Game {
 
     if (!t.building) return;
     const b = buildingById(g, t.building);
-    if (!b) return;
-    const kept = protectedBuilding(b);
-    if (kept) {
-      toast(g, kept, b.def === 'campfire' ? '🔥' : b.def === 'woodpile' ? '🪵' : '🧰', 'warn');
-      return;
-    }
-    this.removeBuilding(b, true);
+    if (b) this.removeBuilding(b, true);
   }
 
   removeBuilding(b: Building, refund: boolean): void {
     const g = this.state;
     const def = BUILDINGS[b.def];
+    // Every way of taking a building down comes through here — the demolish
+    // tool, and the Remove button on a building's own panel — so the things
+    // that stay put are refused in one place.
+    const kept = protectedBuilding(b);
+    if (kept) {
+      toast(g, kept, b.def === 'campfire' ? '🔥' : '🧰', 'warn');
+      return;
+    }
 
     if (refund) {
       for (const k in def.cost) {
@@ -913,7 +939,7 @@ export class Game {
     if (!setVillagerHome(this.state, v, buildingId)) return false;
     const b = buildingById(this.state, v.home);
     if (b && v.home !== before) {
-      v.history.push({ day: this.state.day, text: `Moved into the ${BUILDINGS[b.def].name.toLowerCase()}.` });
+      v.history.push({ day: this.state.day, text: `Moved into the ${buildingName(b.def, b.level).toLowerCase()}.` });
       if (v.history.length > 30) v.history.shift();
     }
     audio.tick();
@@ -937,12 +963,9 @@ export class Game {
     const def = BUILDINGS[b.def];
     if (b.stage !== 'done' || b.upgrading) return false;
     if (b.level >= def.maxLevel) return false;
-    const mul = def.upgradeCostMul ?? 2;
     const reserved = this.reservedMaterials();
-    for (const k in def.cost) {
-      const res = k as ResourceId;
-      const need = Math.ceil((def.cost[res] ?? 0) * mul);
-      if (this.state.stock[res] - (reserved[res] ?? 0) < need) return false;
+    for (const { res, qty } of this.upgradeCost(b)) {
+      if (this.state.stock[res] - (reserved[res] ?? 0) < qty) return false;
     }
     return true;
   }
@@ -954,18 +977,14 @@ export class Game {
     b.stage = 'building';
     b.labour = 0;
     b.delivered = {};
-    toast(this.state, `${BUILDINGS[b.def].name} improvements started`, '⬆️', 'info');
+    toast(this.state, `${buildingName(b.def, b.level)} improvements started`, '⬆️', 'info');
     this.notify();
   }
 
   upgradeCost(b: Building): { res: ResourceId; qty: number }[] {
-    const def = BUILDINGS[b.def];
-    const mul = def.upgradeCostMul ?? 2;
+    const cost = upgradeCostOf(b.def, b.level);
     const out: { res: ResourceId; qty: number }[] = [];
-    for (const k in def.cost) {
-      const res = k as ResourceId;
-      out.push({ res, qty: Math.ceil((def.cost[res] ?? 0) * mul) });
-    }
+    for (const k in cost) out.push({ res: k as ResourceId, qty: cost[k as ResourceId] ?? 0 });
     return out;
   }
 
