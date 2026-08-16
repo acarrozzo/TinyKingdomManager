@@ -948,6 +948,8 @@ button {
   border-bottom: 1px solid var(--edge);
 }
 .modal header h2 {
+  flex: 1;
+  min-width: 0;
   margin: 0;
   font-size: 15px;
   font-weight: 700;
@@ -973,6 +975,39 @@ button {
 .modal .tabs button.on {
   color: var(--accent);
   border-bottom-color: var(--accent);
+}
+/*
+ * The building's own sprite beside its name, at one canvas pixel per art pixel
+ * and never scaled. The box takes whatever size that sprite is — from a 46×35
+ * bench to a 78×96 windmill — because cropping to a fixed frame either beheads
+ * the tall ones or strands the small ones in a lot of empty air, and only one
+ * building is ever on screen to compare against.
+ */
+.mpic {
+  display: flex;
+  align-items: flex-end;
+  flex-shrink: 0;
+  margin-right: 13px;
+}
+.mpic canvas {
+  image-rendering: pixelated;
+}
+.modal header h2 .msub {
+  display: block;
+  font-size: 11.5px;
+  font-weight: 400;
+  color: var(--dim);
+  margin-top: 3px;
+  letter-spacing: 0;
+}
+/* Actions that apply to the whole panel sit below the scrolling body. */
+.modal .foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding: 11px 18px;
+  border-top: 1px solid var(--edge);
+  background: rgba(0, 0, 0, 0.14);
 }
 
 .entry {
@@ -1021,6 +1056,117 @@ button {
   color: var(--dim);
   line-height: 1.45;
   margin-top: 5px;
+}
+
+/* ------------------------------------------------- the building panel */
+
+.bsec {
+  margin-top: 15px;
+}
+.bsec:first-child {
+  margin-top: 0;
+}
+.bsec > .bh {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+  color: var(--faint);
+  margin-bottom: 7px;
+}
+
+/*
+ * People drift in and out of "Here now" constantly. The box is a fixed height
+ * — not a minimum — and scrolls, so an empty doorway and a crowd of six leave
+ * everything below them in exactly the same place.
+ */
+.bhere {
+  /* Two rows and a sliver of a third, so a crowd visibly has more to scroll. */
+  height: 110px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+.bempty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+}
+
+/*
+ * One row of a roster: who, what they are up to, and the one control that
+ * applies to them. The middle column is allowed to shrink to nothing so the
+ * name and the control keep their space on a narrow screen.
+ */
+.brow {
+  display: grid;
+  grid-template-columns: minmax(96px, 1.1fr) minmax(0, 1.5fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 5px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  font-size: 12.5px;
+}
+.brow .who {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  font-weight: 600;
+  overflow: hidden;
+}
+.brow .who .nm {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.brow .who:hover {
+  color: var(--accent);
+}
+/*
+ * Portraits are art pixels: never let the browser smooth them. The chip behind
+ * them is what makes a figure legible — villager colours are mid-tones chosen
+ * to sit on grass, and against a dark panel they otherwise read as a smudge.
+ */
+.pic {
+  display: block;
+  flex-shrink: 0;
+  image-rendering: pixelated;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow: inset 0 0 0 1px var(--edge);
+}
+.brow .what {
+  color: var(--dim);
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.brow .ctl {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  justify-content: flex-end;
+}
+.brow .ctl select {
+  max-width: 168px;
+}
+
+.badd {
+  display: flex;
+  gap: 7px;
+  margin-top: 10px;
+}
+.badd select {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Anything that opens another panel reads as a link rather than a button. */
+.link {
+  cursor: pointer;
+  color: var(--accent);
+  border-bottom: 1px dotted currentColor;
 }
 
 .people-row {
@@ -1324,6 +1470,29 @@ kbd {
   }
   .modal .body {
     padding: 12px 14px 16px;
+  }
+  .modal .foot {
+    padding: 10px 14px;
+  }
+  /* At 390px a roster row cannot hold three columns; the control drops under. */
+  .brow {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 4px 8px;
+  }
+  /* Those rows are half again as tall, so the fixed box has to grow to match. */
+  .bhere {
+    height: 146px;
+  }
+  .brow .what {
+    grid-column: 1;
+    grid-row: 2;
+  }
+  .brow .ctl {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+  }
+  .brow .ctl select {
+    max-width: 132px;
   }
   #ui .tip,
   #ui .vtip {

@@ -45,6 +45,7 @@ export function makeVillager(g: GameState, r: RNG, x: number, y: number, name?: 
     job: 'helper',
     workplace: 0,
     home: 0,
+    homeFixed: false,
     trait: r.pick(TRAIT_IDS) as TraitId,
     xp: {},
     carrying: null,
@@ -374,6 +375,41 @@ export function assignHome(g: GameState, v: Villager): void {
   }
   v.home = best ? best.id : 0;
   if (best) best.residents.push(v.id);
+}
+
+/**
+ * Puts a villager in a particular bed because the player said so. Pass 0 to
+ * hand them back to `assignHome` and let them settle wherever suits.
+ *
+ * A hand-placed bed sets `homeFixed`, which is the whole point of it: without
+ * that flag a finished cottage would quietly collect anyone sleeping rough and
+ * undo the arrangement the player just made.
+ */
+export function setHome(g: GameState, v: Villager, buildingId: number): boolean {
+  const prev = buildingById(g, v.home);
+  if (buildingId === 0) {
+    if (prev) prev.residents = prev.residents.filter((id) => id !== v.id);
+    v.home = 0;
+    v.homeFixed = false;
+    assignHome(g, v);
+    abandonPlan(g, v);
+    return true;
+  }
+  const b = buildingById(g, buildingId);
+  if (!b || b.stage !== 'done' || homeCapacity(b) === 0) return false;
+  if (b.id === v.home) {
+    // Already living here — the player is only pinning them in place.
+    v.homeFixed = true;
+    return true;
+  }
+  if (b.residents.length >= homeCapacity(b)) return false;
+  if (prev) prev.residents = prev.residents.filter((id) => id !== v.id);
+  b.residents.push(v.id);
+  v.home = b.id;
+  v.homeFixed = true;
+  // Rethink at once: someone already asleep gets up and walks to the new bed.
+  abandonPlan(g, v);
+  return true;
 }
 
 // ---------------------------------------------------------------------------

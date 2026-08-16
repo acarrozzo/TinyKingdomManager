@@ -4,7 +4,7 @@
  * clean viewing mode, which is the point of the whole thing.
  */
 
-import type { GameState, JobId, ResourceId, SpeciesId, Villager } from '../types';
+import type { Building, GameState, JobId, PropId, ResourceId, SpeciesId, Villager } from '../types';
 import { RESOURCE_ORDER, STORED_RESOURCES } from '../types';
 import {
   BUILDINGS,
@@ -39,8 +39,9 @@ import {
 } from '../save/save';
 import { newGame } from '../sim/state';
 import { ZOOM_LEVELS } from '../render/camera';
+import { paintBuilding, paintVillager } from './portraits';
 
-type ModalKind = 'journal' | 'wildlife' | 'people' | 'kingdom' | 'settings' | null;
+type ModalKind = 'journal' | 'wildlife' | 'people' | 'kingdom' | 'settings' | 'building' | null;
 
 const el = (tag: string, cls?: string, html?: string): HTMLElement => {
   const n = document.createElement(tag);
@@ -57,6 +58,8 @@ export class UI {
   private game: Game;
   private modal: ModalKind = null;
   private modalTab = 0;
+  /** What is currently mounted in the modal host, so a redraw can update in place. */
+  private modalMount = '';
   private buildOpen = false;
   private introDismissed = false;
   private lastRender = 0;
@@ -83,6 +86,7 @@ export class UI {
     this.game = game;
     this.build();
     game.onChange = () => this.refresh();
+    game.onBuildingClicked = () => this.setModal('building');
     this.bindKeys();
     this.refresh();
   }
@@ -329,6 +333,9 @@ export class UI {
     this.renderBuildPanel();
     if (!editing || !this.sideRight.contains(active)) this.renderInspector();
     this.renderGoals();
+    // A building panel is a live view of the place — who is standing in it, what
+    // is on the shelf — so it keeps up, unless a dropdown in it is open.
+    if (this.modal === 'building' && !(editing && this.modalHost.contains(active))) this.renderModal();
   }
 
   // -------------------------------------------------------------------------
@@ -516,7 +523,7 @@ export class UI {
     let html = '';
     if (sel.kind === 'villager') html = this.villagerCard();
     else if (sel.kind === 'animal') html = this.animalCard();
-    else if (sel.kind === 'building') html = this.buildingCard();
+    // Buildings get the whole modal instead of a card in the margin.
     else if (sel.kind === 'tile') html = this.tileCard();
     this.sideRight.innerHTML = html
       ? `<div class="panel scroll" style="flex:0 1 auto;max-height:100%">${html}</div>`
@@ -574,7 +581,8 @@ export class UI {
       <div class="section">
         <div class="h">Work</div>
         <select data-act="assign" data-id="${v.id}" style="width:100%">${jobOptions}</select>
-        ${work ? `<div class="tiny muted" style="margin-top:5px">Working at the ${esc(BUILDINGS[work.def].name.toLowerCase())}</div>` : ''}
+        ${work ? `<div class="tiny muted" style="margin-top:5px">Working at the
+          <span class="link" data-act="select-building" data-id="${work.id}">${esc(BUILDINGS[work.def].name.toLowerCase())}</span></div>` : ''}
       </div>
 
       <div class="section">
@@ -582,7 +590,11 @@ export class UI {
       </div>
 
       <div class="section">
-        <div class="kv"><span class="k">Home</span><span class="v">${home ? esc(BUILDINGS[home.def].name) : 'None yet'}</span></div>
+        <div class="kv"><span class="k">Home</span><span class="v">${
+          home
+            ? `<span class="link" data-act="select-building" data-id="${home.id}">${esc(BUILDINGS[home.def].name)}</span>${v.homeFixed ? ' <span class="muted tiny">· your choice</span>' : ''}`
+            : 'None yet'
+        }</span></div>
         <div class="kv"><span class="k">Rested</span><span class="v">${Math.round(v.energy * 100)}%</span></div>
         <div class="kv"><span class="k">Appetite</span><span class="v">${v.hunger > 0.7 ? 'Hungry' : v.hunger > 0.4 ? 'Peckish' : 'Fine'}</span></div>
         ${v.carrying ? `<div class="kv"><span class="k">Carrying</span><span class="v">${RESOURCE_META[v.carrying.res].icon} ${Math.round(v.carrying.qty)}</span></div>` : ''}
@@ -728,124 +740,417 @@ export class UI {
     </div>`;
   }
 
-  private buildingCard(): string {
-    const g = this.g;
-    const b = this.game.selectedBuilding();
-    if (!b) return '';
+  // -------------------------------------------------------------------------
+  // The building panel
+  //
+  // A building gets the whole modal rather than a card in the margin: the point
+  // of it is the roster, and a roster needs room. Everything here is a live
+  // view — it re-renders a few times a second while it is open.
+  // -------------------------------------------------------------------------
+
+  private buildingTabs(b: Building): string[] {
     const def = BUILDINGS[b.def];
-    let body = '';
+    if (b.stage !== 'done') return ['Site', 'About'];
+    const tabs = ['People'];
+    if (def.recipe || def.plots || def.harvests) tabs.push('Work');
+    tabs.push('About');
+    return tabs;
+  }
 
-    if (b.stage === 'building') {
-      const needs = siteNeeds(b);
-      const need = labourNeeded(b);
-      const rows = needs
-        .map((n) => {
-          const pct = n.need > 0 ? Math.min(100, (n.have / n.need) * 100) : 100;
-          return `<div class="need"><span>${RESOURCE_META[n.res].icon}</span>
-            <span class="track"><i style="width:${pct}%"></i></span>
-            <span class="num">${Math.floor(n.have)}/${n.need}</span></div>`;
-        })
-        .join('');
-      const labourPct = need > 0 ? Math.min(100, (b.labour / need) * 100) : 100;
-      const crew = g.villagers.filter((v) => v.claim?.kind === 'labour' && v.claim.id === b.id).length;
-      body = `<div class="section"><div class="h">${b.upgrading ? 'Improvement under way' : 'Under construction'}</div>
-        <div class="needs">${rows}
-        <div class="need"><span>🔨</span><span class="track"><i style="width:${labourPct}%;background:var(--good)"></i></span>
-        <span class="num">${Math.round(labourPct)}%</span></div></div>
-        <div class="tiny muted" style="margin-top:8px">${
-          crew > 0
-            ? `${crew} villager${crew === 1 ? '' : 's'} working on it.`
-            : needs.some((n) => n.have < n.need)
-              ? 'Waiting for materials to be carried over.'
-              : 'Waiting for someone free to come and build it.'
-        }</div></div>`;
-    } else {
-      if (def.slots) {
-        const slots = jobSlots(b);
-        const workers = b.workers
-          .map((id) => villagerById(g, id))
-          .filter((v): v is Villager => !!v)
-          .map((v) => {
-            const xp = def.job ? xpOf(v, def.job) : 0;
-            const rank = rankOf(xp);
-            return `<div class="worker"><span class="who" data-act="select-villager" data-id="${v.id}" style="cursor:pointer">${esc(v.name)}</span>
-              <span class="row" style="gap:6px"><span class="tiny" style="color:${RANK_COLOR[rank]}">${rank}</span>
-              <button class="btn small" data-act="unassign" data-id="${v.id}">Remove</button></span></div>`;
-          })
-          .join('');
-        body += `<div class="section"><div class="h">Workers · ${b.workers.length}/${slots}</div>
-          ${workers || '<div class="tiny muted">Nobody works here yet.</div>'}
-          ${b.workers.length < slots ? `<button class="btn small" style="margin-top:8px" data-act="autostaff" data-id="${b.id}">Assign a helper</button>` : ''}
-        </div>`;
-      }
+  private buildingBody(b: Building, tab: string): string {
+    switch (tab) {
+      case 'Site':
+        return this.siteBody(b);
+      case 'People':
+        return this.buildingPeople(b);
+      case 'Work':
+        return this.buildingWork(b);
+      default:
+        return this.buildingAbout(b);
+    }
+  }
 
-      if (def.recipe) {
-        const inRes = Object.keys(def.recipe.inputs)[0] as ResourceId;
-        const outRes = Object.keys(def.recipe.outputs)[0] as ResourceId;
-        const inQty = def.recipe.inputs[inRes] ?? 0;
-        const outQty = def.recipe.outputs[outRes] ?? 0;
-        body += `<div class="section"><div class="h">Makes</div>
-          <div class="row tiny" style="gap:6px">
-            <span class="tag">${RESOURCE_META[inRes].icon} ${inQty} ${RESOURCE_META[inRes].name}</span>
-            <span class="muted">→</span>
-            <span class="tag accent">${RESOURCE_META[outRes].icon} ${outQty} ${RESOURCE_META[outRes].name}</span>
-          </div>
-          <div class="kv" style="margin-top:8px"><span class="k">On hand</span><span class="v">${Math.floor(b.input[inRes] ?? 0)} ${RESOURCE_META[inRes].name.toLowerCase()}</span></div>
-          <div class="kv"><span class="k">Ready to collect</span><span class="v">${Math.floor(b.output[outRes] ?? 0)} ${RESOURCE_META[outRes].name.toLowerCase()}</span></div>
-        </div>`;
-      }
+  /**
+   * Who is physically at the building, which is not the same as who belongs to
+   * it. The ring of one tile matters: buildings are solid, so somebody asleep in
+   * a cottage is really standing at its door.
+   */
+  private peopleAt(b: Building): Villager[] {
+    const def = BUILDINGS[b.def];
+    return this.g.villagers.filter((v) => {
+      const x = Math.round(v.x);
+      const y = Math.round(v.y);
+      return x >= b.x - 1 && x <= b.x + def.w && y >= b.y - 1 && y <= b.y + def.h;
+    });
+  }
 
-      if (def.plots && b.plots.length) {
-        const ripe = b.plots.filter((p) => p.state === 'ripe').length;
-        const growing = b.plots.filter((p) => p.state === 'growing').length;
-        body += `<div class="section"><div class="h">Fields</div>
-          <div class="kv"><span class="k">Ready to harvest</span><span class="v">${ripe}</span></div>
-          <div class="kv"><span class="k">Growing</span><span class="v">${growing}</span></div>
-          <div class="kv"><span class="k">Bare</span><span class="v">${b.plots.length - ripe - growing}</span></div>
-          ${g.season === 'winter' ? '<div class="tiny muted" style="margin-top:6px">Wheat is slow in winter. It will pick up again in spring.</div>' : ''}
-        </div>`;
-      }
+  private roleAt(b: Building, v: Villager): string {
+    const works = v.workplace === b.id;
+    const lives = v.home === b.id;
+    if (works && lives) return 'works and sleeps here';
+    if (works) return 'works here';
+    if (lives) return 'sleeps here';
+    return 'passing through';
+  }
 
-      if (def.housing) {
-        const cap = homeCapacity(b);
-        const names = b.residents
-          .map((id) => villagerById(g, id))
-          .filter((v): v is Villager => !!v)
-          .map((v) => `<span class="tag" data-act="select-villager" data-id="${v.id}" style="cursor:pointer">${esc(v.name)}</span>`)
-          .join(' ');
-        body += `<div class="section"><div class="h">Residents · ${b.residents.length}/${cap}</div>
-          <div class="row" style="gap:5px">${names || '<span class="tiny muted">Empty.</span>'}</div></div>`;
-      }
+  /** One line of the roster: who they are, what they are doing, and one control. */
+  private rosterRow(v: Villager, what: string, note: string, control: string): string {
+    return `<div class="brow">
+      <span class="who" data-act="select-villager" data-id="${v.id}">
+        <canvas class="pic" data-pic="villager" data-id="${v.id}"></canvas>
+        <span class="nm">${v.favorite ? '★ ' : ''}${esc(v.name)}</span>
+      </span>
+      <span class="what">${esc(what)}${note ? ` <span class="muted">· ${esc(note)}</span>` : ''}</span>
+      <span class="ctl">${control}</span>
+    </div>`;
+  }
 
-      if (def.storage) {
-        body += `<div class="section"><div class="kv"><span class="k">Holds</span><span class="v">${def.storage[Math.min(b.level, def.storage.length) - 1]} goods</span></div></div>`;
-      }
-      if (def.harvests) {
-        body += `<div class="section"><div class="tiny muted" style="line-height:1.55">Workers here use ${def.harvests === 'tree' ? 'trees' : 'boulders'} within a short walk. They come back on their own.</div></div>`;
+  /**
+   * Draws every portrait the panel has just asked for. Called after the markup
+   * lands, in the same task, so a canvas is never shown before it has anything
+   * in it.
+   */
+  private paintPortraits(): void {
+    const g = this.g;
+    for (const node of this.modalHost.querySelectorAll('canvas[data-pic]')) {
+      const canvas = node as HTMLCanvasElement;
+      const id = Number(canvas.dataset.id);
+      if (canvas.dataset.pic === 'villager') {
+        const v = villagerById(g, id);
+        if (v) paintVillager(canvas, v);
+      } else {
+        const b = buildingById(g, id);
+        if (b) paintBuilding(canvas, b, g.season);
       }
     }
+  }
 
-    const canUp = this.game.canUpgrade(b);
+  private buildingPeople(b: Building): string {
+    const g = this.g;
+    const def = BUILDINGS[b.def];
+    let out = '';
+
+    /*
+     * People wander in and out of this list constantly, so the box holds a
+     * couple of rows' worth of height whether or not anybody is in it. Without
+     * that the whole panel jumps every time somebody walks past a bench.
+     */
+    const here = this.peopleAt(b).sort((p, q) => p.name.localeCompare(q.name));
+    out += `<div class="bsec"><div class="bh">Here now${here.length ? ` · ${here.length}` : ''}</div>
+      <div class="bhere">${
+        here.length
+          ? here
+              .map((v) =>
+                this.rosterRow(
+                  v,
+                  activityLabel(v),
+                  this.roleAt(b, v),
+                  `<button class="btn small" data-act="follow-villager" data-id="${v.id}">Watch</button>`,
+                ),
+              )
+              .join('')
+          : `<div class="bempty tiny muted">Nobody is standing here just now.</div>`
+      }</div></div>`;
+
+    if (def.slots) {
+      const slots = jobSlots(b);
+      const rows = b.workers
+        .map((id) => villagerById(g, id))
+        .filter((v): v is Villager => !!v)
+        .map((v) => {
+          const xp = def.job ? xpOf(v, def.job) : 0;
+          const rank = rankOf(xp);
+          return this.rosterRow(
+            v,
+            activityLabel(v),
+            '',
+            `<span class="tiny" style="color:${RANK_COLOR[rank]}">${rank}</span>
+             <button class="btn small" data-act="unassign" data-id="${v.id}">Remove</button>`,
+          );
+        })
+        .join('');
+      const free = slots - b.workers.length;
+      out += `<div class="bsec"><div class="bh">Working here · ${b.workers.length}/${slots}</div>
+        ${rows || '<div class="tiny muted">Nobody works here yet, so nothing is being made.</div>'}
+        ${
+          free > 0
+            ? `<div class="badd">
+                <select data-act="assign-to" data-id="${b.id}">${this.workerOptions(b)}</select>
+                <button class="btn small" data-act="autostaff" data-id="${b.id}">Nearest free hand</button>
+              </div>
+              <div class="tiny muted" style="margin-top:6px">${free} place${free === 1 ? '' : 's'} still open. Taking somebody off another job is allowed — they keep everything they have learned.</div>`
+            : `<div class="tiny muted" style="margin-top:8px">Every place is taken. Improving the building adds more.</div>`
+        }</div>`;
+    }
+
+    if (def.housing) {
+      const cap = homeCapacity(b);
+      const rows = b.residents
+        .map((id) => villagerById(g, id))
+        .filter((v): v is Villager => !!v)
+        .map((v) =>
+          this.rosterRow(
+            v,
+            // Not "asleep here": a house hemmed in by others cannot always be
+            // reached, and its residents bed down as close as they got.
+            activityLabel(v),
+            v.homeFixed ? 'your choice' : 'settled here',
+            `<select data-act="move-home" data-id="${v.id}">${this.homeOptions(b)}</select>`,
+          ),
+        )
+        .join('');
+      const free = cap - b.residents.length;
+      const roofless = g.villagers.filter((v) => !buildingById(g, v.home)).length;
+      out += `<div class="bsec"><div class="bh">Beds · ${b.residents.length}/${cap}</div>
+        ${rows || '<div class="tiny muted">Nobody sleeps here yet.</div>'}
+        ${
+          free > 0
+            ? `<div class="badd"><select data-act="house-in" data-id="${b.id}">${this.moveInOptions(b)}</select></div>
+               <div class="tiny muted" style="margin-top:6px">${free} bed${free === 1 ? '' : 's'} spare.${
+                 roofless > 0
+                   ? ` ${roofless} ${roofless === 1 ? 'person has' : 'people have'} nowhere to sleep.`
+                   : ' Anyone you move in stays put; anyone who settled here on their own may be tempted away by a better house.'
+               }</div>`
+            : `<div class="tiny muted" style="margin-top:8px">Full. Improving it adds beds, or build another house.</div>`
+        }</div>`;
+    }
+
+    if (!def.slots && !def.housing) {
+      out += `<div class="bsec"><div class="tiny muted" style="line-height:1.55">Nobody is assigned here — it is not that sort of building. People come and go of their own accord.</div></div>`;
+    }
+    return out;
+  }
+
+  /** Every villager who could take a place here, labelled with what it would cost. */
+  private workerOptions(b: Building): string {
+    const g = this.g;
+    let out = `<option value="0" selected>Put someone to work here…</option>`;
+    const people = g.villagers.filter((v) => v.workplace !== b.id).sort((p, q) => p.name.localeCompare(q.name));
+    for (const v of people) {
+      const post = buildingById(g, v.workplace);
+      const rank = post ? rankOf(xpOf(v, v.job)) : null;
+      const where = post
+        ? `${JOB_META[v.job].name.toLowerCase()} at the ${BUILDINGS[post.def].name.toLowerCase()}`
+        : 'helper, unattached';
+      const warn = rank === 'Expert' || rank === 'Master' ? ` ⚠ ${rank}` : '';
+      out += `<option value="${v.id}">${esc(v.name)} — ${esc(where)}${warn}</option>`;
+    }
+    return out;
+  }
+
+  /** Houses a resident could be moved to, plus the option to stop choosing for them. */
+  private homeOptions(b: Building): string {
+    const g = this.g;
+    let out = `<option value="${b.id}" selected>Stays here</option>`;
+    for (const o of g.buildings) {
+      if (o.id === b.id || o.stage !== 'done' || homeCapacity(o) === 0) continue;
+      if (o.residents.length >= homeCapacity(o)) continue;
+      out += `<option value="${o.id}">Move to the ${esc(BUILDINGS[o.def].name.toLowerCase())}</option>`;
+    }
+    out += `<option value="0">Let them settle wherever</option>`;
+    return out;
+  }
+
+  private moveInOptions(b: Building): string {
+    const g = this.g;
+    let out = `<option value="0" selected>Move someone in…</option>`;
+    const people = g.villagers.filter((v) => v.home !== b.id).sort((p, q) => p.name.localeCompare(q.name));
+    for (const v of people) {
+      const home = buildingById(g, v.home);
+      const where = home ? `sleeps at the ${BUILDINGS[home.def].name.toLowerCase()}` : 'no bed at all';
+      out += `<option value="${v.id}">${esc(v.name)} — ${esc(where)}</option>`;
+    }
+    return out;
+  }
+
+  /** What the place is actually doing: the recipe, the fields, the shelf. */
+  private buildingWork(b: Building): string {
+    const g = this.g;
+    const def = BUILDINGS[b.def];
+    let out = '';
+
+    if (def.recipe) {
+      const inRes = Object.keys(def.recipe.inputs)[0] as ResourceId;
+      const outRes = Object.keys(def.recipe.outputs)[0] as ResourceId;
+      const inQty = def.recipe.inputs[inRes] ?? 0;
+      const outQty = def.recipe.outputs[outRes] ?? 0;
+      const held = Math.floor(b.input[inRes] ?? 0);
+      const made = Math.floor(b.output[outRes] ?? 0);
+      out += `<div class="bsec"><div class="bh">Makes</div>
+        <div class="row tiny" style="gap:6px">
+          <span class="tag">${RESOURCE_META[inRes].icon} ${inQty} ${RESOURCE_META[inRes].name}</span>
+          <span class="muted">→</span>
+          <span class="tag accent">${RESOURCE_META[outRes].icon} ${outQty} ${RESOURCE_META[outRes].name}</span>
+          <span class="muted">every ${Math.round(def.recipe.seconds)}s</span>
+        </div>
+        <div class="need" style="margin-top:10px"><span>🔨</span>
+          <span class="track"><i style="width:${Math.round(Math.min(1, b.progress) * 100)}%;background:var(--good)"></i></span>
+          <span class="num">${Math.round(Math.min(1, b.progress) * 100)}%</span></div>
+        <div class="kv" style="margin-top:8px"><span class="k">${RESOURCE_META[inRes].name} on hand</span><span class="v">${held}</span></div>
+        <div class="kv"><span class="k">${RESOURCE_META[outRes].name} waiting to be carried off</span><span class="v">${made}</span></div>
+        <div class="tiny muted" style="margin-top:7px;line-height:1.55">${
+          b.workers.length === 0
+            ? 'Nobody is here to run it, so it sits idle.'
+            : held < inQty
+              ? `Short of ${RESOURCE_META[inRes].name.toLowerCase()}. Whoever works here will go and fetch some${g.stock[inRes] > 0 ? '' : ', once the kingdom has any'}.`
+              : 'Everything it needs is to hand.'
+        }</div></div>`;
+    }
+
+    if (def.plots && b.plots.length) {
+      const ripe = b.plots.filter((p) => p.state === 'ripe').length;
+      const growing = b.plots.filter((p) => p.state === 'growing').length;
+      const bare = b.plots.length - ripe - growing;
+      const nearest = b.plots
+        .filter((p) => p.state === 'growing')
+        .reduce((best, p) => Math.max(best, p.growth), 0);
+      out += `<div class="bsec"><div class="bh">Fields · ${b.plots.length} plots</div>
+        <div class="kv"><span class="k">Ready to harvest</span><span class="v">${ripe}</span></div>
+        <div class="kv"><span class="k">Growing</span><span class="v">${growing}${growing ? ` · furthest along ${Math.round(nearest * 100)}%` : ''}</span></div>
+        <div class="kv"><span class="k">Bare</span><span class="v">${bare}</span></div>
+        <div class="tiny muted" style="margin-top:7px;line-height:1.55">${
+          b.workers.length === 0
+            ? 'With no farmer the plots still creep along, at about a third the pace, but nothing gets sown or gathered in.'
+            : g.season === 'winter'
+              ? 'Wheat is slow in winter. It will pick up again in spring.'
+              : 'Farmers reap what is ripe before sowing anything bare.'
+        }</div></div>`;
+    }
+
+    if (def.harvests) {
+      const what = def.harvests === 'tree' ? 'trees' : 'boulders';
+      const res = def.harvests === 'tree' ? 'wood' : 'stone';
+      const nearby = this.nodesNear(b, def.harvests);
+      out += `<div class="bsec"><div class="bh">Works the ground nearby</div>
+        <div class="kv"><span class="k">${cap(what)} within reach</span><span class="v">${nearby}</span></div>
+        <div class="kv"><span class="k">${RESOURCE_META[res].name} in the store</span><span class="v">${Math.floor(g.stock[res as ResourceId])}</span></div>
+        <div class="tiny muted" style="margin-top:7px;line-height:1.55">${
+          nearby === 0
+            ? `Nothing left within a short walk. They will range further, and be slower for it, until these grow back.`
+            : `Workers here take the nearest ${what}, haul the load to the closest store, and come back for more.`
+        }</div></div>`;
+    }
+    return out || `<div class="tiny muted">Nothing is made here.</div>`;
+  }
+
+  /** Rough count of what a lodge or quarry has left to work within its usual range. */
+  private nodesNear(b: Building, prop: PropId): number {
+    const g = this.g;
+    const def = BUILDINGS[b.def];
+    const cx = b.x + def.w / 2;
+    const cy = b.y + def.h / 2;
+    let n = 0;
+    for (let y = Math.max(0, Math.floor(cy - 13)); y < Math.min(g.h, Math.ceil(cy + 13)); y++)
+      for (let x = Math.max(0, Math.floor(cx - 13)); x < Math.min(g.w, Math.ceil(cx + 13)); x++) {
+        const t = g.tiles[y * g.w + x];
+        if (t.prop === prop && t.amount > 0) n++;
+      }
+    return n;
+  }
+
+  private siteBody(b: Building): string {
+    const g = this.g;
+    const needs = siteNeeds(b);
+    const need = labourNeeded(b);
+    const rows = needs
+      .map((n) => {
+        const pct = n.need > 0 ? Math.min(100, (n.have / n.need) * 100) : 100;
+        return `<div class="need"><span>${RESOURCE_META[n.res].icon}</span>
+          <span class="track"><i style="width:${pct}%"></i></span>
+          <span class="num">${Math.floor(n.have)}/${n.need}</span></div>`;
+      })
+      .join('');
+    const labourPct = need > 0 ? Math.min(100, (b.labour / need) * 100) : 100;
+    const crew = g.villagers.filter((v) => v.claim?.kind === 'labour' && v.claim.id === b.id);
+    const haulers = g.villagers.filter((v) => v.claim?.kind === 'supply' && v.claim.id === b.id);
+
+    return `<div class="bsec"><div class="bh">${b.upgrading ? 'Improvement under way' : 'Under construction'}</div>
+      <div class="needs">${rows}
+        <div class="need"><span>🔨</span><span class="track"><i style="width:${labourPct}%;background:var(--good)"></i></span>
+        <span class="num">${Math.round(labourPct)}%</span></div></div>
+      <div class="tiny muted" style="margin-top:9px;line-height:1.55">${
+        crew.length > 0
+          ? `${crew.length} building it${haulers.length ? `, ${haulers.length} carrying materials over` : ''}.`
+          : needs.some((n) => n.have < n.need)
+            ? haulers.length
+              ? `${haulers.length} on the way with materials.`
+              : 'Waiting for materials to be carried over. Helpers pick this up before anything else.'
+            : 'Everything it needs is here. Waiting for somebody free to come and build it.'
+      }</div></div>
+      ${
+        crew.length + haulers.length > 0
+          ? `<div class="bsec"><div class="bh">On it</div>${[...crew, ...haulers]
+              .map((v) =>
+                this.rosterRow(
+                  v,
+                  activityLabel(v),
+                  '',
+                  `<button class="btn small" data-act="follow-villager" data-id="${v.id}">Watch</button>`,
+                ),
+              )
+              .join('')}</div>`
+          : ''
+      }`;
+  }
+
+  private buildingAbout(b: Building): string {
+    const def = BUILDINGS[b.def];
+    const facts: string[] = [];
+    const kv = (k: string, v: string) => `<div class="kv"><span class="k">${k}</span><span class="v">${v}</span></div>`;
+
+    if (def.maxLevel > 1) facts.push(kv('Level', `${b.level} of ${def.maxLevel}`));
+    if (def.housing) facts.push(kv('Beds', `${homeCapacity(b)}`));
+    if (def.slots) facts.push(kv('Places to work', `${jobSlots(b)}`));
+    if (def.storage) facts.push(kv('Adds to the store', `${def.storage[Math.min(b.level, def.storage.length) - 1]}`));
+    if (def.job) facts.push(kv('Trade', JOB_META[def.job].name));
+    facts.push(kv('Stands on', `${def.w}×${def.h} tiles at ${b.x}, ${b.y}`));
+    if (b.stage === 'done' && b.built) facts.push(kv('Built', `Day ${b.built}`));
+    if (def.light) facts.push(kv('After dark', 'Lit'));
+
+    const gains = this.improveGains(b);
     const upgradeable = b.stage === 'done' && b.level < def.maxLevel && !b.upgrading;
-    const upCost = upgradeable
+    const cost = upgradeable
       ? this.game
           .upgradeCost(b)
-          .map((c) => `${RESOURCE_META[c.res].icon}${c.qty}`)
-          .join(' ')
+          .map((c) => `${RESOURCE_META[c.res].icon} ${c.qty}`)
+          .join(' · ')
       : '';
 
-    return `<div class="insp">
-      <div class="title"><span class="name">${esc(def.name)}</span>
-      ${def.maxLevel > 1 ? `<span class="tag">Level ${b.level}</span>` : ''}</div>
-      <div class="sub">${esc(def.desc)}</div>
-      ${body}
-      <div class="actions">
-        ${upgradeable ? `<button class="btn small ${canUp ? 'primary' : ''}" data-act="upgrade" data-id="${b.id}" ${canUp ? '' : 'disabled'}>⬆️ Improve ${upCost}</button>` : ''}
-        <button class="btn small" data-act="goto" data-x="${b.x}" data-y="${b.y}">Centre</button>
-        ${BUILDINGS[b.def].order < 0 ? '' : `<button class="btn small danger" data-act="demolish" data-id="${b.id}">Remove</button>`}
+    return `<div class="bsec">
+        <div class="tiny" style="line-height:1.6;color:var(--dim)">${esc(def.desc)}</div>
       </div>
-      ${b.stage === 'done' && b.built ? `<div class="tiny muted" style="margin-top:9px">Built on day ${b.built}.</div>` : ''}
-    </div>`;
+      <div class="bsec"><div class="bh">How it works</div>
+        <div class="tiny muted" style="line-height:1.65">${esc(def.how)}</div>
+      </div>
+      <div class="bsec"><div class="bh">The particulars</div>${facts.join('')}</div>
+      ${
+        upgradeable
+          ? `<div class="bsec"><div class="bh">Improving it</div>
+              ${kv('Costs', cost)}
+              ${gains.map((line) => `<div class="tiny muted" style="line-height:1.55">${esc(line)}</div>`).join('')}
+              <div class="tiny muted" style="margin-top:6px;line-height:1.55">The work is done the same way as building it: materials carried over, then somebody swinging a hammer.</div>
+            </div>`
+          : b.upgrading
+            ? `<div class="bsec"><div class="tiny muted">Improvements are under way. See the Site tab.</div></div>`
+            : def.maxLevel > 1
+              ? `<div class="bsec"><div class="tiny muted">It is as good as it gets.</div></div>`
+              : ''
+      }`;
+  }
+
+  /** What one more level actually buys, read straight off the def. */
+  private improveGains(b: Building): string[] {
+    const def = BUILDINGS[b.def];
+    const i = b.level - 1;
+    const out: string[] = [];
+    const step = (arr: number[] | undefined, noun: string) => {
+      if (!arr || i + 1 >= arr.length) return;
+      out.push(`${noun}: ${arr[i]} → ${arr[i + 1]}`);
+    };
+    step(def.housing, 'Beds');
+    step(def.slots, 'Places to work');
+    step(def.storage, 'Room in the store');
+    return out;
   }
 
   // -------------------------------------------------------------------------
@@ -878,6 +1183,11 @@ export class UI {
   // -------------------------------------------------------------------------
 
   private setModal(kind: ModalKind): void {
+    // Closing a building's panel drops its highlight with it, so nothing is left
+    // outlined on the map with no panel to explain why.
+    if (this.modal === 'building' && kind !== 'building' && this.game.selection.kind === 'building') {
+      this.game.select(null, 0);
+    }
     this.modal = kind;
     this.modalTab = 0;
     this.refresh();
@@ -886,13 +1196,51 @@ export class UI {
   private renderModal(): void {
     if (!this.modal) {
       this.modalHost.innerHTML = '';
+      this.modalMount = '';
       return;
     }
     let title = '';
     let body = '';
     let tabs = '';
+    let sub = '';
+    let foot = '';
+    let pic = '';
 
     switch (this.modal) {
+      case 'building': {
+        const b = this.game.selectedBuilding();
+        // Demolished while the panel was open, or nothing selected at all.
+        if (!b) {
+          this.modalHost.innerHTML = '';
+          this.modalMount = '';
+          // Set directly rather than through setModal: this runs inside a
+          // render, and nothing else needs to change.
+          this.modal = null;
+          return;
+        }
+        const def = BUILDINGS[b.def];
+        const names = this.buildingTabs(b);
+        const tab = names[Math.min(this.modalTab, names.length - 1)];
+        title = def.name;
+        sub =
+          b.stage === 'done'
+            ? def.maxLevel > 1
+              ? `Level ${b.level} of ${def.maxLevel}`
+              : esc(def.desc)
+            : b.upgrading
+              ? 'Being improved'
+              : 'Being built';
+        tabs = names
+          .map(
+            (t, i) => `<button data-act="tab" data-i="${i}" class="${t === tab ? 'on' : ''}">${t}</button>`,
+          )
+          .join('');
+        body = this.buildingBody(b, tab);
+        foot = this.buildingFoot(b);
+        // Lives outside the h2 that gets swapped, so the picture is mounted once.
+        pic = `<span class="mpic"><canvas data-pic="building" data-id="${b.id}"></canvas></span>`;
+        break;
+      }
       case 'journal':
         title = 'Kingdom Journal';
         body = this.journalBody();
@@ -916,12 +1264,67 @@ export class UI {
         break;
     }
 
+    const head = `${esc(title)}${sub ? `<span class="msub">${sub}</span>` : ''}`;
+    const mounted = this.modalHost.querySelector('.modal');
+    const sig = `${this.modal}:${this.modal === 'building' ? this.game.selection.id : ''}`;
+
+    /*
+     * A building panel redraws several times a second. Replacing the whole
+     * modal each time restarts the scrim's fade — which reads as a flicker, and
+     * was invisible in the source and obvious in a screenshot — and throws away
+     * the body's scroll position. So the same panel is updated in place.
+     */
+    if (mounted && this.modalMount === sig) {
+      const swap = (sel: string, html: string) => {
+        const node = mounted.querySelector(sel);
+        if (!node || node.innerHTML === html) return;
+        const keep = node.scrollTop;
+        // "Here now" is a fixed-height scroller inside the body, so it needs
+        // its own place kept as well — it is replaced along with everything else.
+        const inner = node.querySelector('.bhere')?.scrollTop ?? 0;
+        node.innerHTML = html;
+        node.scrollTop = keep;
+        const here = node.querySelector('.bhere');
+        if (here) here.scrollTop = inner;
+      };
+      swap('h2', head);
+      swap('.tabs', tabs);
+      swap('.body', body);
+      swap('.foot', foot);
+      this.paintPortraits();
+      return;
+    }
+
+    this.modalMount = sig;
     this.modalHost.innerHTML = `<div class="scrim" data-act="close-scrim">
       <div class="modal" data-stop="1">
-        <header><h2>${esc(title)}</h2><button class="btn small" data-act="close-modal">Close</button></header>
+        <header>${pic}<h2>${head}</h2>
+          <button class="btn small" data-act="close-modal">Close</button></header>
         ${tabs ? `<div class="tabs">${tabs}</div>` : ''}
         <div class="body">${body}</div>
+        ${foot ? `<div class="foot">${foot}</div>` : ''}
       </div></div>`;
+    this.paintPortraits();
+  }
+
+  /** The three things you might do to a building, on every tab of its panel. */
+  private buildingFoot(b: Building): string {
+    const def = BUILDINGS[b.def];
+    const upgradeable = b.stage === 'done' && b.level < def.maxLevel && !b.upgrading;
+    const canUp = this.game.canUpgrade(b);
+    const cost = upgradeable
+      ? this.game
+          .upgradeCost(b)
+          .map((c) => `${RESOURCE_META[c.res].icon}${c.qty}`)
+          .join(' ')
+      : '';
+    return `${
+      upgradeable
+        ? `<button class="btn small ${canUp ? 'primary' : ''}" data-act="upgrade" data-id="${b.id}" ${canUp ? '' : 'disabled'}>⬆️ Improve ${cost}</button>`
+        : ''
+    }
+      <button class="btn small" data-act="goto" data-x="${b.x}" data-y="${b.y}">Show me</button>
+      ${def.order < 0 ? '' : `<button class="btn small danger" data-act="demolish" data-id="${b.id}">Remove</button>`}`;
   }
 
   private journalBody(): string {
@@ -1194,6 +1597,12 @@ export class UI {
       }
       case 'goto':
         game.centerOn(Number(target.dataset.x), Number(target.dataset.y));
+        // No use centring the map on something with a panel over the top of it.
+        if (this.modal) this.setModal(null);
+        break;
+      case 'select-building':
+        game.select('building', id);
+        this.setModal('building');
         break;
       case 'save-now':
         game.save();
@@ -1251,6 +1660,17 @@ export class UI {
         break;
       case 'assign':
         this.game.assign(id, Number(target.value));
+        break;
+      // These three read the other way round: the row knows the building or the
+      // resident, and the chosen option is the person or the house.
+      case 'assign-to':
+        if (Number(target.value)) this.game.assign(Number(target.value), id);
+        break;
+      case 'house-in':
+        if (Number(target.value)) this.game.setHome(Number(target.value), id);
+        break;
+      case 'move-home':
+        this.game.setHome(id, Number(target.value));
         break;
       case 'set-bubbles':
         this.game.updateSettings({ showBubbles: target.checked });

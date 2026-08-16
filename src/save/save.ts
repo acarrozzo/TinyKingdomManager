@@ -190,6 +190,7 @@ export function serialize(g: GameState): SavePayload {
       job: v.job,
       workplace: v.workplace,
       home: v.home,
+      homeFixed: v.homeFixed,
       trait: v.trait,
       xp: v.xp,
       carrying: v.carrying,
@@ -396,6 +397,8 @@ function reviveVillager(v: any): Villager {
     job: v.job ?? 'helper',
     workplace: v.workplace ?? 0,
     home: v.home ?? 0,
+    // Older saves predate hand-picked beds; everyone in them settled on their own.
+    homeFixed: !!v.homeFixed,
     trait: v.trait ?? 'steady',
     xp: v.xp ?? {},
     carrying: v.carrying ?? null,

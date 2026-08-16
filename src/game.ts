@@ -31,6 +31,7 @@ import {
   makeBuilding,
   newGame,
   seasonForDay,
+  setHome as setVillagerHome,
   storageCapacity,
   villagerById,
 } from './sim/state';
@@ -81,6 +82,12 @@ export class Game {
 
   /** Notifies the interface that something worth redrawing has changed. */
   onChange: (() => void) | null = null;
+  /**
+   * Fired only when the player clicks a building on the map, so the interface
+   * can open its panel. Deliberately not fired by `place()` — popping a panel
+   * over the map after every placement would fight laying out a row of houses.
+   */
+  onBuildingClicked: ((id: number) => void) | null = null;
 
   private dragging = false;
   private dragMoved = false;
@@ -530,6 +537,7 @@ export class Game {
     if (hit.kind !== 'villager' && hit.kind !== 'animal') this.camera.stopFollowing();
     audio.tick();
     this.notify();
+    if (hit.kind === 'building') this.onBuildingClicked?.(hit.id);
   }
 
   private tileUnder(cssX: number, cssY: number): { x: number; y: number } | null {
@@ -729,6 +737,8 @@ export class Game {
       if (v.workplace === b.id) assignJob(g, v, 0);
       if (v.home === b.id) {
         v.home = 0;
+        // The bed you chose for them no longer exists, so the choice goes with it.
+        v.homeFixed = false;
         assignHome(g, v);
       }
       abandonPlan(g, v);
@@ -849,6 +859,22 @@ export class Game {
       this.notify();
     }
     return ok;
+  }
+
+  /** Moves a villager into a particular bed. Pass 0 to let them settle on their own. */
+  setHome(villagerId: number, buildingId: number): boolean {
+    const v = villagerById(this.state, villagerId);
+    if (!v) return false;
+    const before = v.home;
+    if (!setVillagerHome(this.state, v, buildingId)) return false;
+    const b = buildingById(this.state, v.home);
+    if (b && v.home !== before) {
+      v.history.push({ day: this.state.day, text: `Moved into the ${BUILDINGS[b.def].name.toLowerCase()}.` });
+      if (v.history.length > 30) v.history.shift();
+    }
+    audio.tick();
+    this.notify();
+    return true;
   }
 
   /** Fills a building's free slots with the nearest available helpers. */

@@ -20,6 +20,7 @@ import {
   clearBuildingCache,
   clearCropCache,
   ctxOf,
+  drawMillSails,
   getBuildingSprite,
   getCropSprite,
   mkCanvas,
@@ -420,20 +421,9 @@ export class Renderer {
   }
 
   /** Sails turn while the mill has a miller working it. */
+  /** Sails turn briskly with a miller at work and barely at all without one. */
   private drawMillSails(bd: Building, cx: number, cy: number): void {
-    const b = this.bctx;
-    const spin = bd.workers.length > 0 ? this.time * 1.1 : this.time * 0.18;
-    b.fillStyle = '#e8dcc0';
-    for (let i = 0; i < 4; i++) {
-      const a = spin + (i * Math.PI) / 2;
-      for (let r = 3; r < 13; r++) {
-        const px = Math.round(cx + Math.cos(a) * r);
-        const py = Math.round(cy + Math.sin(a) * r * 0.62);
-        b.fillRect(px, py, 2, 2);
-      }
-    }
-    b.fillStyle = '#6b5334';
-    b.fillRect(Math.round(cx) - 1, Math.round(cy) - 1, 3, 3);
+    drawMillSails(this.bctx, cx, cy, this.time * (bd.workers.length > 0 ? 1.1 : 0.18));
   }
 
   /** A thin bar over a site showing how far the build has got. */

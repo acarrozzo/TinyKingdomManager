@@ -100,6 +100,8 @@ export interface BuildingDef {
   /** Cost multiplier applied per upgrade step. */
   upgradeCostMul?: number;
   desc: string;
+  /** Longer explanation of how the building actually behaves, for its own panel. */
+  how: string;
   /** Sleeping capacity per level. */
   housing?: number[];
   /** Shared storage capacity contributed per level. */
@@ -205,6 +207,8 @@ export interface Villager {
   job: JobId;
   workplace: number;
   home: number;
+  /** The player chose this bed, so nothing in the sim quietly moves them out of it. */
+  homeFixed: boolean;
   trait: TraitId;
   /** Profession experience, 0..100 each. */
   xp: Partial<Record<JobId, number>>;

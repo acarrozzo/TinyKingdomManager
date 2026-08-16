@@ -406,6 +406,25 @@ export function clearBuildingCache(): void {
   buildingCache.clear();
 }
 
+/**
+ * The windmill's sails, at `spin` radians. Not baked into the building sprite
+ * like everything else, because they turn: the renderer draws them over the
+ * mill every frame at whatever angle the clock has reached. Lives here anyway,
+ * with the rest of the building art, so the interface can draw a still one for
+ * the mill's own panel rather than keeping a second copy of the shape.
+ */
+export function drawMillSails(ctx: CanvasRenderingContext2D, cx: number, cy: number, spin: number): void {
+  ctx.fillStyle = '#e8dcc0';
+  for (let i = 0; i < 4; i++) {
+    const a = spin + (i * Math.PI) / 2;
+    for (let r = 3; r < 13; r++) {
+      ctx.fillRect(Math.round(cx + Math.cos(a) * r), Math.round(cy + Math.sin(a) * r * 0.62), 2, 2);
+    }
+  }
+  ctx.fillStyle = '#6b5334';
+  ctx.fillRect(Math.round(cx) - 1, Math.round(cy) - 1, 3, 3);
+}
+
 export function getBuildingSprite(
   def: BuildingId,
   w: number,

@@ -449,6 +449,8 @@ export function completeConstruction(g: GameState, b: Building): void {
   // A finished house takes in anyone still sleeping by the fire.
   if (def.housing) {
     for (const v of g.villagers) {
+      // A bed the player picked is never quietly reassigned, even to a better one.
+      if (v.homeFixed) continue;
       const home = buildingById(g, v.home);
       if (home && home.def !== 'campfire') continue;
       if (b.residents.length >= homeCapacity(b)) break;

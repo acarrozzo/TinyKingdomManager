@@ -133,6 +133,7 @@ src/
   audio/audio.ts      WebAudio synthesis (no files)
   save/save.ts        slots, RLE tile packing, export/import
   ui/ui.ts            all DOM interface
+  ui/portraits.ts     map art painted into interface canvases
   ui/style.css        all styling
   game.ts             clock, input routing, every player-facing operation
 scripts/              simcheck.ts, roundtrip.ts, shot.mjs
@@ -148,6 +149,11 @@ It also holds the player-facing copy that describes the world rather than a
 building: `TERRAIN_META` and `PROP_META` (what the tile inspector says about
 ground and what is standing on it) and `RESOURCE_INFO` (the from/for lines in
 the top-bar hover). New descriptive copy of that kind goes here too.
+
+Every building has two strings: `desc`, the one-line summary in the build menu,
+and `how`, a paragraph in its own panel explaining what it actually does —
+ranges, batch times, when workers stop. `how` states real mechanics, so a change
+to those numbers means a change to that copy.
 
 ---
 
@@ -168,6 +174,13 @@ data freely. After a load everyone simply re-decides. Do not try to save them.
 **Deferred consequences use `effect` steps**, not callbacks — `{ t: 'effect',
 kind: 'batch' | 'sow' | 'reap' | 'eat' }`. That keeps steps plain data and
 consequences exactly aligned with the end of the action that caused them.
+
+**Beds are automatic until the player says otherwise.** `assignHome()` puts
+somebody in the nearest free bed, and a finished house collects anyone still
+sleeping by the campfire. `setHome()` is the player's version and sets
+`homeFixed`, which both of those then leave alone — without that flag the next
+cottage would quietly undo whatever arrangement was just made. The flag clears
+if the house is demolished, or through "let them settle wherever".
 
 **Claims prevent collisions.** `claim()` / `releaseClaim()` reserve a tree, a
 farm plot, or a task so two villagers do not walk to the same one. Always release
@@ -281,8 +294,48 @@ buttons disable at each end of the ladder and say the current level.
 
 **Speed lives in Settings → Viewing**, not on the map, along with `space` and
 `1`/`2`/`3`. **Removing a building lives at the foot of the build panel**, not in
-the top bar; a building's own panel also has a Remove button. Both were moved
-out of the way deliberately — do not put them back on the map chrome.
+the top bar; a building's own panel has Improve, Show me and Remove in its
+footer. Both were moved out of the way deliberately — do not put them back on
+the map chrome.
+
+**Villagers, animals and tiles get a card in the right margin; a building gets
+the whole modal.** Clicking a building on the map fires `game.onBuildingClicked`
+— deliberately not fired by `place()`, so laying out a row of houses is not
+interrupted by a panel — and the UI opens a **People · Work · About** panel
+(**Site · About** while it is still being built). The margin has no building
+card at all any more. Closing the panel clears the selection, so nothing is left
+outlined on the map with nothing to explain it.
+
+That panel is a *live* view: `refreshPanels()` redraws it a few times a second so
+"Here now", batch progress and site materials keep up. Two consequences worth
+knowing. It skips the redraw while a `<select>` inside it has focus, or opening a
+dropdown would slam shut under the player. And it updates the existing nodes in
+place rather than rewriting `modalHost.innerHTML` — replacing the whole modal
+restarts the scrim's fade animation, which reads as a flicker (invisible in the
+source, obvious in a screenshot) and throws away the body's scroll position.
+
+**`ui/portraits.ts` paints the map's own art into the interface** — the figure
+beside a name in a roster is `drawVillager` at 2× on a still, empty-handed pose,
+and the picture in the header is the building's cached sprite at 1:1. Both go
+into `<canvas>` nodes the panel has already inserted, painted in the same task,
+rather than into `<img src="data:…">` that could be caught mid-decode by the
+next redraw. Poses are deliberately frozen: at 2.6 redraws a second a walk cycle
+twitches and a windmill's sails look broken rather than turning. That is also
+why `drawMillSails` lives in `sprites.ts` and not privately in the renderer —
+the sails are not baked into the sprite, so the panel has to draw them too.
+
+**"Here now" is a fixed height, not a minimum.** People wander in and out of it
+constantly; a box that grows and shrinks drags everything below it up and down
+the whole time. It holds two rows and scrolls, and its scroll position is one of
+the things the in-place update has to preserve. Mobile rows are half again as
+tall, so that height is set per breakpoint.
+
+**"Here now" means within one tile of the footprint**, which is exactly where
+`footprintApproach()` puts people, so it is the honest definition of being at a
+building. It is not the same as the roster: `findPath` gets as close as it can,
+so a house hemmed in by other buildings has residents who bed down several tiles
+away. Do not label a bed row "asleep here" — say what they are doing and let
+"Here now" answer where they are.
 
 **`touch-action: manipulation` on `#ui` is load-bearing.** Without it, tapping
 the same button twice quickly triggers the browser's double-tap-to-zoom and
