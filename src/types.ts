@@ -400,6 +400,18 @@ export interface GameState {
   weatherKind: 'clear' | 'rain' | 'snow';
   /** Task reservations keyed by "kind:id" → villager id. */
   claims: Map<string, number>;
+  /**
+   * Wildlife pacing. Lives on the state rather than in the wildlife module
+   * because it has to survive a save and be left behind when the player opens a
+   * different kingdom — module-level timers did neither, and a reload used to
+   * hand every species a fresh spawn roll.
+   */
+  wildlife: {
+    /** Game seconds until the next habitat survey. */
+    survey: number;
+    /** Per-species spawn cooldown, in game seconds. */
+    cooldown: Partial<Record<SpeciesId, number>>;
+  };
   founderId: number;
   founding: Founding;
   stats: {

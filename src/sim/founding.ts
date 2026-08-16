@@ -23,10 +23,7 @@ import { BUILDINGS } from './defs';
 import { journal, toast } from './journal';
 import { makeBuilding } from './state';
 import { rng } from '../core/util';
-import { tileAt } from '../world/terrain';
-
-/** How far from the middle of the island a campsite may be, in tiles. */
-export const CAMP_RADIUS = 9;
+import { CAMP_RADIUS, tileAt } from '../world/terrain';
 
 export function foundingActive(g: GameState): boolean {
   return g.founding.stage !== 'done';
@@ -43,6 +40,10 @@ export function foundingDone(g: GameState): boolean {
 /**
  * Why this tile will not do, or null when it will. The wording is the message
  * the player actually reads, so it says what is wrong rather than what is right.
+ *
+ * `campSuitable` in `world/terrain.ts` is the same rule without the sentences —
+ * map generation needs it to guarantee a legal campsite exists. Change one and
+ * change the other.
  */
 export function campProblem(g: GameState, x: number, y: number): string | null {
   const t = tileAt(g, x, y);

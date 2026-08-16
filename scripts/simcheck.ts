@@ -3,7 +3,11 @@
  * reports what actually happened, so the economy can be checked and balanced
  * without staring at the screen for an hour.
  *
- *   npx tsx scripts/simcheck.ts [gameMinutes]
+ *   npx tsx scripts/simcheck.ts [gameMinutes] [seed]
+ *
+ * The seed is fixed by default so two runs are comparable — and, now that the
+ * gameplay RNG starts from the world rather than the clock, genuinely identical.
+ * Pass one to see whether a conclusion holds on a different island.
  */
 
 import { newGame, assignJob, buildingById, makeBuilding, storageCapacity } from '../src/sim/state';
@@ -13,7 +17,7 @@ import { updatePopulation } from '../src/sim/population';
 import { availableToBuild, updateGoals } from '../src/sim/goals';
 import { chooseCamp, suggestCamp } from '../src/sim/founding';
 import { updateTerrain, tileAt } from '../src/world/terrain';
-import { BUILDINGS, CARRY_CAPACITY, DAY_LENGTH, upgradeCostOf } from '../src/sim/defs';
+import { BUILDINGS, CARRY_CAPACITY, DAY_LENGTH, SPECIES, upgradeCostOf } from '../src/sim/defs';
 import { rng } from '../src/core/util';
 import type { BuildingId, GameState } from '../src/types';
 import { seasonForDay } from '../src/sim/state';
@@ -21,7 +25,7 @@ import { serialize } from '../src/save/save';
 import { writeFileSync } from 'node:fs';
 
 const minutes = Number(process.argv[2] ?? 90);
-const g = newGame(12345);
+const g = newGame(Number(process.argv[3] ?? 12345));
 
 function place(def: BuildingId, x: number, y: number): boolean {
   const d = BUILDINGS[def];
@@ -291,6 +295,22 @@ const problems: string[] = [];
 for (const v of g.villagers) {
   if (!Number.isFinite(v.x) || !Number.isFinite(v.y)) problems.push(`${v.name} has a broken position`);
   if (v.x < 0 || v.y < 0 || v.x >= g.w || v.y >= g.h) problems.push(`${v.name} walked off the map`);
+}
+// Nothing should ever be standing in a wall or out at sea. Spawning picks a
+// tile off a coarse lattice and then jitters it, which is exactly where a
+// creature ends up somewhere it could not have walked to.
+for (const a of g.animals) {
+  const def = SPECIES[a.species];
+  const t = tileAt(g, Math.round(a.x), Math.round(a.y));
+  if (!t) {
+    problems.push(`a ${def.name.toLowerCase()} is off the map at ${a.x.toFixed(1)},${a.y.toFixed(1)}`);
+    continue;
+  }
+  if (t.building) problems.push(`a ${def.name.toLowerCase()} is inside a building at ${Math.round(a.x)},${Math.round(a.y)}`);
+  const swimmer = (def.habitat.water ?? 0) > 0 || (def.habitat.shallow ?? 0) > 0;
+  if ((t.terrain === 'water' || t.terrain === 'shallow') && !swimmer) {
+    problems.push(`a ${def.name.toLowerCase()} is in the ${t.terrain} at ${Math.round(a.x)},${Math.round(a.y)}`);
+  }
 }
 for (const k in g.stock) {
   const val = g.stock[k as 'wood'];

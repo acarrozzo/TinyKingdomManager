@@ -46,7 +46,7 @@ import {
   foundingDone,
   protectedBuilding,
 } from './sim/founding';
-import { updateWildlife, resetWildlifeCache } from './sim/wildlife';
+import { updateWildlife, rebuildHabitat } from './sim/wildlife';
 import { updatePopulation } from './sim/population';
 import { updateGoals, availableToBuild } from './sim/goals';
 import { journal, toast, updateToasts } from './sim/journal';
@@ -149,6 +149,7 @@ export class Game {
     this.centerOnHeart();
     this.camera.zoomIndex = 1;
     this.rebuildTileFlags();
+    rebuildHabitat(this.state);
     this.attachInput(canvas);
 
     // Before there is anything to look at, the person is the view — and the
@@ -207,7 +208,9 @@ export class Game {
     this.blockReason = null;
     this.chestPrompted = false;
     this.camera.stopFollowing();
-    resetWildlifeCache();
+    // Survey this kingdom's land at once so the habitat scores are never the
+    // previous kingdom's. The pacing came in with the state and is left alone.
+    rebuildHabitat(state);
     this.rebuildTileFlags();
     this.renderer.invalidateGround();
     this.centerOnHeart();

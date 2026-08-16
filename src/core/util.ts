@@ -51,8 +51,32 @@ export class RNG {
   }
 }
 
-/** Global gameplay RNG. Deterministic-ish; reseeded from save. */
+/**
+ * Global gameplay RNG. Every roll the kingdom makes while it is running comes
+ * from here — weather, wildlife, who wanders in — so its position in the stream
+ * is part of the world's state and travels in the save file. It starts from a
+ * world's seed and is restored on load; without that, closing and reopening a
+ * kingdom quietly re-rolled its future.
+ *
+ * The clock is only a fallback for a game state that never announced a seed.
+ */
 export const rng = new RNG(Date.now() & 0xffffffff);
+
+/** 32-bit avalanche mix. Spreads a plain, small or sequential seed across the word. */
+export function mix32(v: number): number {
+  let h = v | 0;
+  h = Math.imul(h ^ (h >>> 16), 0x7feb352d);
+  h = Math.imul(h ^ (h >>> 15), 0x846ca68b);
+  return (h ^ (h >>> 16)) >>> 0;
+}
+
+/**
+ * Points the gameplay RNG at a world. Mixed rather than used raw so that seeds
+ * 1 and 2 do not open with near-identical streams.
+ */
+export function seedGameplayRng(seed: number): void {
+  rng.state = mix32(seed ^ 0x5bf03635);
+}
 
 export const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
 export const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
@@ -67,10 +91,17 @@ export function cycleDelta(a: number, b: number): number {
   return d;
 }
 
-/** Deterministic hash of two integers → [0,1). Used for stable per-tile variation. */
+/**
+ * Deterministic hash of two integers → [0,1). Used for stable per-tile variation.
+ *
+ * The products go through `Math.imul` rather than `*`: a full 32-bit salt times
+ * 2246822519 is far past 2^53, so plain multiplication rounds the x and y terms
+ * clean away and every tile in the map comes back with the same value. Salts
+ * used to be 16 bits, which stayed inside the exact range and hid this.
+ */
 export function hash2(x: number, y: number, salt = 0): number {
-  let h = (x * 374761393 + y * 668265263 + salt * 2246822519) | 0;
-  h = (h ^ (h >>> 13)) * 1274126177;
+  let h = (Math.imul(x, 374761393) + Math.imul(y, 668265263) + Math.imul(salt, 2246822519)) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
   h = h ^ (h >>> 16);
   return (h >>> 0) / 4294967296;
 }

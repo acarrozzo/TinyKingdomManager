@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "sim": "tsx scripts/simcheck.ts",
+    "worldcheck": "tsx scripts/worldcheck.ts",
     "roundtrip": "tsx scripts/roundtrip.ts",
     "shot": "node scripts/shot.mjs"
   },

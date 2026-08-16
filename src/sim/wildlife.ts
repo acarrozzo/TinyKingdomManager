@@ -12,26 +12,49 @@ import { isWalkable, tileAt } from '../world/terrain';
 import { nextId } from '../core/util';
 import { journal, toast } from './journal';
 
-const SURVEY_INTERVAL = 20; // game seconds between habitat surveys
-let surveyTimer = 0;
-let habitatCache: Partial<Record<SpeciesId, { score: number; spots: { x: number; y: number }[] }>> = {};
-/** Per-species cooldown so rare creatures stay rare rather than trickling in. */
-const spawnCooldown: Partial<Record<SpeciesId, number>> = {};
+export const SURVEY_INTERVAL = 20; // game seconds between habitat surveys
 
-export function resetWildlifeCache(): void {
-  surveyTimer = 0;
+/**
+ * The habitat scores, and only those. This is a cache of what the map looks
+ * like right now — derivable from the tiles at any moment, worth nothing after
+ * a save, and correctly thrown away when a different kingdom is opened.
+ *
+ * The *timers* deliberately do not live here: how long a species has left on
+ * its cooldown, and how long until the next survey, are facts about the world
+ * and travel with it in `g.wildlife`. When they lived alongside this cache,
+ * loading a kingdom zeroed every cooldown and set the survey timer to zero,
+ * which handed every species a free spawn roll on the first tick after a
+ * reload. Saving and reopening was the fastest way to find a snowy owl.
+ */
+let habitatCache: Partial<Record<SpeciesId, { score: number; spots: { x: number; y: number }[] }>> = {};
+
+/** A fresh, empty pacing block for a new kingdom. */
+export function newWildlifeTimers(): GameState['wildlife'] {
+  const cooldown: Partial<Record<SpeciesId, number>> = {};
+  for (const k of SPECIES_ORDER) cooldown[k] = 0;
+  return { survey: 0, cooldown };
+}
+
+/**
+ * Points the wildlife system at a world: drops the previous kingdom's habitat
+ * scores and surveys this one immediately, so the cache is never stale and the
+ * saved survey timer is honoured rather than reset. No spawn roll is taken —
+ * loading a kingdom is not an event the wildlife should react to.
+ */
+export function rebuildHabitat(g: GameState): void {
   habitatCache = {};
-  for (const k of SPECIES_ORDER) spawnCooldown[k] = 0;
+  survey(g);
 }
 
 export function updateWildlife(g: GameState, dt: number): void {
+  const timers = g.wildlife;
   for (const k of SPECIES_ORDER) {
-    const left = spawnCooldown[k];
-    if (left && left > 0) spawnCooldown[k] = left - dt;
+    const left = timers.cooldown[k];
+    if (left && left > 0) timers.cooldown[k] = left - dt;
   }
-  surveyTimer -= dt;
-  if (surveyTimer <= 0) {
-    surveyTimer = SURVEY_INTERVAL;
+  timers.survey -= dt;
+  if (timers.survey <= 0) {
+    timers.survey = SURVEY_INTERVAL;
     survey(g);
     considerSpawns(g);
   }
@@ -108,7 +131,7 @@ function considerSpawns(g: GameState): void {
     const hab = habitatCache[id];
     if (!hab || hab.score <= 0 || hab.spots.length === 0) continue;
     if (!isActive(def, g.dayT)) continue;
-    if ((spawnCooldown[id] ?? 0) > 0) continue;
+    if ((g.wildlife.cooldown[id] ?? 0) > 0) continue;
 
     // Uncommon creatures also want a decent amount of the right country before
     // they will show up at all, so a bare kingdom never sees a deer.
@@ -125,11 +148,33 @@ function considerSpawns(g: GameState): void {
     if (!rng.chance(chance)) continue;
 
     const spot = rng.pick(hab.spots);
-    const jx = clamp(spot.x + rng.int(-1, 1), 1, g.w - 2);
-    const jy = clamp(spot.y + rng.int(-1, 1), 1, g.h - 2);
-    spawn(g, id, jx, jy);
-    spawnCooldown[id] = 70 * def.rarity * def.rarity;
+    const at = spawnSpot(g, def, spot);
+    // The offset can land a creature in the pond, inside a building, or off the
+    // survey lattice onto ground it cannot stand on. Better to let the moment
+    // pass than to put a deer in a wall — and the cooldown only starts when
+    // something actually arrived, so a bad roll does not cost the species its
+    // next chance.
+    if (!at) continue;
+    spawn(g, id, at.x, at.y);
+    g.wildlife.cooldown[id] = 70 * def.rarity * def.rarity;
   }
+}
+
+/**
+ * Somewhere near a surveyed spot the creature can actually stand. The lattice is
+ * sampled every other tile, so the spot itself is only ever an approximation of
+ * where the good country is; the jitter is what turns it back into a place.
+ */
+function spawnSpot(g: GameState, def: SpeciesDef, spot: { x: number; y: number }): { x: number; y: number } | null {
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const x = clamp(spot.x + rng.int(-1, 1), 1, g.w - 2);
+    const y = clamp(spot.y + rng.int(-1, 1), 1, g.h - 2);
+    if (canStand(g, def, x, y)) return { x, y };
+  }
+  // The jitter kept missing. The surveyed tile itself scored above zero for this
+  // species, so it is the best remaining guess.
+  if (canStand(g, def, spot.x, spot.y)) return { x: spot.x, y: spot.y };
+  return null;
 }
 
 export function spawn(g: GameState, species: SpeciesId, x: number, y: number): Animal {
@@ -242,7 +287,7 @@ function updateAnimal(g: GameState, a: Animal, dt: number): void {
       const sp = def.speed * (a.state === 'flee' ? 1.7 : 1) * dt;
       const nx = a.x + (dx / d) * sp;
       const ny = a.y + (dy / d) * sp;
-      if (canStand(g, a, nx, ny)) {
+      if (canStand(g, def, nx, ny)) {
         a.x = nx;
         a.y = ny;
       } else {
@@ -257,8 +302,8 @@ function updateAnimal(g: GameState, a: Animal, dt: number): void {
   }
 }
 
-function canStand(g: GameState, a: Animal, x: number, y: number): boolean {
-  const def = SPECIES[a.species];
+/** Whether this kind of creature could be at this point: in bounds, unbuilt, right ground. */
+function canStand(g: GameState, def: SpeciesDef, x: number, y: number): boolean {
   const t = tileAt(g, Math.round(x), Math.round(y));
   if (!t) return false;
   if (t.building) return false;
@@ -273,7 +318,7 @@ function pickDestination(g: GameState, a: Animal, def: SpeciesDef): void {
     const d = rng.range(1.5, def.size === 0 ? 5 : 8);
     const x = clamp(a.x + Math.cos(ang) * d, 1, g.w - 2);
     const y = clamp(a.y + Math.sin(ang) * d, 1, g.h - 2);
-    if (canStand(g, a, x, y)) {
+    if (canStand(g, def, x, y)) {
       a.tx = x;
       a.ty = y;
       return;

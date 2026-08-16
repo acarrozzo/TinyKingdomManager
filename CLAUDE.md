@@ -48,13 +48,14 @@ npm run build        # typecheck + production bundle (~50 kB gzipped)
 
 ## Verifying changes — do not skip this
 
-There are two harnesses, and they exist because this project has two whole
+There are three harnesses, and they exist because this project has three whole
 classes of bug that reading code will not catch.
 
 ### Simulation: `npm run sim`
 
 ```bash
 npm run sim -- 600                    # 600 game-minutes (20 kingdom days)
+npm run sim -- 600 4242               # …on a different island
 TKM_DUMP=k.json npm run sim -- 600    # …and write the end state as a save file
 npm run roundtrip -- k.json           # check a save survives serialisation
 ```
@@ -71,6 +72,32 @@ of storage, wildlife arriving far too fast, XP curves that take 40 hours.
 
 A run of ~600–1000 game-minutes is the useful range. Under ~300 you will not see
 the bakery come online; over ~1200 the kingdom has plateaued and tells you little.
+
+**The run is reproducible.** The gameplay RNG starts from the world's seed
+rather than the clock, so two runs of the same seed and length are byte-for-byte
+identical and a diff between them is meaningful. It also means one run is one
+island: before concluding anything from a number, try `npm run sim -- 700 4242`
+and see whether it holds somewhere else.
+
+### Worlds: `npm run worldcheck`
+
+```bash
+npm run worldcheck                    # 10,000 seeds
+npm run worldcheck -- 100000 900000000  # …a different, larger slice
+npx tsx scripts/worldcheck.ts 1 8     # one seed, the way a failure reports itself
+```
+
+Generates island after island and checks each one is a kingdom somebody could
+start on: the wood and stone the first hour needs, exactly six deadfall piles
+with at least two the founder can walk to, a campsite the game's own rule would
+accept, a beach that connects to it on foot, sane tiles, and the same seed
+giving the same world twice.
+
+**Run this after any change to `world/terrain.ts`.** Generation leans on random
+scatter, and a scatter with a give-up guard is not a guarantee — the failures it
+finds are single seeds in the tens of thousands where the noise came out badly
+and the founder walks up a beach to an island with no firewood on it. It prints
+the failing seed so the world can be regenerated on its own.
 
 ### Visuals: `scripts/shot.mjs`
 
@@ -145,7 +172,7 @@ src/
   ui/portraits.ts     map art painted into interface canvases
   ui/style.css        all styling
   game.ts             clock, input routing, every player-facing operation
-scripts/              simcheck.ts, roundtrip.ts, shot.mjs
+scripts/              simcheck.ts, worldcheck.ts, roundtrip.ts, shot.mjs
 ```
 
 **`src/sim/defs.ts` holds essentially all the tuning**: buildings (size, cost,
@@ -232,6 +259,14 @@ takes a key *or a list*.
 generation: six wood a pile, no axe needed, gone for good once picked up, and
 preferred over trees by every hand-gatherer. Two piles are exactly one founding.
 
+There are **exactly six**, and at least two of them are guaranteed walkable from
+a legal campsite — `generateMap` checks this against the same flood fill the
+beach is checked against, and moves a stranded pile rather than adding a seventh.
+Six is a head start rather than a supply: enough for the founding and a short
+grace period, and then somebody needs an axe. Do not raise the count to smooth
+the early game — deadfall never regrows, so more of it only moves the moment the
+lodge starts mattering, and `npm run worldcheck` asserts the number.
+
 **The interface hides the store until there is one.** `#ui.founding` drops the
 whole resource cluster rather than showing `Store 0/0` about a pool that does not
 exist, and the goals panel shows one instruction instead of two and says what the
@@ -246,6 +281,15 @@ sleeping by the campfire. `setHome()` is the player's version and sets
 `homeFixed`, which both of those then leave alone — without that flag the next
 cabin would quietly undo whatever arrangement was just made. The flag clears
 if the house is demolished, or through "let them settle wherever".
+
+**Nobody walks in on a kingdom that does not exist yet.** `updatePopulation`
+returns before it even decrements its clock while founding runs, so the first
+stranger is not already overdue by the time the chest is finished. And when the
+*only* thing standing in the way is a bed, it retries after about a tenth of a
+day rather than the usual gap of nearly one: the player has just built a cabin,
+and being made to wait most of a day afterwards reads as the cabin not having
+worked. Neither changes how many people end up in a kingdom — the appeal roll
+still governs that — only how long the dead time is.
 
 **Buildings grow rather than being replaced.** There is one house — the **Cabin**,
 2 / 4 / 6 beds — and one first store — the **Chest**, 50 / 200 / 500, named Small,
@@ -301,6 +345,29 @@ cooldown. A species counts as *discovered* only once one comes within 7 tiles of
 a villager or building — so ducks across the pond stay unlisted until somebody
 wanders down there. Current pacing: commons day 1, deer ~day 9, snowy owl in the
 first winter or two.
+
+**A spawn can be refused, and a refused spawn costs nothing.** The survey lattice
+is sampled every other tile and the chosen spot is then jittered, so the tile a
+creature was about to appear on is checked with `canStand` first — in bounds, no
+building, ground this species can be on. If nothing nearby will do, the moment
+passes and the cooldown is *not* started, since a bad roll should not spend the
+species' next chance.
+
+**Wildlife pacing lives on the state, the habitat scores do not.** `g.wildlife`
+holds each species' cooldown and the time to the next survey, and is saved.
+`habitatCache` is a module-level cache of what the map currently looks like, and
+`rebuildHabitat()` — called when a kingdom is opened or swapped — throws it away
+and surveys the new one immediately. Keeping the timers in the module did neither
+job: loading zeroed every cooldown *and* the survey timer, so the first tick
+after a reload rolled for every species at once, and reloading was the fastest
+way to find a snowy owl.
+
+**The gameplay RNG is part of the world.** `rng` is seeded from the world's seed
+in `newGame` and restored from `rngState` on load, so reopening a kingdom
+continues it instead of re-rolling its future. Anything that would need to
+survive a save belongs in `GameState` or in that stream — module-level mutable
+state is neither saved nor cleared when the player opens a different kingdom, and
+both of those bugs have now been found here.
 
 ---
 
@@ -530,6 +597,21 @@ be replaced.
   a screenshot; label things with text anyway, which is better UI regardless.
 - **A tool with no on-screen feedback is undiscoverable.** Arming a mode must
   show a persistent hint saying what it does and how to stop (`.toolbar-hint`).
+- **`hash2` multiplies with `Math.imul`, and has to.** Plain `*` on a full 32-bit
+  salt lands past 2^53, where the x and y terms round clean away and every tile
+  on the map hashes to the same value. This was invisible while salts were 16
+  bits. Any new hashing here uses `imul` throughout.
+- **A guard that gives up is not a guarantee.** Every random scatter in
+  `terrain.ts` — trees, boulders, deadfall — is followed by a deterministic fill
+  from `candidateTiles`, because "throw 4000 darts and hope" fails on a few
+  seeds in ten thousand and those are exactly the unplayable ones. When adding a
+  guarantee, make sure the *counting* rule and the *placing* rule agree on the
+  band: rounding a dart at radius 13.9 to a tile puts it at 14.2, and a fill
+  that counts what it cannot measure reports success one node short.
+- **Bumping `SAVE_VERSION` makes every existing kingdom unopenable.** That is the
+  deliberate policy — files are refused rather than guessed at — but it means the
+  bump is the whole decision, not a detail of one. The message the player gets
+  lives in `ui.ts`, and must not name a particular update.
 
 ---
 
@@ -584,7 +666,9 @@ Master rank is ~10–15 real hours of dedicated work in one trade · storage is 
 single shared pool fed by storage buildings: nothing at all until the Small Chest
 is finished, then 50, 200 or 500 as it is widened, and +250 per storehouse ·
 housing is Cabins alone, 2 / 4 / 6 beds · founding itself is about eighty seconds
-at 1×, twenty of them the walk up the beach.
+at 1×, twenty of them the walk up the beach · a generated island carries at least
+55 trees and 26 boulders within 14 tiles of the middle, and exactly 6 deadfall
+piles, the nearest about 3 tiles from where the kingdom begins.
 
 Per-resource shelf limits — one good never taking more than a share of the
 store — have been discussed and deliberately deferred. Any such limit has to

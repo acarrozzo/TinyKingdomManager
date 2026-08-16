@@ -10,7 +10,8 @@ import type { GameState, SpeciesId, Villager } from '../types';
 import { emptyStock } from '../types';
 import { buildGoals } from '../sim/goals';
 import { restoreIdCounter } from '../sim/state';
-import { resetWildlifeCache } from '../sim/wildlife';
+import { SURVEY_INTERVAL, newWildlifeTimers } from '../sim/wildlife';
+import { clamp, rng, seedGameplayRng } from '../core/util';
 
 const SLOT_INDEX = 'tkm.slots';
 const SLOT_PREFIX = 'tkm.save.';
@@ -21,9 +22,13 @@ const SETTINGS_KEY = 'tkm.settings';
  * equivalent for.
  * 3: one Cabin replaces the Shelter and the Cottage, so any save holding either
  * refers to a building that no longer exists.
+ * 4: the world's luck is part of the world. The gameplay RNG's position and the
+ * wildlife's pacing are written down, so reopening a kingdom continues it rather
+ * than re-rolling its future — and a version 3 file has neither, so its animals
+ * would arrive on a different schedule than the one it was saved on.
  * Older files are refused rather than guessed at.
  */
-export const SAVE_VERSION = 3;
+export const SAVE_VERSION = 4;
 
 export interface SlotInfo {
   id: string;
@@ -157,6 +162,10 @@ export function serialize(g: GameState): SavePayload {
   return {
     version: SAVE_VERSION,
     seed: g.seed,
+    // Where the gameplay RNG had got to. Without this a kingdom's future is
+    // re-rolled every time it is opened, which quietly makes reloading a way of
+    // shopping for weather and wildlife.
+    rngState: rng.state,
     clock: g.clock,
     played: g.played,
     day: g.day,
@@ -231,6 +240,7 @@ export function serialize(g: GameState): SavePayload {
     weatherKind: g.weatherKind,
     founderId: g.founderId,
     founding: g.founding,
+    wildlife: g.wildlife,
     stats: g.stats,
   };
 }
@@ -379,6 +389,7 @@ export function deserialize(raw: unknown): GameState {
     weatherTimer: p.weatherTimer ?? 300,
     weatherKind: p.weatherKind ?? 'clear',
     claims: new Map(),
+    wildlife: reviveWildlife(p.wildlife),
     founderId: p.founderId ?? 0,
     founding: p.founding,
     stats: p.stats ?? { built: 0, harvested: 0, baked: 0, arrivals: 1 },
@@ -386,8 +397,27 @@ export function deserialize(raw: unknown): GameState {
   };
 
   restoreIdCounter(g);
-  resetWildlifeCache();
+  // Pick the gameplay RNG up where the kingdom left it. A file with no recorded
+  // position gets one derived from its own seed rather than the clock, so even
+  // then the same kingdom opens the same way twice.
+  if (typeof p.rngState === 'number' && p.rngState >>> 0) rng.state = p.rngState;
+  else seedGameplayRng(g.seed);
   return g;
+}
+
+/**
+ * Wildlife pacing as saved. Cooldowns and the survey timer are carried across
+ * untouched — the habitat cache is the only thing a load rebuilds, and the
+ * caller does that. A missing block means a kingdom that has yet to run at all.
+ */
+function reviveWildlife(saved: any): GameState['wildlife'] {
+  const fresh = newWildlifeTimers();
+  if (!saved || typeof saved !== 'object') return fresh;
+  const survey = Number(saved.survey);
+  return {
+    survey: Number.isFinite(survey) ? clamp(survey, 0, SURVEY_INTERVAL) : 0,
+    cooldown: { ...fresh.cooldown, ...(saved.cooldown ?? {}) },
+  };
 }
 
 function reviveVillager(v: any): Villager {

@@ -1,6 +1,6 @@
 /** GameState construction plus the shared queries every other system leans on. */
 
-import { RNG, clamp, nextId, setIdFloor } from '../core/util';
+import { RNG, clamp, nextId, seedGameplayRng, setIdFloor } from '../core/util';
 import type {
   Building,
   BuildingId,
@@ -17,6 +17,7 @@ import { BUILDINGS, DAY_LENGTH, DAYS_PER_SEASON, TRAIT_IDS } from './defs';
 import { generateMap, tileAt } from '../world/terrain';
 import { makeName } from './names';
 import { buildGoals } from './goals';
+import { newWildlifeTimers } from './wildlife';
 
 const SKIN = ['#f0c9a0', '#e0ad84', '#c98e63', '#a9714a', '#8a5836', '#6b4228', '#f6dcc0'];
 const HAIR = ['#3a2a1e', '#59402a', '#8a6134', '#b98b4a', '#d9c08a', '#6e6e72', '#c4c0b8', '#8a3f2a'];
@@ -96,6 +97,10 @@ export function makeBuilding(g: GameState, def: BuildingId, x: number, y: number
 export function newGame(seed = Math.floor(Math.random() * 1e9)): GameState {
   const r = new RNG(seed);
   const map = generateMap(seed);
+  // The gameplay RNG starts from the world's own seed rather than the clock, so
+  // a kingdom's weather, wildlife and arrivals are a property of the world and
+  // not of the minute it happened to be created in.
+  seedGameplayRng(seed);
 
   const g: GameState = {
     seed,
@@ -127,6 +132,7 @@ export function newGame(seed = Math.floor(Math.random() * 1e9)): GameState {
     weatherTimer: 400,
     weatherKind: 'clear',
     claims: new Map(),
+    wildlife: newWildlifeTimers(),
     founderId: 0,
     founding: { stage: 'arriving', x: map.start.x, y: map.start.y },
     stats: { built: 0, harvested: 0, baked: 0, arrivals: 1 },

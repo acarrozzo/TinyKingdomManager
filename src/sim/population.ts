@@ -7,6 +7,7 @@ import { RNG, clamp, rng } from '../core/util';
 import type { GameState } from '../types';
 import { DAY_LENGTH } from './defs';
 import { assignHome, housingCapacity, makeVillager } from './state';
+import { foundingActive } from './founding';
 import { isWalkable } from '../world/terrain';
 import { journal, toast } from './journal';
 import { speak } from './villager';
@@ -14,17 +15,36 @@ import { speak } from './villager';
 const POP_LIMIT = 100;
 /** Shortest gap between arrivals, in game seconds. An arrival should be an event. */
 const MIN_GAP = DAY_LENGTH * 0.85;
+/**
+ * How long to wait before looking again when the only thing missing is a bed.
+ * Much shorter than the ordinary gap, because at that point the player has done
+ * something about it — built a cabin — and being made to wait most of a day
+ * afterwards reads as the building not having worked.
+ */
+const BED_RETRY = DAY_LENGTH * 0.12;
 
 export function updatePopulation(g: GameState, dt: number): void {
+  // Nobody walks in on a kingdom that does not exist yet. The clock does not
+  // even run: founding is about eighty seconds, and letting it tick meant the
+  // first stranger was already overdue by the time the chest was finished.
+  if (foundingActive(g)) return;
+
   g.arrivalTimer -= dt;
   if (g.arrivalTimer > 0) return;
-  g.arrivalTimer = MIN_GAP * rng.range(0.8, 1.4);
 
-  if (g.villagers.length >= POP_LIMIT) return;
+  if (g.villagers.length >= POP_LIMIT) {
+    g.arrivalTimer = MIN_GAP;
+    return;
+  }
 
   // Somewhere to sleep is the hard requirement.
   const beds = housingCapacity(g) - g.villagers.length;
-  if (beds < 1) return;
+  if (beds < 1) {
+    g.arrivalTimer = BED_RETRY;
+    return;
+  }
+
+  g.arrivalTimer = MIN_GAP * rng.range(0.8, 1.4);
 
   // Then: is this somewhere anyone would want to move to?
   let appeal = 0;

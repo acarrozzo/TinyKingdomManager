@@ -991,9 +991,10 @@ export class UI {
     this.game.save();
     const state = loadFromSlot(slotId);
     if (!state) {
-      // In practice this is nearly always a kingdom from before the founding
-      // sequence, which cannot be brought forward — it has no beginning to it.
-      alert('That kingdom could not be opened. Kingdoms saved before the founding update cannot be loaded.');
+      // Almost always a kingdom from an older version. Save files are refused
+      // rather than guessed at, and naming one particular update here would go
+      // out of date the next time the format moves.
+      alert('That kingdom was made by an earlier version of the game, and cannot be opened.');
       return;
     }
     const info = listSlots().find((s) => s.id === slotId);
