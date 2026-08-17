@@ -23,6 +23,13 @@
  *
  * It is a picture, not a control. Nothing on it can be clicked, because time is
  * the one thing in this game nobody can hurry.
+ *
+ * The whole bar **stands down at the widest zoom**, where the real sky is on
+ * show with the real sun in it. The strip exists for the hours spent down among
+ * the buildings; up at the widest view it would be the same fact told twice, in
+ * the smaller of the two skies. `--sky-h` goes to zero with it and the top bar
+ * comes up to the edge, and the clock in that bar goes on saying the hour
+ * throughout.
  */
 
 import { clamp } from '../core/util';
@@ -103,7 +110,20 @@ export class DayStrip {
    * sixty times a second to move something one pixel a minute is work nobody
    * asked for.
    */
-  tick(g: GameState): void {
+  tick(g: GameState, hidden = false): void {
+    /*
+     * Off altogether while the real sky is on show. The hover goes with it —
+     * the box it is tested against is only refreshed on a repaint, and a stale
+     * rect left lying at the top of the screen would raise the day's tip over a
+     * bar that is not there. The signature is cleared so the strip repaints
+     * when it comes back rather than holding whatever hour it went away at.
+     */
+    if (hidden) {
+      this.hover = null;
+      this.box = { top: 0, bottom: 0, left: 0, right: 0 };
+      this.sig = '';
+      return;
+    }
     const w = Math.round(this.el.clientWidth);
     if (w <= 0) return;
     const dpr = clamp(window.devicePixelRatio || 1, 1, 3);
@@ -181,8 +201,11 @@ export class DayStrip {
     const sky = celestial(g.dayT, g.day);
     const r = 7;
     const x = clamp(stripT(g.dayT) * w, r + 2, w - r - 2);
-    if (sky.body === 'sun') drawSun(c, x, mid, r, sky.alt, 0.7);
-    else drawMoon(c, x, mid, r - 0.5, sky.phase, 0.9);
+    // The halos are trimmed to about four fifths and a shade over one: the
+    // bloom is a proportion of the disc, and at this size the full share spills
+    // off a seven-pixel ribbon and reads as a smudge.
+    if (sky.body === 'sun') drawSun(c, x, mid, r, sky.alt, 0.8);
+    else drawMoon(c, x, mid, r - 0.5, sky.phase, 1.1);
   }
 }
 

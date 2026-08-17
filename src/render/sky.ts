@@ -247,8 +247,10 @@ type Ctx = CanvasRenderingContext2D;
  * canvas — the sky over the island, and the day strip along the top of the
  * screen — and a sun that is a different sun in each of them is two suns.
  *
- * `halo` scales the bloom for somewhere with less room than the sky; the disc
- * itself is unchanged, so it stays the same object at either size.
+ * `halo` scales the bloom for somewhere with less room than the sky. The bloom
+ * is already a proportion of the disc, so this is a further trim rather than
+ * the thing that keeps a small sun's glow small; the disc itself is unchanged,
+ * so it stays the same object at either size.
  */
 export function drawSun(ctx: Ctx, cx: number, cy: number, r: number, alt: number, halo = 1): void {
   const low = clamp(1 - alt, 0, 1);
@@ -267,11 +269,31 @@ export function drawMoon(ctx: Ctx, cx: number, cy: number, r: number, phase: num
  * The glow goes down `lighter` rather than over the top. A warm ring laid on at
  * an alpha is darker than a pale evening sky however it is coloured, which drew
  * a grey washer round the setting sun.
+ *
+ * Each ring is a *proportion* of the disc rather than so many pixels out from
+ * it, so the same sun drawn at any size is the same sun. As a fixed step it was
+ * a halo on a small body and a hairline round a large one.
  */
+const BLOOM_STEP = 0.21;
+
+/**
+ * How far apart the rings may be before the glow stops being a glow. Three of
+ * them is a fall-off round a body the size of a bead and a bullseye round one
+ * the size of a setting sun, which is what it looked like at the first attempt:
+ * the same proportions, three concentric hoops, painted on the sky.
+ */
+const BLOOM_GAP = 2.5;
+
 function bloom(ctx: Ctx, cx: number, cy: number, r: number, color: string, step: number, scale: number): void {
   ctx.save();
   ctx.globalCompositeOperation = 'lighter';
-  for (let i = 3; i >= 1; i--) fillDisc(ctx, cx, cy, r + i * 1.7 * scale, withAlpha(color, step * (4 - i)));
+  const rings = clamp(Math.round(r / BLOOM_GAP), 3, 12);
+  for (let i = rings; i >= 1; i--) {
+    // The alphas are normalised to the same total however many rings there are,
+    // so a large sun's glow is smoother than a small one's and no brighter.
+    const a = (12 * step * (rings + 1 - i)) / (rings * (rings + 1));
+    fillDisc(ctx, cx, cy, r * (1 + (i / rings) * 3 * BLOOM_STEP * scale), withAlpha(color, a));
+  }
   ctx.restore();
 }
 

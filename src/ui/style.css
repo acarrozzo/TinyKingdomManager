@@ -178,6 +178,18 @@ body {
   z-index: 14;
   pointer-events: none;
 }
+/*
+ * Zoomed all the way out the real sky is on show, and the strip is what you get
+ * when it is not — so the whole bar stands down rather than telling the same
+ * hour a second time. `--sky-h` goes with it, or the top bar would sit ten
+ * pixels down from nothing.
+ */
+#ui.no-daystrip {
+  --sky-h: 0px;
+}
+#ui.no-daystrip .daystrip {
+  display: none;
+}
 #ui .daystrip canvas {
   display: block;
   width: 100%;

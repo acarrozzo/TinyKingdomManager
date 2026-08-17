@@ -831,9 +831,11 @@ about a pixel a second, and repainting a gradient sixty times a second to move
 something that far is work nobody asked for.
 
 **`DAY_STRIP_H` and `--sky-h` have to agree**, and both are the box rather than
-the ribbon. The strip is folded into the measured `--top-h`, so everything
-positioned off that clears it; without that the whole interface rides up under
-the pills the moment the strip appears.
+the ribbon. `DAY_STRIP_H` sizes the strip's own canvas; `--sky-h` is what the
+rest of the layout positions off, and it is the one that goes to zero when the
+strip stands down. The strip is folded into the measured `--top-h`, so
+everything positioned off that clears it; without that the whole interface rides
+up under the pills the moment the strip appears.
 
 **The sky sits above the island's north corner, which is world y 0.** Everything
 above that row is off the map entirely, so it can honestly be called sky; the
@@ -867,6 +869,24 @@ left, handing over at the rim — so "what is up there" is a glance rather than 
 comparison. The moon runs an eight-day phase cycle and is **deliberately never
 new**: an invisible moon is one night in eight with nothing to read the hour
 from, which is a worse trade than a crescent slightly fuller than it should be.
+
+**The sky's bodies are large, and at the widest zoom the strip stands down for
+them.** `SUN_R` and `MOON_R` in the renderer are both 64 art pixels — 128
+across: this sun is the view out of the window rather than a marker saying where
+the sun is, and at the old eight pixels it was a bead lost in three hundred
+pixels of sky. Sun and moon are matched, because they are never up together and
+a difference between them is a comparison nobody is in a position to make.
+Because of that size the bloom is a *proportion* of the disc (`BLOOM_STEP` in
+`sky.ts`) with a ring count that grows with it: three rings are a fall-off round
+a bead and a bullseye round a setting sun.
+
+At `camera.zoomIndex === 0` the whole day strip goes — not just its bead —
+because that is the view with the real sky in it, and the same hour told twice
+in the smaller of the two skies is one telling too many. `#ui.no-daystrip` hides
+it *and* zeroes `--sky-h`, and `--top-h` is measured off the strip's own height
+rather than the `DAY_STRIP_H` constant, so the top bar takes the room back
+instead of leaving a gap where the strip was. The clock in that bar says the
+hour throughout, so nothing is actually lost.
 
 **Cast shadows are the always-on half of the clock, and they are collected
 before they are laid down.** `drawShadows` fills a separate buffer in solid

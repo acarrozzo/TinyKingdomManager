@@ -32,7 +32,7 @@ import {
 import { buildingById, newGame } from '../sim/state';
 import { Focus, keepFocus } from './a11y';
 import { cap, el, esc, setHtml, type UIEnv } from './context';
-import { DAY_STRIP_H, DayStrip } from './daystrip';
+import { DayStrip } from './daystrip';
 import { Hud, populationBody, storesBody } from './hud';
 import { bottomNavMarkup, moreBody, toolbarMarkup, viewPadMarkup, type ModalKind, type NavState } from './nav';
 import { goalChipMarkup, goalPanelMarkup, goalsBody } from './goals';
@@ -180,28 +180,32 @@ export class UI {
     this.introHost = el('div');
     this.root.appendChild(this.introHost);
 
-    /*
-     * How tall the furniture at each edge came out. Both vary with content —
-     * the top strip wraps to two rows on a narrow window, the dock grows a
-     * placement bar — and everything else in the layout is positioned off
-     * them, so they are measured rather than guessed at.
-     */
-    const measure = () => {
-      this.root.style.setProperty('--dock-h', `${Math.round(this.dock.getBoundingClientRect().height)}px`);
-      // The day strip is part of the furniture at the top, so it goes into the
-      // same measurement: everything below positions off `--top-h` and would
-      // otherwise ride up under the pills the moment the strip appeared.
-      const top = this.topbar.getBoundingClientRect().height + DAY_STRIP_H;
-      this.root.style.setProperty('--top-h', `${Math.round(top)}px`);
-    };
-    const ro = new ResizeObserver(measure);
+    const ro = new ResizeObserver(() => this.measure());
     ro.observe(this.dock);
     ro.observe(this.topbar);
-    measure();
+    this.measure();
 
     this.root.addEventListener('click', (e) => this.onClick(e));
     this.root.addEventListener('change', (e) => this.onChangeEvent(e));
     this.root.addEventListener('keydown', (e) => this.onRootKey(e));
+  }
+
+  /**
+   * How tall the furniture at each edge came out. Both vary with content — the
+   * top strip wraps to two rows on a narrow window, the dock grows a placement
+   * bar — and everything else in the layout is positioned off them, so they are
+   * measured rather than guessed at.
+   *
+   * The day strip is part of the furniture at the top, so it goes into the same
+   * measurement — and it is *measured* rather than added on as a constant,
+   * because zoomed all the way out there is no strip and the rest of the
+   * interface has to take the room back rather than leave a gap where it was.
+   */
+  private measure(): void {
+    this.root.style.setProperty('--dock-h', `${Math.round(this.dock.getBoundingClientRect().height)}px`);
+    const strip = this.dayStrip.el.getBoundingClientRect().height;
+    const top = this.topbar.getBoundingClientRect().height + strip;
+    this.root.style.setProperty('--top-h', `${Math.round(top)}px`);
   }
 
   /**
@@ -320,7 +324,19 @@ export class UI {
     // sitting there reading 0/0 and quietly lying about what "0" means.
     this.root.classList.toggle('founding', !foundingDone(g));
 
-    this.dayStrip.tick(g);
+    /*
+     * Zoomed all the way out the real sun or moon is up there in the sky over
+     * the island, and the strip is the sky you get when you cannot see it — so
+     * the whole bar stands down rather than telling the same hour twice, and
+     * the top bar comes up to the edge behind it. The clock in the top bar
+     * carries on saying what time it is throughout.
+     */
+    const noStrip = this.game.camera.zoomIndex === 0;
+    if (this.root.classList.contains('no-daystrip') !== noStrip) {
+      this.root.classList.toggle('no-daystrip', noStrip);
+      this.measure();
+    }
+    this.dayStrip.tick(g, noStrip);
     const clock = this.hud.tick(this.game, this.env);
     this.cleanT.textContent = clock;
     const chipSea = this.root.querySelector('.clean-chip .sea');
@@ -470,7 +486,7 @@ export class UI {
   /**
    * The hover detail for the sun and the moon, from either place they appear —
    * the body itself out over the island, or anywhere along the day strip, which
-   * is a far more forgiving target than a disc nine pixels across. Nudged back
+   * is a far more forgiving target than a body near the rim. Nudged back
    * on screen when it would run off the edge: the body spends a good part of
    * the day near the rim, which is exactly where a tip anchored to it goes
    * missing.

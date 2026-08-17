@@ -812,9 +812,9 @@ export class Game {
   }
 
   /**
-   * The sun or moon, if the cursor is on it. Generous by a few pixels: the disc
-   * is eight art pixels across and pointing at it exactly is not a skill this
-   * game asks anybody for.
+   * The sun or moon, if the cursor is on it. Generous by a few pixels, and by a
+   * floor of sixteen besides: the moon is a small target near the rim, and
+   * pointing at it exactly is not a skill this game asks anybody for.
    */
   private skyUnder(cssX: number, cssY: number): { x: number; y: number; body: 'sun' | 'moon' } | null {
     const pos = this.renderer.skyBodyOnScreen(this.state);

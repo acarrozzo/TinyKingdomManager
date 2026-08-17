@@ -65,6 +65,16 @@ export interface RenderOptions {
 const ARC_HALF_MIN = 150;
 const ARC_HALF_MAX = 330;
 const ARC_RISE = 155;
+/**
+ * How large the bodies themselves are, in art pixels. Deliberately enormous:
+ * this sun is the picture out of the window rather than a marker saying where
+ * the sun is, and at the old eight pixels it was a bead lost in three hundred
+ * pixels of sky. Sun and moon are matched, because they are never up together
+ * and a difference between them is a comparison nobody is in a position to
+ * make.
+ */
+const SUN_R = 64;
+const MOON_R = 64;
 /** How deep the sky gradient runs, whatever height of it happens to be on show. */
 const SKY_DEPTH = 300;
 /**
@@ -425,7 +435,7 @@ export class Renderer {
     return {
       x: c.az * half - this.viewX,
       y: hy - c.alt * ARC_RISE,
-      r: c.body === 'sun' ? 8 : 6,
+      r: c.body === 'sun' ? SUN_R : MOON_R,
       body: c.body,
       alt: c.alt,
     };
