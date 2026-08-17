@@ -10,7 +10,7 @@
 import { clamp, hash2 } from '../core/util';
 import type { Building, GameState, PropId, Season, TerrainId, Villager } from '../types';
 import { BUILDINGS } from '../sim/defs';
-import { HALF_H, HALF_W, TILE_H, toGridX, toGridY, toScreenX, toScreenY } from '../world/iso';
+import { HALF_H, HALF_W, TILE_H, TILE_W, toGridX, toGridY, toScreenX, toScreenY } from '../world/iso';
 import { CAMP_HALF, CAMP_SPAN } from '../world/terrain';
 import { Camera } from './camera';
 import { ambientTint } from './palette';
@@ -67,10 +67,37 @@ const ARC_HALF_MAX = 330;
 const ARC_RISE = 155;
 /** How deep the sky gradient runs, whatever height of it happens to be on show. */
 const SKY_DEPTH = 300;
-/** How far the horizon's haze reaches down onto the sea. */
-const HAZE = 44;
+/**
+ * How far the horizon's haze reaches down onto the sea. In this projection
+ * screen-y *is* distance, so a fade down from the rim is the whole of
+ * atmospheric perspective — there is nothing to fade at the sides or the
+ * bottom, because that water is near.
+ *
+ * It has to run a long way. At forty-odd pixels it did not read as distance at
+ * all; it read as a band, and the point it ran out drew a rule straight across
+ * the picture that was plainest at dusk, when the sky above it was orange and
+ * the sea below it was not.
+ */
+const HAZE = 170;
+/**
+ * How far the lighting pass takes to hand the sky's own light back to the
+ * ambient tint. Deliberately shorter than the haze and deliberately its own
+ * number: the haze is a colour laid on the water, this is how far the night is
+ * held off it, and stretching the second to match the first leaves a lit band
+ * lying across the sea at midnight.
+ */
+const LIGHT_FADE = 44;
 const STAR_PERIOD = 1600;
 const STAR_COUNT = 220;
+
+/**
+ * The repeating patch the open sea is tiled from, in world pixels. Both are
+ * multiples of a tile, which is what makes the patch seamless: the isometric
+ * lattice puts tile centres at (16u, 8v) for integers u and v of the same
+ * parity, so it repeats exactly over any multiple of 32 by 16.
+ */
+const OCEAN_W = 512;
+const OCEAN_H = 256;
 
 interface Drawable {
   depth: number;
@@ -111,6 +138,8 @@ export class Renderer {
 
   private terrain!: TerrainSheet;
   private props!: PropSheet;
+  /** The open sea, as one seamless patch of the map's own water tiles. */
+  private ocean: CanvasPattern | null = null;
   private bakedSeason: Season | null = null;
   private groundDirty = true;
 
@@ -160,6 +189,7 @@ export class Renderer {
     this.bakedSeason = season;
     this.terrain = bakeTerrain(season);
     this.props = bakeProps(season);
+    this.bakeOcean();
     clearBuildingCache();
     clearCropCache();
     this.groundDirty = true;
@@ -232,10 +262,8 @@ export class Renderer {
     const tint = ambientTint(g.dayT, g.season);
     this.darkness = 1 - Math.min(1, (tint.r + tint.g + tint.b) / 700);
 
-    // Deep water beyond the island edge.
-    b.fillStyle = g.season === 'winter' ? '#3f5f78' : '#3a6285';
-    b.fillRect(0, 0, this.bufW, this.bufH);
-
+    // Open sea, in every direction and out past whatever the window can show.
+    this.drawSea();
     this.drawSky(g);
 
     b.drawImage(
@@ -255,6 +283,9 @@ export class Renderer {
     this.labels.length = 0;
     this.badges.length = 0;
     this.drawWorld(g, opts);
+    // Over the world and under the tools: what is being placed has to stay
+    // readable even at the far rim, where the haze is at its strongest.
+    this.drawHaze(g);
     this.drawPlacement(g, opts);
     this.applyLighting(g);
     this.drawBadges(g);
@@ -282,6 +313,63 @@ export class Renderer {
   // -------------------------------------------------------------------------
   // Ground
   // -------------------------------------------------------------------------
+
+  /**
+   * The sea beyond the island's edge, baked from the very same water tiles the
+   * map is made of.
+   *
+   * It used to be one flat fill in a colour of its own, and that single line
+   * was why the island read as a diamond cut out of a slab rather than as land
+   * in a sea: the map's outer ring is textured water that catches the light,
+   * and the void past it was neither, so the map's boundary was the most
+   * obvious shape on the screen — worst at night, where the two were furthest
+   * apart. Tiling the real thing means there is no boundary left to see.
+   *
+   * Only the fundamental patch is drawn; a diamond that hangs off one edge is
+   * drawn again on the opposite side, so the patch wraps rather than seaming.
+   * The variant is hashed off the lattice coordinates, so the sea does repeat
+   * — every 512 pixels, which is a long way for three specks of light.
+   */
+  private bakeOcean(): void {
+    const variants = this.terrain.water;
+    const c = mkCanvas(OCEAN_W, OCEAN_H);
+    const ctx = ctxOf(c);
+    for (let v = 0; v < OCEAN_H / HALF_H; v++)
+      for (let u = 0; u < OCEAN_W / HALF_W; u++) {
+        // Tile centres are the lattice points where u and v share a parity.
+        if ((u + v) % 2 !== 0) continue;
+        const sprite = variants[Math.floor(hash2(u, v, 5) * variants.length) % variants.length];
+        const x = u * HALF_W - HALF_W;
+        const y = v * HALF_H - HALF_H;
+        for (let wy = -1; wy <= 1; wy++)
+          for (let wx = -1; wx <= 1; wx++) {
+            const px = x + wx * OCEAN_W;
+            const py = y + wy * OCEAN_H;
+            if (px >= OCEAN_W || px + TILE_W <= 0 || py >= OCEAN_H || py + TILE_H <= 0) continue;
+            ctx.drawImage(sprite, px, py);
+          }
+      }
+    this.ocean = ctx.createPattern(c, 'repeat');
+  }
+
+  /**
+   * Water everywhere, aligned to the world rather than to the window, so the
+   * map's own edge tiles carry straight on into it and panning slides the sea
+   * along with the island instead of leaving it stuck on glass. The sky paints
+   * over its own share of this immediately afterwards.
+   */
+  private drawSea(): void {
+    const b = this.bctx;
+    if (!this.ocean) return;
+    // `viewX`/`viewY` are whole pixels, so the lattice never lands off-grid.
+    const dx = ((this.viewX % OCEAN_W) + OCEAN_W) % OCEAN_W;
+    const dy = ((this.viewY % OCEAN_H) + OCEAN_H) % OCEAN_H;
+    b.save();
+    b.translate(-dx, -dy);
+    b.fillStyle = this.ocean;
+    b.fillRect(0, 0, this.bufW + dx, this.bufH + dy);
+    b.restore();
+  }
 
   private bakeGround(g: GameState): void {
     const ctx = this.gctx;
@@ -367,23 +455,53 @@ export class Renderer {
     b.fillStyle = grad;
     b.fillRect(0, 0, this.bufW, bottom);
 
-    /*
-     * Haze where the sea meets the sky. The sea is one flat colour all the way
-     * out, so without this it ends in a hard rule under a bright sky and reads
-     * as a wall rather than as distance. Laid down before the ground, so the
-     * island's own far corner covers its share of it.
-     */
-    if (bottom < this.bufH) {
-      const [r, gr, bl] = sky.horizonRgb;
-      const haze = b.createLinearGradient(0, hy, 0, hy + HAZE);
-      haze.addColorStop(0, `rgba(${r},${gr},${bl},0.7)`);
-      haze.addColorStop(1, `rgba(${r},${gr},${bl},0)`);
-      b.fillStyle = haze;
-      b.fillRect(0, bottom, this.bufW, HAZE);
-    }
-
     if (sky.stars > 0.02) this.drawStars(bottom, hy, sky.stars);
     this.drawCelestial(g, hy, bottom);
+  }
+
+  /**
+   * Distance, laid over everything at the far end of it.
+   *
+   * Without this the sea ends in a hard rule under a bright sky and reads as a
+   * wall rather than as an horizon. The falloff is curved rather than straight:
+   * a linear one puts most of its change in the middle of the run, which is
+   * where a band shows, instead of at the rim, which is where distance is.
+   *
+   * It has to go on *after* the ground and everything standing on it, not
+   * before. The island's northern tiles are water like the sea around them, so
+   * hazing the open sea and not them drew the map's own boundary back in as a
+   * dark wedge above the beach — the exact seam the tiled sea was there to
+   * remove. In this projection screen-y is distance and the island's far corner
+   * is as distant as the water beside it, so it gets the same wash.
+   */
+  private drawHaze(g: GameState): void {
+    const hy = this.horizonY();
+    if (hy <= 0 || hy >= this.bufH) return;
+    const b = this.bctx;
+    const [r, gr, bl] = skyColors(g.dayT, g.season).horizonRgb;
+    /*
+     * Starting a little above the rim rather than exactly on it. The island's
+     * northernmost tile straddles world y 0, so its top half is drawn against
+     * the sky and stood out as a hard dark wedge above an otherwise hazy
+     * horizon — a far-off islet that is really this island's own corner. Those
+     * few rows of sky cost nothing to cover, since the haze is the sky's own
+     * horizon colour and laying it over itself changes nothing.
+     */
+    const top = hy - 10;
+    const haze = b.createLinearGradient(0, top, 0, top + HAZE);
+    // Very nearly opaque at the rim, so the first row of sea is the sky's own
+    // colour and there is no step to see at all where the two meet.
+    for (const [at, a] of [
+      [0, 0.94],
+      [0.1, 0.62],
+      [0.22, 0.42],
+      [0.42, 0.21],
+      [0.7, 0.06],
+      [1, 0],
+    ] as const)
+      haze.addColorStop(at, `rgba(${r},${gr},${bl},${a})`);
+    b.fillStyle = haze;
+    b.fillRect(0, top, this.bufW, Math.min(HAZE, this.bufH - top));
   }
 
   private drawStars(bottom: number, hy: number, amount: number): void {
@@ -424,18 +542,25 @@ export class Renderer {
     }
   }
 
-  /** The sun's road down the water, broadening and breaking up as it comes in. */
+  /**
+   * The sun's road down the water, broadening and breaking up as it comes in.
+   * It runs the length of the haze rather than a fixed sixty-odd pixels, and is
+   * laid on rather more strongly than it used to be, because the haze now goes
+   * over the top of it: at the old weight the whole road was washed out at
+   * exactly the hour there is a road to see.
+   */
   private drawGlimmer(x: number, hy: number, amount: number): void {
     const b = this.bctx;
     const top = Math.max(0, hy);
-    for (let i = 0; i < 64; i++) {
+    const run = HAZE * 0.7;
+    for (let i = 0; i < run; i++) {
       const y = top + i;
       if (y >= this.bufH) break;
-      const k = i / 64;
-      const w = 2 + k * 28;
+      const k = i / run;
+      const w = 2 + k * 46;
       const wob = Math.sin(this.time * 1.1 + i * 0.9) * (1 + k * 3);
       const shimmer = 0.62 + 0.38 * Math.sin(this.time * 2 + i * 1.7);
-      b.fillStyle = `rgba(255,214,150,${0.24 * amount * (1 - k) * shimmer})`;
+      b.fillStyle = `rgba(255,214,150,${0.4 * amount * (1 - k) * shimmer})`;
       b.fillRect(Math.round(x - w / 2 + wob), y, Math.round(w), 1);
     }
   }
@@ -990,7 +1115,7 @@ export class Renderer {
       // sky's colour, and handing it straight back to the ambient tint put the
       // hard line back in a different place.
       const mid = `rgb(${Math.round(tint.r * damp + (255 - tint.r * damp) * 0.5)},${Math.round(tint.g * damp + (255 - tint.g * damp) * 0.5)},${Math.round(tint.b * damp + (255 - tint.b * damp) * 0.5)})`;
-      const fade = l.createLinearGradient(0, bottom - 24, 0, bottom + HAZE);
+      const fade = l.createLinearGradient(0, bottom - 24, 0, bottom + LIGHT_FADE);
       fade.addColorStop(0, '#ffffff');
       fade.addColorStop(0.36, mid);
       fade.addColorStop(1, ambient);

@@ -99,13 +99,22 @@ export class Camera {
     this.clampToMap(mapW, mapH);
   }
 
-  /** Keeps the view over the island rather than out in the void. */
+  /**
+   * Keeps the view over the island rather than out in the void — though the
+   * void is open sea now rather than a flat slab, so the leash is a good deal
+   * longer than it was and the island can be framed small against water.
+   *
+   * North is the exception and keeps its own short margin: past the island's
+   * top corner is sky, and how much of that is reasonable to look at is a share
+   * of the view rather than a distance. Twenty tiles of it is the whole screen
+   * at six times zoom.
+   */
   private clampToMap(mapW: number, mapH: number): void {
-    const marginX = 8 * HALF_W;
-    const marginY = 8 * HALF_H;
+    const marginX = 20 * HALF_W;
+    const marginY = 20 * HALF_H;
     const minX = -mapH * HALF_W - marginX;
     const maxX = mapW * HALF_W + marginX;
-    const minY = Math.min(-marginY, -this.viewH * SKY_HEADROOM);
+    const minY = Math.min(-8 * HALF_H, -this.viewH * SKY_HEADROOM);
     const maxY = (mapW + mapH) * HALF_H + marginY;
     this.x = clamp(this.x, minX, maxX);
     this.y = clamp(this.y, minY, maxY);

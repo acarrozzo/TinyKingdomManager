@@ -716,6 +716,30 @@ fractional scale.
 **Ground is baked once** into a single map-sized canvas and blitted as one
 image. Call `renderer.invalidateGround()` after any terrain or season change.
 
+**The sea is the map's own water, tiled for ever.** Everything outside the
+island's diamond is `bakeOcean` — one 512×256 patch of `water` tiles filled as a
+repeating pattern aligned to *world* coordinates, so the map's outer ring of
+water carries straight on into it and there is no boundary left to see. It is
+seamless because the isometric lattice has a rectangular period: tile centres
+sit at world `(16u, 8v)` for integers of the same parity, so any multiple of
+32 by 16 repeats exactly, and a diamond overhanging one edge is drawn again on
+the opposite one. It used to be a single flat `fillRect` in a colour of its own,
+which is what made the island read as a shape cut out of a slab — worst at
+night, when the two were furthest apart. Do not put a colour of its own back.
+
+**The haze is drawn after the world, not before it, and it is the only depth
+cue there is.** In this projection screen-y *is* distance, so a fade down from
+the horizon is the whole of atmospheric perspective — there is nothing to fade
+at the sides or the bottom, because that water is near. `drawHaze` runs after
+`drawWorld` and before `drawPlacement`: after, because the island's own
+northern tiles are water like the sea around them and hazing one and not the
+other draws the map's boundary straight back in as a dark wedge above the
+beach; before the tools, because what is being placed has to stay readable at
+the rim. It starts ten pixels *above* the horizon, since the northernmost tile
+straddles world y 0 and its top half is drawn against the sky. The lighting
+pass keeps its own shorter `LIGHT_FADE` — stretching that to match would leave
+a lit band lying across the sea at midnight.
+
 **Everything else is depth-sorted** by `x + y` per frame. Buildings sort from
 their front tile minus a hair; farms sort from their *back* corner so crops draw
 over the plot. Anything drawn outside that sorted pass will render on top of the
@@ -818,7 +842,11 @@ south and the island fills the screen and the sky goes, which is what looking
 down at your feet does. `horizonY()` is the whole of that rule. The camera's
 north clamp carries `SKY_HEADROOM` — **a share of the view's height, not a
 number of pixels**, because the same margin that shows a strip of sky at 1×
-fills the entire screen with it at 6×.
+fills the entire screen with it at 6×. That is why north keeps its own short
+margin in `clampToMap` while the other three run out to twenty tiles: east,
+west and south are open sea now and worth panning over, but north is sky, and
+how much of it is reasonable to look at is a share of the view rather than a
+distance.
 
 **The bands of the day are the sky's own colour and nothing else.** `SKY_STOPS`
 lines up with the stops `ambientTint` uses, so the light on the ground and the
