@@ -10,10 +10,11 @@
 import { clamp, hash2 } from '../core/util';
 import type { Building, GameState, PropId, Season, TerrainId, Villager } from '../types';
 import { BUILDINGS } from '../sim/defs';
-import { HALF_H, HALF_W, toGridX, toGridY, toScreenX, toScreenY } from '../world/iso';
+import { HALF_H, HALF_W, TILE_H, toGridX, toGridY, toScreenX, toScreenY } from '../world/iso';
 import { CAMP_HALF, CAMP_SPAN } from '../world/terrain';
 import { Camera } from './camera';
 import { ambientTint } from './palette';
+import { celestial, skyColors, sunlight, type Sunlight } from './sky';
 import type { BuildingSprite } from './sprites';
 import {
   bakeProps,
@@ -56,6 +57,21 @@ export interface RenderOptions {
   demolish: boolean;
 }
 
+/**
+ * The sky, in world pixels measured off the island's north corner. The arc is
+ * as wide as the island itself, so the sun crosses the kingdom rather than
+ * sliding along the top of the window.
+ */
+const ARC_HALF_MIN = 150;
+const ARC_HALF_MAX = 330;
+const ARC_RISE = 155;
+/** How deep the sky gradient runs, whatever height of it happens to be on show. */
+const SKY_DEPTH = 300;
+/** How far the horizon's haze reaches down onto the sea. */
+const HAZE = 44;
+const STAR_PERIOD = 1600;
+const STAR_COUNT = 220;
+
 interface Drawable {
   depth: number;
   order: number;
@@ -84,6 +100,14 @@ export class Renderer {
   private lctx: CanvasRenderingContext2D;
   private ground: HTMLCanvasElement;
   private gctx: CanvasRenderingContext2D;
+  /**
+   * Cast shadows are collected here in solid black and laid over the world in
+   * one pass. Drawing each one straight onto the world at its own alpha would
+   * make every overlap darker than the shadows in it, so a stand of trees at
+   * dawn turned into a black pool rather than a set of long shadows.
+   */
+  private shade: HTMLCanvasElement;
+  private sctx: CanvasRenderingContext2D;
 
   private terrain!: TerrainSheet;
   private props!: PropSheet;
@@ -104,6 +128,8 @@ export class Renderer {
   private offY = 0;
   private labels: Label[] = [];
   private badges: Badge[] = [];
+  /** Shadow shapes reused across one frame; see `streak`. */
+  private stamps = new Map<string, { c: HTMLCanvasElement; ax: number; ay: number }>();
   private time = 0;
   /** 0 in full daylight, 1 at the darkest point of the night. */
   private darkness = 0;
@@ -115,6 +141,8 @@ export class Renderer {
     this.bctx = ctxOf(this.buffer);
     this.light = mkCanvas(64, 64);
     this.lctx = this.light.getContext('2d')!;
+    this.shade = mkCanvas(64, 64);
+    this.sctx = ctxOf(this.shade);
     this.offX = mapH * HALF_W;
     this.offY = HALF_H;
     this.ground = mkCanvas((mapW + mapH) * HALF_W, (mapW + mapH) * HALF_H);
@@ -157,8 +185,11 @@ export class Renderer {
       this.buffer.height = bufH;
       this.light.width = bufW;
       this.light.height = bufH;
+      this.shade.width = bufW;
+      this.shade.height = bufH;
       this.bctx = ctxOf(this.buffer);
       this.lctx = this.light.getContext('2d')!;
+      this.sctx = ctxOf(this.shade);
     }
     this.dpr = dpr;
     this.scale = scale;
@@ -193,6 +224,9 @@ export class Renderer {
     if (this.groundDirty) this.bakeGround(g);
 
     const b = this.bctx;
+    // How far north the camera may look is a share of the view's own height,
+    // and only the renderer knows what that is.
+    cam.viewH = this.bufH;
     this.viewX = Math.floor(cam.x - this.bufW / 2);
     this.viewY = Math.floor(cam.y - this.bufH / 2);
     const tint = ambientTint(g.dayT, g.season);
@@ -201,6 +235,8 @@ export class Renderer {
     // Deep water beyond the island edge.
     b.fillStyle = g.season === 'winter' ? '#3f5f78' : '#3a6285';
     b.fillRect(0, 0, this.bufW, this.bufH);
+
+    this.drawSky(g);
 
     b.drawImage(
       this.ground,
@@ -213,6 +249,8 @@ export class Renderer {
       this.bufW,
       this.bufH,
     );
+
+    this.drawShadows(g);
 
     this.labels.length = 0;
     this.badges.length = 0;
@@ -264,14 +302,298 @@ export class Renderer {
   }
 
   // -------------------------------------------------------------------------
+  // Sky
+  // -------------------------------------------------------------------------
+
+  /**
+   * The buffer row the horizon sits on. World y 0 is the island's north corner,
+   * so everything above it is off the map entirely and can honestly be called
+   * sky; everything below it is sea or ground and draws over the sky in the
+   * ordinary way. Pan south and the island fills the screen and the sky goes,
+   * which is what looking down at your feet does. That is why the shadows
+   * exist: they are the same reading, and they are on every tile.
+   */
+  private horizonY(): number {
+    return -this.viewY;
+  }
+
+  /**
+   * Where the sun or moon is, in buffer pixels, or null when there is no sky on
+   * screen to put it in. The arc spans the island's own width and rises well
+   * above its far corner, so the body genuinely hangs over the kingdom rather
+   * than being pinned to the edge of the view.
+   */
+  skyBody(g: GameState): { x: number; y: number; r: number; body: 'sun' | 'moon'; alt: number } | null {
+    const hy = this.horizonY();
+    if (hy <= 0) return null;
+    const c = celestial(g.dayT, g.day);
+    /*
+     * The arc is as wide as the view can take, within limits. A fixed span in
+     * world pixels reads well on a desktop and puts the sun off the side of the
+     * screen for most of the day on a phone, where the same zoom covers a
+     * quarter of the ground.
+     */
+    const half = clamp(this.bufW * 0.42, ARC_HALF_MIN, ARC_HALF_MAX);
+    return {
+      x: c.az * half - this.viewX,
+      y: hy - c.alt * ARC_RISE,
+      r: c.body === 'sun' ? 8 : 6,
+      body: c.body,
+      alt: c.alt,
+    };
+  }
+
+  /** The same, in CSS pixels, for anything that has to hit-test a pointer. */
+  skyBodyOnScreen(g: GameState): { x: number; y: number; r: number; body: 'sun' | 'moon' } | null {
+    const pos = this.skyBody(g);
+    if (!pos) return null;
+    const k = this.scale / this.dpr;
+    return { x: pos.x * k, y: pos.y * k, r: (pos.r + 4) * k, body: pos.body };
+  }
+
+  private drawSky(g: GameState): void {
+    const hy = this.horizonY();
+    if (hy <= 0) return;
+    const bottom = Math.min(hy, this.bufH);
+    const b = this.bctx;
+    const sky = skyColors(g.dayT, g.season);
+
+    // Nailed to the horizon rather than to the top of the screen: how much sky
+    // is on show depends on where the camera is, but the gradient through it
+    // must not stretch and squash as that changes.
+    const grad = b.createLinearGradient(0, hy - SKY_DEPTH, 0, hy);
+    grad.addColorStop(0, sky.zenith);
+    grad.addColorStop(1, sky.horizon);
+    b.fillStyle = grad;
+    b.fillRect(0, 0, this.bufW, bottom);
+
+    /*
+     * Haze where the sea meets the sky. The sea is one flat colour all the way
+     * out, so without this it ends in a hard rule under a bright sky and reads
+     * as a wall rather than as distance. Laid down before the ground, so the
+     * island's own far corner covers its share of it.
+     */
+    if (bottom < this.bufH) {
+      const [r, gr, bl] = sky.horizonRgb;
+      const haze = b.createLinearGradient(0, hy, 0, hy + HAZE);
+      haze.addColorStop(0, `rgba(${r},${gr},${bl},0.7)`);
+      haze.addColorStop(1, `rgba(${r},${gr},${bl},0)`);
+      b.fillStyle = haze;
+      b.fillRect(0, bottom, this.bufW, HAZE);
+    }
+
+    if (sky.stars > 0.02) this.drawStars(bottom, hy, sky.stars);
+    this.drawCelestial(g, hy, bottom);
+  }
+
+  private drawStars(bottom: number, hy: number, amount: number): void {
+    const b = this.bctx;
+    // The field is anchored to the world and repeats, so panning slides the
+    // stars along with everything else instead of leaving them stuck on glass.
+    const drift = ((this.viewX % STAR_PERIOD) + STAR_PERIOD) % STAR_PERIOD;
+    for (let i = 0; i < STAR_COUNT; i++) {
+      const y = Math.round(-8 - hash2(i, 7, 812) * 430 - this.viewY);
+      if (y < 0 || y >= bottom) continue;
+      // Haze eats the ones near the rim, which is what stops the starfield
+      // ending in a hard line along the top of the sea.
+      const fade = clamp((hy - y) / 46, 0, 1);
+      if (fade <= 0.02) continue;
+      const twinkle = 0.6 + 0.4 * Math.sin(this.time * 1.4 + i * 2.3);
+      b.fillStyle = `rgba(238,243,255,${(0.2 + 0.55 * hash2(i, 11, 813)) * amount * fade * twinkle})`;
+      for (let x = hash2(i, 3, 811) * STAR_PERIOD - drift; x < this.bufW; x += STAR_PERIOD) {
+        if (x >= -1) b.fillRect(Math.round(x), y, 1, 1);
+      }
+    }
+  }
+
+  private drawCelestial(g: GameState, hy: number, bottom: number): void {
+    const pos = this.skyBody(g);
+    if (!pos) return;
+    const { x, y, r } = pos;
+    if (x < -r - 4 || x > this.bufW + r + 4 || y - r > bottom) return;
+    const b = this.bctx;
+
+    /*
+     * The halo goes down `lighter` rather than over the top. A warm ring laid
+     * on at an alpha is darker than a pale evening sky however it is coloured,
+     * which drew a grey washer round the setting sun — light added to the sky
+     * is the only version of this that cannot come out wrong.
+     */
+    b.save();
+    b.globalCompositeOperation = 'lighter';
+    const warm = pos.body === 'sun';
+    for (let i = 3; i >= 1; i--) {
+      const a = (warm ? 0.055 : 0.02) * (4 - i);
+      fillDisc(b, x, y, r + i * 1.7, applyAlpha(warm ? '#ffcf8a' : '#a8bcff', a));
+    }
+    b.restore();
+
+    if (warm) {
+      // Low sun is deep and orange; high sun is almost white. It is the same
+      // shift the ambient tint makes, said by the thing making it.
+      const low = 1 - pos.alt;
+      fillDisc(b, x, y, r, mixHex('#fff6d8', '#ff9a4a', low * 0.85));
+      // A glimmer laid down the water under a low sun. Only the sea gets it:
+      // the ground is blitted after this and covers its own share.
+      if (low > 0.45) this.drawGlimmer(x, hy, (low - 0.45) / 0.55);
+    } else {
+      fillMoon(b, x, y, r, celestial(g.dayT, g.day).phase);
+    }
+  }
+
+  /** The sun's road down the water, broadening and breaking up as it comes in. */
+  private drawGlimmer(x: number, hy: number, amount: number): void {
+    const b = this.bctx;
+    const top = Math.max(0, hy);
+    for (let i = 0; i < 64; i++) {
+      const y = top + i;
+      if (y >= this.bufH) break;
+      const k = i / 64;
+      const w = 2 + k * 28;
+      const wob = Math.sin(this.time * 1.1 + i * 0.9) * (1 + k * 3);
+      const shimmer = 0.62 + 0.38 * Math.sin(this.time * 2 + i * 1.7);
+      b.fillStyle = `rgba(255,214,150,${0.24 * amount * (1 - k) * shimmer})`;
+      b.fillRect(Math.round(x - w / 2 + wob), y, Math.round(w), 1);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Cast shadows
+  //
+  // The always-on half of the clock. The sky is only on screen when the camera
+  // is looking somewhere it can be seen, but every tree, roof and villager
+  // leans a shadow the same way at the same moment, so the hour is legible from
+  // the ground at any zoom without a single number being drawn over the map.
+  // -------------------------------------------------------------------------
+
+  private drawShadows(g: GameState): void {
+    const sun = sunlight(g.dayT, g.day, g.weather);
+    if (sun.alpha < 0.012) return;
+
+    const s = this.sctx;
+    s.clearRect(0, 0, this.bufW, this.bufH);
+    // The shape depends on where the body is, so the stamps last one frame.
+    this.stamps.clear();
+
+    const { minX, maxX, minY, maxY } = this.visibleTiles(g);
+
+    for (let y = minY; y <= maxY; y++)
+      for (let x = minX; x <= maxX; x++) {
+        const t = g.tiles[y * g.w + x];
+        if (!t.prop) continue;
+        const sprites = this.props[t.prop];
+        const sp = sprites[t.variant % sprites.length];
+        // How far the sprite stands above the tile it is on. Flowers, pebbles
+        // and lilypads barely do, and a shadow off them is a smudge.
+        const h = Math.max(0, -sp.oy);
+        if (h < 7) continue;
+        this.stamp(sun, sp.canvas.width * 0.34, h, toScreenX(x, y), toScreenY(x, y));
+      }
+
+    for (const bd of g.buildings) {
+      const def = BUILDINGS[bd.def];
+      if (bd.x + def.w < minX - 4 || bd.x > maxX + 4 || bd.y + def.h < minY - 4 || bd.y > maxY + 4) continue;
+      const sprite = getBuildingSprite(bd.def, def.w, def.h, bd.level, g.season, bd.seed, bd.stage === 'done' ? 'done' : 'site');
+      // A site is a frame and a stack of materials, not a building yet.
+      const h = Math.max(4, bd.stage === 'done' ? sprite.rise : sprite.rise * 0.4);
+      this.buildingShadow(sun, bd, def.w, def.h, h);
+    }
+
+    for (const v of g.villagers) {
+      if (v.x < minX - 3 || v.x > maxX + 3 || v.y < minY - 3 || v.y > maxY + 3) continue;
+      this.stamp(sun, 4, 13, toScreenX(v.x, v.y), toScreenY(v.x, v.y));
+    }
+    for (const a of g.animals) {
+      if (a.x < minX - 3 || a.x > maxX + 3 || a.y < minY - 3 || a.y > maxY + 3) continue;
+      this.stamp(sun, 4, 7, toScreenX(a.x, a.y), toScreenY(a.x, a.y));
+    }
+
+    const b = this.bctx;
+    b.save();
+    b.globalAlpha = sun.alpha;
+    b.drawImage(this.shade, 0, 0);
+    b.restore();
+  }
+
+  /**
+   * How far along the ground a shadow reaches, in buffer pixels, for something
+   * `h` pixels tall. The ground is a plane in the projection, so the reach is
+   * measured in tiles first and then projected — which is what makes a shadow
+   * lie flat on the grid instead of sliding about over it.
+   */
+  private reachOf(sun: Sunlight, h: number): { dx: number; dy: number } {
+    const tiles = (h / TILE_H) * sun.reach;
+    return { dx: sun.lean * HALF_W * tiles, dy: HALF_H * tiles };
+  }
+
+  private stamp(sun: Sunlight, w: number, h: number, wx: number, wy: number): void {
+    const bx = wx - this.viewX;
+    const by = wy - this.viewY;
+    const { dx, dy } = this.reachOf(sun, h);
+    if (bx + Math.min(0, dx) > this.bufW + 8 || bx + Math.max(0, dx) < -8) return;
+    if (by > this.bufH + 8 || by + dy < -8) return;
+    const st = this.streak(Math.max(3, Math.round(w)), Math.round(h), dx, dy);
+    this.sctx.drawImage(st.c, Math.round(bx) - st.ax, Math.round(by) - st.ay);
+  }
+
+  /**
+   * One shadow shape, drawn once and stamped wherever it is wanted. Every tree
+   * on the island casts the same shape at the same moment and only the position
+   * differs, so building it per tree was several thousand scanline fills a
+   * frame to draw the same picture four hundred times.
+   */
+  private streak(w: number, h: number, dx: number, dy: number): { c: HTMLCanvasElement; ax: number; ay: number } {
+    const key = `${w}|${h}`;
+    const had = this.stamps.get(key);
+    if (had) return had;
+    const pad = 3;
+    const cw = Math.ceil(Math.abs(dx) + w + pad * 2);
+    const ch = Math.ceil(dy + w * 0.6 + pad * 2);
+    const ax = Math.round(dx < 0 ? cw - pad - w / 2 : pad + w / 2);
+    const ay = pad + Math.round(w * 0.3);
+    const c = mkCanvas(Math.max(1, cw), Math.max(1, ch));
+    const ctx = ctxOf(c);
+    ctx.fillStyle = '#000';
+    // Wide where it leaves the object and narrow at the tip: a shadow is a
+    // silhouette flattened onto the ground, not a stripe of paint.
+    fillPoly(ctx, [
+      { x: ax - w / 2, y: ay },
+      { x: ax + w / 2, y: ay },
+      { x: ax + dx + w * 0.24, y: ay + dy },
+      { x: ax + dx - w * 0.24, y: ay + dy },
+    ]);
+    // A foot under the object itself, squashed the way the ground plane is, so
+    // the streak does not begin out of nothing.
+    fillEllipse(ctx, ax, ay, w / 2, w / 4);
+    const st = { c, ax, ay };
+    this.stamps.set(key, st);
+    return st;
+  }
+
+  /**
+   * A building's shadow is its footprint swept along the reach — the outline of
+   * a box lying over the grid rather than a streak, because at this size a
+   * roofline is a shape the eye recognises.
+   */
+  private buildingShadow(sun: Sunlight, bd: Building, w: number, h: number, rise: number): void {
+    const { dx, dy } = this.reachOf(sun, rise);
+    const base = [
+      { x: toScreenX(bd.x, bd.y) - this.viewX, y: toScreenY(bd.x, bd.y) - HALF_H - this.viewY },
+      { x: toScreenX(bd.x + w - 1, bd.y) + HALF_W - this.viewX, y: toScreenY(bd.x + w - 1, bd.y) - this.viewY },
+      { x: toScreenX(bd.x + w - 1, bd.y + h - 1) - this.viewX, y: toScreenY(bd.x + w - 1, bd.y + h - 1) + HALF_H - this.viewY },
+      { x: toScreenX(bd.x, bd.y + h - 1) - HALF_W - this.viewX, y: toScreenY(bd.x, bd.y + h - 1) - this.viewY },
+    ];
+    const pts = base.concat(base.map((p) => ({ x: p.x + dx, y: p.y + dy })));
+    this.sctx.fillStyle = '#000';
+    fillPoly(this.sctx, convexHull(pts));
+  }
+
+  // -------------------------------------------------------------------------
   // World pass
   // -------------------------------------------------------------------------
 
-  private drawWorld(g: GameState, opts: RenderOptions): void {
-    const b = this.bctx;
-    const list: Drawable[] = [];
-
-    // Visible tile window, with generous margins for tall sprites.
+  /** Visible tile window, with generous margins for tall sprites. */
+  private visibleTiles(g: GameState): { minX: number; maxX: number; minY: number; maxY: number } {
     const corners = [
       this.gridAt(0, 0),
       this.gridAt(this.bufW, 0),
@@ -288,10 +610,19 @@ export class Renderer {
       minY = Math.min(minY, c.y);
       maxY = Math.max(maxY, c.y);
     }
-    minX = clamp(Math.floor(minX) - 4, 0, g.w - 1);
-    maxX = clamp(Math.ceil(maxX) + 4, 0, g.w - 1);
-    minY = clamp(Math.floor(minY) - 4, 0, g.h - 1);
-    maxY = clamp(Math.ceil(maxY) + 6, 0, g.h - 1);
+    return {
+      minX: clamp(Math.floor(minX) - 4, 0, g.w - 1),
+      maxX: clamp(Math.ceil(maxX) + 4, 0, g.w - 1),
+      minY: clamp(Math.floor(minY) - 4, 0, g.h - 1),
+      maxY: clamp(Math.ceil(maxY) + 6, 0, g.h - 1),
+    };
+  }
+
+  private drawWorld(g: GameState, opts: RenderOptions): void {
+    const b = this.bctx;
+    const list: Drawable[] = [];
+
+    const { minX, maxX, minY, maxY } = this.visibleTiles(g);
 
     const sel = opts.selection;
 
@@ -658,12 +989,50 @@ export class Renderer {
     // Weather takes the edge off the light without ever going gloomy.
     const damp = 1 - g.weather * 0.18;
     l.globalCompositeOperation = 'source-over';
-    l.fillStyle = `rgb(${Math.round(tint.r * damp)},${Math.round(tint.g * damp)},${Math.round(tint.b * damp)})`;
+    const ambient = `rgb(${Math.round(tint.r * damp)},${Math.round(tint.g * damp)},${Math.round(tint.b * damp)})`;
+    l.fillStyle = ambient;
     l.fillRect(0, 0, this.bufW, this.bufH);
+
+    /*
+     * The sky is where the light comes from, so it is not something the light
+     * falls on: multiplying the night tint over an already-dark sky drove it to
+     * black and took the stars with it. It hands back to the ambient colour
+     * over the last stretch above the horizon, which doubles as haze and keeps
+     * anything tall on the map's back edge from having a seam drawn across it.
+     */
+    const hy = this.horizonY();
+    if (hy > 0) {
+      const bottom = Math.min(hy, this.bufH);
+      // Reaching a little past the rim as well: the haze on the water is the
+      // sky's colour, and handing it straight back to the ambient tint put the
+      // hard line back in a different place.
+      const mid = `rgb(${Math.round(tint.r * damp + (255 - tint.r * damp) * 0.5)},${Math.round(tint.g * damp + (255 - tint.g * damp) * 0.5)},${Math.round(tint.b * damp + (255 - tint.b * damp) * 0.5)})`;
+      const fade = l.createLinearGradient(0, bottom - 24, 0, bottom + HAZE);
+      fade.addColorStop(0, '#ffffff');
+      fade.addColorStop(0.36, mid);
+      fade.addColorStop(1, ambient);
+      l.fillStyle = fade;
+      l.fillRect(0, 0, this.bufW, Math.min(this.bufH, bottom + HAZE));
+    }
 
     const darkness = this.darkness;
     if (darkness > 0.06) {
       l.globalCompositeOperation = 'lighter';
+
+      // A low sun burns a hole in the haze around itself, and the moon does a
+      // paler version of the same. Only worth drawing after dark, which is the
+      // only time the light pass is adding anything at all.
+      const body = this.skyBody(g);
+      if (body) {
+        const r = body.body === 'sun' ? 46 : 26;
+        const glow = l.createRadialGradient(body.x, body.y, 0, body.x, body.y, r);
+        const c = body.body === 'sun' ? '#ffb867' : '#b9c8ff';
+        glow.addColorStop(0, applyAlpha(c, (body.body === 'sun' ? 0.7 : 0.3) * darkness));
+        glow.addColorStop(0.4, applyAlpha(c, (body.body === 'sun' ? 0.3 : 0.12) * darkness));
+        glow.addColorStop(1, 'rgba(0,0,0,0)');
+        l.fillStyle = glow;
+        l.fillRect(body.x - r, body.y - r, r * 2, r * 2);
+      }
 
       // Every lit window throws a small pool of its own. Drawn as a soft radial
       // rather than a hard rectangle so any spill onto a building in front
@@ -827,5 +1196,101 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
 function applyAlpha(hex: string, alpha: number): string {
   const n = parseInt(hex.slice(1), 16);
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${clamp(alpha, 0, 1)})`;
+}
+
+function mixHex(a: string, b: string, k: number): string {
+  const x = parseInt(a.slice(1), 16);
+  const y = parseInt(b.slice(1), 16);
+  const t = clamp(k, 0, 1);
+  const ch = (sh: number): number => Math.round(((x >> sh) & 255) + (((y >> sh) & 255) - ((x >> sh) & 255)) * t);
+  return `rgb(${ch(16)},${ch(8)},${ch(0)})`;
+}
+
+/**
+ * Discs, moons and shadows are all filled row by row rather than with an arc
+ * path, for the same reason the sprites are: the buffer is one canvas pixel per
+ * art pixel, and an antialiased edge there upscales into a smear.
+ */
+function fillDisc(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, color: string): void {
+  ctx.fillStyle = color;
+  const n = Math.ceil(r);
+  for (let dy = -n; dy <= n; dy++) {
+    const w = Math.sqrt(Math.max(0, r * r - dy * dy));
+    if (w < 0.5) continue;
+    ctx.fillRect(Math.round(cx - w), Math.round(cy + dy), Math.max(1, Math.round(w * 2)), 1);
+  }
+}
+
+function fillEllipse(ctx: CanvasRenderingContext2D, cx: number, cy: number, rx: number, ry: number): void {
+  const n = Math.ceil(ry);
+  for (let dy = -n; dy <= n; dy++) {
+    const w = rx * Math.sqrt(Math.max(0, 1 - (dy * dy) / (ry * ry)));
+    if (w < 0.5) continue;
+    ctx.fillRect(Math.round(cx - w), Math.round(cy + dy), Math.max(1, Math.round(w * 2)), 1);
+  }
+}
+
+/**
+ * The moon, lit from one side. The terminator follows each row's own width
+ * rather than cutting straight down, which is the difference between a crescent
+ * and a disc somebody has taken a bite out of. The unlit limb is still faintly
+ * there — earthshine, and the reason the moon never disappears entirely.
+ */
+function fillMoon(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, phase: number): void {
+  const n = Math.ceil(r);
+  for (let dy = -n; dy <= n; dy++) {
+    const w = Math.sqrt(Math.max(0, r * r - dy * dy));
+    if (w < 0.5) continue;
+    const y = Math.round(cy + dy);
+    ctx.fillStyle = 'rgba(150,164,200,0.55)';
+    ctx.fillRect(Math.round(cx - w), y, Math.max(1, Math.round(w * 2)), 1);
+    const x0 = cx + w * (1 - 2 * phase);
+    const lit = cx + w - x0;
+    if (lit >= 1) {
+      ctx.fillStyle = '#eef1ff';
+      ctx.fillRect(Math.round(x0), y, Math.round(lit), 1);
+    }
+  }
+}
+
+/** Scanline fill of a convex polygon, in the current fill colour. */
+function fillPoly(ctx: CanvasRenderingContext2D, pts: { x: number; y: number }[]): void {
+  let y0 = Infinity;
+  let y1 = -Infinity;
+  for (const p of pts) {
+    y0 = Math.min(y0, p.y);
+    y1 = Math.max(y1, p.y);
+  }
+  for (let y = Math.floor(y0); y <= Math.ceil(y1); y++) {
+    const cy = y + 0.5;
+    let xa = Infinity;
+    let xb = -Infinity;
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[i];
+      const b = pts[(i + 1) % pts.length];
+      if (a.y <= cy === b.y <= cy) continue;
+      const x = a.x + ((b.x - a.x) * (cy - a.y)) / (b.y - a.y);
+      xa = Math.min(xa, x);
+      xb = Math.max(xb, x);
+    }
+    if (xb > xa) ctx.fillRect(Math.round(xa), y, Math.max(1, Math.round(xb - xa)), 1);
+  }
+}
+
+/** Monotone chain. The points come in as two overlapping quads, not an outline. */
+function convexHull(pts: { x: number; y: number }[]): { x: number; y: number }[] {
+  const p = pts.slice().sort((a, b) => a.x - b.x || a.y - b.y);
+  const cross = (o: { x: number; y: number }, a: { x: number; y: number }, b: { x: number; y: number }): number =>
+    (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+  const half = (src: { x: number; y: number }[]): { x: number; y: number }[] => {
+    const out: { x: number; y: number }[] = [];
+    for (const q of src) {
+      while (out.length >= 2 && cross(out[out.length - 2], out[out.length - 1], q) <= 0) out.pop();
+      out.push(q);
+    }
+    out.pop();
+    return out;
+  };
+  return half(p).concat(half(p.slice().reverse()));
 }
 

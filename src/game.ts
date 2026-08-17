@@ -59,6 +59,7 @@ import { rockInRange, tileAt, touchesRock, updateTerrain } from './world/terrain
 import { toScreenX, toScreenY } from './world/iso';
 import { Camera } from './render/camera';
 import { Renderer, type RenderOptions } from './render/renderer';
+import { BAND_META, MOONSET, SUNSET, bandOf, celestial, clockFor } from './render/sky';
 import { audio } from './audio/audio';
 import {
   DEFAULT_SETTINGS,
@@ -102,6 +103,13 @@ export class Game {
   tool: Tool = { kind: 'none' };
   selection: Selection = { kind: null, id: 0 };
   hover: { x: number; y: number } | null = null;
+  /**
+   * Set while the cursor is on the sun or the moon, so the interface can put a
+   * word to what it is. Read every frame rather than pushed through `notify()`:
+   * a full refresh on every pointer move to reposition one tooltip is a great
+   * deal of work for a label.
+   */
+  skyHover: { x: number; y: number; body: 'sun' | 'moon' } | null = null;
   cleanMode = false;
   slotId: string;
   slotName: string;
@@ -567,6 +575,9 @@ export class Game {
       const dy = e.clientY - this.lastPointer.y;
       const was = this.hover;
       this.hover = this.tileUnder(e.clientX, e.clientY);
+      // There is no hover on a touchscreen, only a drag that has not finished.
+      // A finger passing over the sun would otherwise leave the tip up.
+      this.skyHover = e.pointerType === 'touch' ? null : this.skyUnder(e.clientX, e.clientY);
       // Hovering does not normally concern the interface — the ghost is drawn
       // by the renderer, which reads `hover` every frame anyway. It concerns it
       // for exactly one thing: the placement hint counts the trees under the
@@ -607,6 +618,7 @@ export class Game {
 
     canvas.addEventListener('pointerleave', () => {
       this.hover = null;
+      this.skyHover = null;
     });
 
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -797,6 +809,22 @@ export class Game {
     const y = Math.round(g.y);
     if (x < 0 || y < 0 || x >= this.state.w || y >= this.state.h) return null;
     return { x, y };
+  }
+
+  /**
+   * The sun or moon, if the cursor is on it. Generous by a few pixels: the disc
+   * is eight art pixels across and pointing at it exactly is not a skill this
+   * game asks anybody for.
+   */
+  private skyUnder(cssX: number, cssY: number): { x: number; y: number; body: 'sun' | 'moon' } | null {
+    const pos = this.renderer.skyBodyOnScreen(this.state);
+    if (!pos) return null;
+    const rect = this.renderer.canvas.getBoundingClientRect();
+    const dx = cssX - rect.left - pos.x;
+    const dy = cssY - rect.top - pos.y;
+    const r = Math.max(16, pos.r);
+    if (dx * dx + dy * dy > r * r) return null;
+    return { x: pos.x + rect.left, y: pos.y + rect.top, body: pos.body };
   }
 
   private worldUnder(cssX: number, cssY: number): { x: number; y: number } {
@@ -1533,10 +1561,27 @@ export class Game {
 
   /** Time of day as a friendly 24-hour clock. Day-fraction 0 is first light. */
   clockLabel(): string {
-    const hours = (this.state.dayT * 24 + 5) % 24;
-    const h = Math.floor(hours);
-    const m = Math.floor((hours - h) * 60);
-    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+    return clockFor(this.state.dayT);
+  }
+
+  /**
+   * What the sun or moon has to say for itself: the hour, which part of the day
+   * it is, and when whatever is up there will go. Time of day is the one thing
+   * in this game that cannot be hurried, so the panel says what is happening
+   * rather than offering anything to do about it.
+   */
+  skyLabel(): { title: string; time: string; band: string; note: string; until: string } {
+    const g = this.state;
+    const c = celestial(g.dayT, g.day);
+    const band = bandOf(g.dayT);
+    const sun = c.body === 'sun';
+    return {
+      title: sun ? 'The sun' : 'The moon',
+      time: clockFor(g.dayT),
+      band: BAND_META[band].name,
+      note: BAND_META[band].note,
+      until: sun ? `Sets at ${clockFor(SUNSET)}.` : `Sets at ${clockFor(MOONSET % 1)}.`,
+    };
   }
 
   dayProgressLabel(): string {

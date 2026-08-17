@@ -94,6 +94,7 @@ export class UI {
   private viewHost!: HTMLElement;
   private modalHost!: HTMLElement;
   private introHost!: HTMLElement;
+  private skyTip!: HTMLElement;
   private cleanT!: HTMLElement;
 
   constructor(root: HTMLElement, game: Game) {
@@ -160,6 +161,11 @@ export class UI {
       <button data-act="clean-off">show interface</button>`;
     this.cleanT = chip.querySelector('.t') as HTMLElement;
     this.root.appendChild(chip);
+
+    // Anchored to a point on the map rather than to a control, so unlike every
+    // other tip in here it is positioned rather than hung off a `:hover`.
+    this.skyTip = el('div', 'tip skytip hide-in-clean');
+    this.root.appendChild(this.skyTip);
 
     this.modalHost = el('div', 'modal-host');
     this.root.appendChild(this.modalHost);
@@ -309,6 +315,7 @@ export class UI {
     if (chipSea) chipSea.textContent = cap(g.season);
 
     this.renderToasts();
+    this.renderSkyTip();
 
     // Panels are re-rendered a few times a second, not every frame.
     if (now - this.lastRender > 380) {
@@ -446,6 +453,32 @@ export class UI {
     // Toasts are confirmations, so they are worth saying out loud once.
     const last = g.toasts[g.toasts.length - 1];
     if (last) this.focus.announce(last.text);
+  }
+
+  /**
+   * The hover detail for the sun and the moon. Positioned under whichever it
+   * is, and nudged back on screen when that would run it off the edge — the
+   * body spends a good part of the day near the rim of the view, which is
+   * exactly where a tooltip anchored to it would go missing.
+   */
+  private renderSkyTip(): void {
+    const at = this.game.skyHover;
+    if (!at) {
+      if (this.skyTip.classList.contains('on')) this.skyTip.classList.remove('on');
+      return;
+    }
+    const s = this.game.skyLabel();
+    setHtml(
+      this.skyTip,
+      `<div class="tip-head">${esc(s.title)}<b>${esc(s.time)}</b></div>` +
+        `<div class="tip-line"><b>${esc(s.band)}</b> — ${esc(s.note)}</div>` +
+        `<div class="tip-line">${esc(s.until)}</div>`,
+    );
+    this.skyTip.classList.add('on');
+    const w = this.skyTip.offsetWidth;
+    const x = Math.max(8, Math.min(window.innerWidth - w - 8, at.x - w / 2));
+    this.skyTip.style.left = `${Math.round(x)}px`;
+    this.skyTip.style.top = `${Math.round(at.y + 18)}px`;
   }
 
   // -------------------------------------------------------------------------

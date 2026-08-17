@@ -10,6 +10,16 @@ import { HALF_H, HALF_W, toScreenX, toScreenY } from '../world/iso';
  */
 export const ZOOM_LEVELS = [1, 2, 3, 4, 6];
 
+/**
+ * How far past the island's north corner the camera may travel, as a share of
+ * the view's own height. North of the map is sky, and looking up to see where
+ * the sun has got to is a thing the player should be able to do — at four times
+ * zoom there is otherwise no view containing any sky at all. It has to scale
+ * with the view rather than being a flat number of pixels: the same margin that
+ * shows a strip of sky zoomed out fills the entire screen with it zoomed in.
+ */
+const SKY_HEADROOM = 0.22;
+
 export class Camera {
   /** Centre of view, in world pixels. */
   x = 0;
@@ -18,6 +28,8 @@ export class Camera {
   /** Entity the camera is tracking, or null. */
   followId = 0;
   followKind: 'villager' | 'animal' | null = null;
+  /** Height of the view in world pixels; the renderer keeps it up to date. */
+  viewH = 0;
   /** Set while the camera is easing toward a point. */
   private targetX: number | null = null;
   private targetY: number | null = null;
@@ -93,7 +105,7 @@ export class Camera {
     const marginY = 8 * HALF_H;
     const minX = -mapH * HALF_W - marginX;
     const maxX = mapW * HALF_W + marginX;
-    const minY = -marginY;
+    const minY = Math.min(-marginY, -this.viewH * SKY_HEADROOM);
     const maxY = (mapW + mapH) * HALF_H + marginY;
     this.x = clamp(this.x, minX, maxX);
     this.y = clamp(this.y, minY, maxY);

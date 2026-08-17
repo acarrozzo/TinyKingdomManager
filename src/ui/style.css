@@ -372,6 +372,17 @@ body {
 #ui .pop-pill:hover .tip {
   display: flex;
 }
+/* The one tip that is not hung off a control: it belongs to a thing in the
+   sky, so it is placed in the page rather than under a parent. */
+#ui .skytip {
+  position: fixed;
+  top: 0;
+  left: 0;
+  max-width: 240px;
+}
+#ui .skytip.on {
+  display: flex;
+}
 #ui .tip .tip-head {
   display: flex;
   align-items: center;

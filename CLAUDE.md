@@ -220,6 +220,7 @@ src/
     names.ts          name generation and villager chatter
   render/
     palette.ts        season colour ramps, ambient day/night tint
+    sky.ts            where the sun and moon are; sky bands; the shadow vector
     sprites.ts        procedural pixel art, baked to offscreen canvases
     actors.ts         villagers and animals, drawn per frame
     camera.ts         pan, integer zoom, follow
@@ -745,6 +746,67 @@ are screen-space text drawn after upscaling.
 
 ---
 
+## The time of day, drawn twice
+
+`render/sky.ts` is the one place that turns `dayT` into something to look at,
+and **two things read from it that must never disagree**: the sky above the
+island's horizon, and the direction every shadow on the ground falls. They are
+the same fact told twice, and they are told twice on purpose — the sky is the
+precise reading and it is not always on screen; the shadows are the approximate
+one and they are on every tile at every zoom.
+
+**The sky sits above the island's north corner, which is world y 0.** Everything
+above that row is off the map entirely, so it can honestly be called sky; the
+sea, the ground and everything on them draw over it in the ordinary way. Pan
+south and the island fills the screen and the sky goes, which is what looking
+down at your feet does. `horizonY()` is the whole of that rule. The camera's
+north clamp carries `SKY_HEADROOM` — **a share of the view's height, not a
+number of pixels**, because the same margin that shows a strip of sky at 1×
+fills the entire screen with it at 6×.
+
+**The bands of the day are the sky's own colour and nothing else.** `SKY_STOPS`
+lines up with the stops `ambientTint` uses, so the light on the ground and the
+light in the sky never tell different stories. There is no gauge drawn over the
+sky saying "dusk"; the rim going orange under a violet zenith is the kingdom
+saying so, and the four names live in `BAND_META` for the hover tip alone.
+
+**The sky is where the light comes from, so the lighting pass does not fall on
+it.** `applyLighting` paints the light buffer white above the horizon and hands
+back to the ambient tint across the last stretch of it, which doubles as haze.
+Multiplying the night tint over an already-dark sky drove it to black and took
+the stars with it. For the same reason the sun's halo is composited `lighter`
+rather than laid over the top: a warm ring at any alpha is *darker* than a pale
+evening sky, which drew a grey washer round the setting sun.
+
+**Only one body is ever up.** Sun from `SUNRISE` to `SUNSET`, moon for what is
+left, handing over at the rim — so "what is up there" is a glance rather than a
+comparison. The moon runs an eight-day phase cycle and is **deliberately never
+new**: an invisible moon is one night in eight with nothing to read the hour
+from, which is a worse trade than a crescent slightly fuller than it should be.
+
+**Cast shadows are the always-on half of the clock, and they are collected
+before they are laid down.** `drawShadows` fills a separate buffer in solid
+black and composites it once at `sunlight().alpha`. Drawing each shadow straight
+onto the world at its own alpha makes every overlap darker than the shadows in
+it, which turned a stand of trees at dawn into a black pool. Shapes are stamped
+from a per-frame cache (`streak`) because every tree on the island casts the
+same shape at the same moment and only the position differs; buildings get their
+footprint swept along the reach instead, via a convex hull, because at that size
+a roofline is a shape the eye recognises.
+
+Shadow darkness is **mostly flat against altitude** (`0.12 + alt * 0.14`). A low
+sun casts the longest shadow of the day, and scaling darkness off altitude alone
+made the most dramatic hour the one you could barely see. `MAX_REACH` caps the
+length: the true figure runs away to infinity at the rim, and a tree whose
+shadow crosses half the island reads as a bug rather than as a sunrise.
+
+**Nothing here is a mechanic.** Time of day already drives sleep, work hours and
+which animals are about. The sky and the shadows only draw it, and the hover tip
+on the sun says what is happening rather than offering anything to do about it —
+time is the one thing in this game that cannot be hurried.
+
+---
+
 ## Input and the view
 
 **Zoom is stepped and always will be.** `ZOOM_LEVELS = [1, 2, 3, 4, 6]` feeds
@@ -1097,7 +1159,10 @@ back to grass; see `deserialize` in `save/save.ts`.
 
 ## Scale reference
 
-Map 40×40 · a day is 30 real minutes at 1× (20 day / 10 night) · 6 days a season,
+Map 40×40 · a day is 30 real minutes at 1× (20 day / 10 night) · the sun is up
+from day-fraction 0.02 to 0.74 and the moon has the rest, on an eight-day phase
+cycle · shadows run from about two-thirds of a caster's height at midday out to
+the 3.2× cap near either rim · 6 days a season,
 24 a year · **population is capped by beds and by nothing else** — 2 at the
 commons plus 2 / 4 / 6 a Cabin, so 20 at a Village Commons and 26 at a Kingdom
 Commons · with a bed free somebody always arrives, in 6–9 game-minutes at one
