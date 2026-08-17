@@ -31,7 +31,7 @@ import {
 } from '../save/save';
 import { buildingById, newGame } from '../sim/state';
 import { Focus, keepFocus } from './a11y';
-import { cap, el, esc, type UIEnv } from './context';
+import { cap, el, esc, setHtml, type UIEnv } from './context';
 import { Hud, populationBody, storesBody } from './hud';
 import { bottomNavMarkup, moreBody, toolbarMarkup, viewPadMarkup, type ModalKind, type NavState } from './nav';
 import { goalChipMarkup, goalPanelMarkup, goalsBody } from './goals';
@@ -224,10 +224,19 @@ export class UI {
         return;
       }
       switch (e.key.toLowerCase()) {
+        /*
+         * One step out per press, innermost first: whatever is covering the map,
+         * then the placement being considered, then the tool holding it, then
+         * the list the tool came out of, then clean view, then the selection.
+         * The build list was missing from that ladder entirely while its own
+         * header said "Esc to close", so the one panel that says how to shut it
+         * was the one panel that would not.
+         */
         case 'escape':
           if (this.modal) this.setModal(null);
           else if (this.game.candidate || this.game.demolishTarget) this.game.clearPending();
           else if (this.game.tool.kind !== 'none') this.game.cancelTool();
+          else if (this.buildOpen) this.toggleBuild();
           else if (this.game.cleanMode) this.game.setCleanMode(false);
           else this.game.select(null, 0);
           break;
@@ -393,14 +402,11 @@ export class UI {
 
   private renderToolbar(): void {
     const html = this.env.compact ? '' : toolbarMarkup(this.navState());
-    keepFocus(this.toolbarHost, () => {
-      if (this.toolbarHost.innerHTML !== html) this.toolbarHost.innerHTML = html;
-    });
+    keepFocus(this.toolbarHost, () => setHtml(this.toolbarHost, html));
   }
 
   private renderViewPad(): void {
-    const html = viewPadMarkup(this.game);
-    if (this.viewHost.innerHTML !== html) this.viewHost.innerHTML = html;
+    setHtml(this.viewHost, viewPadMarkup(this.game));
   }
 
   /**
@@ -421,11 +427,10 @@ export class UI {
     const bar =
       asking || confirming ? placementBarMarkup(this.game, this.env) : toolHintMarkup(this.game, this.env);
 
-    if (this.toolHost.innerHTML !== bar) this.toolHost.innerHTML = bar;
+    setHtml(this.toolHost, bar);
     this.root.classList.toggle('has-hint', !!bar);
 
-    const nav = this.env.compact ? bottomNavMarkup(this.navState()) : '';
-    if (this.navHost.innerHTML !== nav) this.navHost.innerHTML = nav;
+    setHtml(this.navHost, this.env.compact ? bottomNavMarkup(this.navState()) : '');
   }
 
   private renderToasts(): void {
@@ -451,18 +456,28 @@ export class UI {
     // The stylesheet needs to know which sheet is up to keep the rest clear.
     this.root.classList.toggle('build-open', this.buildOpen);
     if (!this.buildOpen) {
-      if (this.sideLeft.innerHTML) this.sideLeft.innerHTML = '';
+      setHtml(this.sideLeft, '');
       this.goalsHost.classList.remove('shifted');
       return;
     }
     this.goalsHost.classList.toggle('shifted', !this.env.compact);
     const body = buildListMarkup(this.game, this.env);
-    const html = `<div class="panel scroll sheet" style="flex:1">
-      <h3 id="build-title">Build<span class="tiny muted esc-hint">Esc to cancel</span>
+    const html = `<div class="panel sheet">
+      <h3 id="build-title">Build<span class="tiny muted esc-hint">Esc to close</span>
         <button class="btn small sheet-close" data-act="toggle-build">Close</button></h3>
-      <div class="sheet-body">${body}</div></div>`;
+      <div class="sheet-body scroll">${body}</div></div>`;
+    /*
+     * The list still changes for real — a cost becomes affordable, a tally ticks
+     * over — and it is longer than any screen it is drawn on, so where the
+     * player had read down to is carried across the redraw. Losing it is not a
+     * cosmetic annoyance: the comforts are at the bottom of the list, and a list
+     * that jumps back to Housing every third of a second cannot be used at all.
+     */
+    const keep = (this.sideLeft.querySelector('.sheet-body') as HTMLElement | null)?.scrollTop ?? 0;
     keepFocus(this.sideLeft, () => {
-      if (this.sideLeft.innerHTML !== html) this.sideLeft.innerHTML = html;
+      if (!setHtml(this.sideLeft, html)) return;
+      const scroller = this.sideLeft.querySelector('.sheet-body') as HTMLElement | null;
+      if (scroller) scroller.scrollTop = keep;
     });
   }
 
@@ -479,7 +494,7 @@ export class UI {
     else if (sel.kind === 'tile') html = tileCard(this.game);
 
     if (!html) {
-      if (this.sideRight.innerHTML) this.sideRight.innerHTML = '';
+      setHtml(this.sideRight, '');
       return;
     }
     // A sheet you cannot see the edge of needs its own way out; on a desktop
@@ -487,9 +502,12 @@ export class UI {
     const head = this.env.compact
       ? `<h3>${esc(inspectorTitle(this.game))}<button class="btn small sheet-close" data-act="clear-selection">Close</button></h3>`
       : '';
-    const next = `<div class="panel scroll sheet" style="flex:0 1 auto;max-height:100%">${head}<div class="sheet-body">${html}</div></div>`;
+    const next = `<div class="panel sheet">${head}<div class="sheet-body scroll">${html}</div></div>`;
+    const keep = (this.sideRight.querySelector('.sheet-body') as HTMLElement | null)?.scrollTop ?? 0;
     keepFocus(this.sideRight, () => {
-      if (this.sideRight.innerHTML !== next) this.sideRight.innerHTML = next;
+      if (!setHtml(this.sideRight, next)) return;
+      const scroller = this.sideRight.querySelector('.sheet-body') as HTMLElement | null;
+      if (scroller) scroller.scrollTop = keep;
     });
   }
 
@@ -501,8 +519,7 @@ export class UI {
     const html = this.env.compact
       ? goalChipMarkup(this.game, this.goalsCollapsed)
       : goalPanelMarkup(this.game);
-    if (this.goalsHost.innerHTML === html) return;
-    this.goalsHost.innerHTML = html;
+    if (!setHtml(this.goalsHost, html)) return;
     // On a narrow desktop the toasts have nowhere to be but above this panel,
     // so they have to be told how tall it came out.
     const panel = this.goalsHost.firstElementChild as HTMLElement | null;
@@ -524,9 +541,14 @@ export class UI {
     const opening = kind && kind !== this.modal;
     this.modal = kind;
     this.modalTab = tab;
-    // Only one major sheet at a time: a modal takes the screen from the build
-    // list rather than sliding out from under it.
-    if (kind && this.env.compact) this.buildOpen = false;
+    /*
+     * Only one major surface at a time, on every screen. A phone has no room
+     * for two; a desktop has the room but nothing to gain by it — the modal
+     * dims the rail behind its scrim, so the list sits there lit up and
+     * unreachable, and its ghost under the dimming is most of what reads as the
+     * panels fighting each other.
+     */
+    if (kind) this.buildOpen = false;
     if (opening) this.focus.remember();
     this.refresh();
     // After the redraw, not before: closing a panel repaints the bar it was
@@ -558,7 +580,7 @@ export class UI {
 
   private renderModal(): void {
     if (!this.modal) {
-      if (this.modalHost.innerHTML) this.modalHost.innerHTML = '';
+      setHtml(this.modalHost, '');
       this.modalMount = '';
       return;
     }
@@ -575,7 +597,7 @@ export class UI {
         const b = this.game.selectedBuilding();
         // Demolished while the panel was open, or nothing selected at all.
         if (!b) {
-          this.modalHost.innerHTML = '';
+          setHtml(this.modalHost, '');
           this.modalMount = '';
           // Set directly rather than through setModal: this runs inside a
           // render, and nothing else needs to change.
@@ -665,13 +687,13 @@ export class UI {
     if (mounted && this.modalMount === sig) {
       keepFocus(this.modalHost, () => {
         const swap = (sel: string, html: string) => {
-          const node = mounted.querySelector(sel);
-          if (!node || node.innerHTML === html) return;
+          const node = mounted.querySelector(sel) as HTMLElement | null;
+          if (!node) return;
           const keep = node.scrollTop;
           // "Here now" is a fixed-height scroller inside the body, so it needs
           // its own place kept as well — it is replaced along with everything else.
           const inner = node.querySelector('.bhere')?.scrollTop ?? 0;
-          node.innerHTML = html;
+          if (!setHtml(node, html)) return;
           node.scrollTop = keep;
           const here = node.querySelector('.bhere');
           if (here) here.scrollTop = inner;
@@ -686,14 +708,14 @@ export class UI {
     }
 
     this.modalMount = sig;
-    this.modalHost.innerHTML = `<div class="scrim" data-act="close-scrim">
+    setHtml(this.modalHost, `<div class="scrim" data-act="close-scrim">
       <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" data-stop="1">
         <header>${pic}<h2 id="modal-title">${head}</h2>
           <button class="btn small" data-act="close-modal" aria-label="Close">Close</button></header>
         ${tabs ? `<div class="tabs" role="tablist">${tabs}</div>` : ''}
         <div class="body" id="modal-body" ${tabs ? `role="tabpanel" aria-labelledby="mtab-${active}"` : ''}>${body}</div>
         ${foot ? `<div class="foot">${foot}</div>` : ''}
-      </div></div>`;
+      </div></div>`);
     paintPortraits(this.game, this.modalHost);
     const panel = this.modalHost.querySelector('.modal') as HTMLElement | null;
     if (panel) this.focus.enter(panel, TRUE_MODALS.includes(this.modal));
@@ -703,7 +725,7 @@ export class UI {
     const g = this.g;
     const fresh = g.day === 1 && g.buildings.length <= 1 && g.villagers.length === 1 && g.played < 2;
     if (this.introDismissed || !fresh) {
-      if (this.introHost.innerHTML) this.introHost.innerHTML = '';
+      setHtml(this.introHost, '');
       return;
     }
     const founder = g.villagers[0];
@@ -721,8 +743,7 @@ export class UI {
     </div></div>`;
     // Rebuilt only when it would actually differ: the card is mounted before
     // the screen has told us what shape it is, so the key list can change once.
-    if (this.introHost.innerHTML === html) return;
-    this.introHost.innerHTML = html;
+    if (!setHtml(this.introHost, html)) return;
     const card = this.introHost.querySelector('.card2') as HTMLElement | null;
     if (card) {
       this.focus.remember(null);
@@ -846,7 +867,7 @@ export class UI {
         break;
       case 'dismiss-intro':
         this.introDismissed = true;
-        this.introHost.innerHTML = '';
+        setHtml(this.introHost, '');
         this.focus.release();
         break;
       case 'follow-villager':

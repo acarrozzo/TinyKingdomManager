@@ -884,6 +884,20 @@ makes an overlap impossible even for a frame. The five destinations along the
 bottom (Build · People · Journal · Wildlife · More) are labelled, not just
 iconed, and show which section is open.
 
+**A modal closes the build rail on every screen, not only a phone.** A desktop
+has the room for both, but nothing to gain by it: the scrim dims the rail and
+takes its clicks, so what is left is a list sitting there lit up and
+unreachable. `setModal` does it unconditionally. Esc then steps back out one
+layer per press — modal, then the placement being considered, then the tool
+holding it, then the list the tool came from, then clean view, then the
+selection — which is the ladder in `bindKeys` and the order they were opened in.
+
+**Build is a primary control and the only one up there.** Everything else in
+the toolbar and along the phone's bottom edge is somewhere to go and look at
+the kingdom; Build is the thing that changes it, so it carries `primary`
+whether or not the list is open, and `.btn.primary.on` / `.navbtn.primary.on`
+are a further step up rather than the first time it is coloured at all.
+
 **Everything pinned to the bottom edge lives in one flex column, `.dock`.**
 Before, each box measured itself and told the next how far up to sit, and a hint
 that ran to four lines was written straight over. Four measured custom
@@ -935,6 +949,24 @@ be replaced.
   full-height layout box that is usually empty must be `pointer-events: none`
   with `auto` on its children. `document.elementFromPoint()` in a device-
   emulated screenshot is the fastest way to catch it.
+- **`host.innerHTML !== html` is not a redraw guard, and never was.** Reading
+  `innerHTML` back gives the *serialised DOM*, where the `&#39;` that `esc()`
+  wrote has become `'` again — so any panel that mentions a Woodcutter's Lodge
+  compares unequal to itself and is torn down and rebuilt every time it is
+  drawn, which for the live panels is several times a second. What that looks
+  like is a build list that will not stay scrolled, a hover highlight that goes
+  out under the cursor, and focus jumping about; what it looks like in the
+  source is a guard that is obviously correct. Use `setHtml()` from
+  `ui/context.ts`, which compares against what was last *assigned* and says
+  whether anything changed. A redraw that does happen still has to carry the
+  scroll position of anything scrollable across it.
+- **Everything floating over the map has an explicit `z-index`, and the ladder
+  is written down in `style.css`** — rails and sheets 15, objectives 16, view
+  pad 20, modals 24, dock 25, toasts 28, hover tips 40. Before that only the
+  dock and the pad carried a number and the rest sorted by document order,
+  which is how the zoom buttons came to paint through a modal's scrim. The dock
+  sits above the modal deliberately: on a phone the bottom navigation is how
+  you get from one sheet to another.
 - **Vite dev serves `index.html` for unknown paths.** You cannot get a
   same-origin "blank" page from the dev server to seed `localStorage`; the app
   boots and autosaves over you.

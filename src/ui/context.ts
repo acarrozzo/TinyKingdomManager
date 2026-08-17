@@ -36,6 +36,28 @@ export const el = (tag: string, cls?: string, html?: string): HTMLElement => {
 export const esc = (s: string): string =>
   s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 
+/** What was last written into each host, so a redraw can be skipped honestly. */
+const written = new WeakMap<HTMLElement, string>();
+
+/**
+ * Put markup into a host, and say whether anything actually changed.
+ *
+ * The obvious way to write this — `if (host.innerHTML !== html)` — is wrong,
+ * and was wrong here for a long time without showing. Reading `innerHTML` back
+ * gives the *serialised DOM*, in which `&#39;` has become `'` again, so any
+ * panel mentioning a Woodcutter's Lodge compared unequal to itself and was torn
+ * down and rebuilt every time it was drawn — several times a second. What that
+ * looks like is a build list that will not stay scrolled, a hover highlight
+ * that flickers off under the cursor, and focus jumping about. Comparing
+ * against what was assigned is the whole fix.
+ */
+export function setHtml(host: HTMLElement, html: string): boolean {
+  if (written.get(host) === html) return false;
+  written.set(host, html);
+  host.innerHTML = html;
+  return true;
+}
+
 export function cap(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }

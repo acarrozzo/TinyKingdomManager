@@ -125,7 +125,10 @@ export function keepFocus(root: HTMLElement, redraw: () => void): void {
   if (!inside || !key) return;
   if (document.activeElement && root.contains(document.activeElement)) return;
   const again = root.querySelector<HTMLElement>(key);
-  if (again) again.focus();
+  // Without `preventScroll` this drags the panel back to wherever the keyboard
+  // happens to be: the build list opens with its first row focused, so every
+  // redraw scrolled a player who had read halfway down it back to the top.
+  if (again) again.focus({ preventScroll: true });
 }
 
 function focusKey(node: HTMLElement): string {

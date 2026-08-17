@@ -502,6 +502,19 @@ button {
   border-color: rgba(224, 130, 114, 0.45);
   color: #f3c4bb;
 }
+/* A primary control that is also the open one has to be a step further up
+   again, not merely different: `.btn.on` alone would land it in much the same
+   amber it already wears and lose the distinction it was given. */
+.btn.primary:hover {
+  background: rgba(232, 182, 97, 0.26);
+  border-color: rgba(232, 182, 97, 0.62);
+  color: #fbeccc;
+}
+.btn.primary.on {
+  background: rgba(232, 182, 97, 0.32);
+  border-color: rgba(232, 182, 97, 0.72);
+  color: #fbeccc;
+}
 
 .speed {
   display: inline-flex;
@@ -660,6 +673,33 @@ button {
   pointer-events: auto;
 }
 
+/*
+ * One ladder for everything that floats over the map, written down rather than
+ * left to the order things happen to appear in the document. Only the dock and
+ * the view pad carried a number before, so the build rail and the modal sorted
+ * themselves by accident — which is how the zoom buttons came to paint straight
+ * through a modal's scrim.
+ *
+ *   rails and sheets 15 · objectives 16 · view pad 20 · modals 24 · dock 25 ·
+ *   toasts 28 · hover tips 40
+ *
+ * The dock stays above the modal deliberately: on a phone the bottom navigation
+ * is how you get from one sheet to another, so it must not be dimmed by one.
+ * The tips are last because a tooltip nobody can read is not a tooltip.
+ */
+#ui .side {
+  z-index: 15;
+}
+#ui .goals {
+  z-index: 16;
+}
+#ui .modal-host {
+  z-index: 24;
+}
+#ui .toasts {
+  z-index: 28;
+}
+
 .side {
   position: absolute;
   /* Off the measured top bar: it wraps to two rows on a narrow window, and a
@@ -670,6 +710,28 @@ button {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+/*
+ * A sheet is a head that stays put and a body that scrolls, on every screen.
+ * The desktop rail used to scroll as one piece, which took its own title and
+ * Close button off the top of the screen — a list whose way out scrolls away is
+ * a list you have to guess your way out of. The panel is sized by its contents
+ * and shrinks against the column rather than filling it: an empty rail standing
+ * the full height of the window is a translucent box over the map that eats
+ * every hover behind it for no reason.
+ */
+.side > .panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+.side > .panel > h3 {
+  flex-shrink: 0;
+}
+.sheet-body {
+  overflow-y: auto;
+  min-height: 0;
 }
 .side.left {
   left: calc(10px + var(--safe-l));
@@ -1238,6 +1300,20 @@ button.tag {
   background: var(--accent-dim);
   border-color: rgba(232, 182, 97, 0.42);
   color: var(--accent);
+}
+/* Build leads the five. Four of them are places to look at the kingdom and one
+   of them changes it, and a thumb should be able to tell which without reading. */
+.navbtn.primary {
+  color: var(--accent);
+  border-color: rgba(232, 182, 97, 0.22);
+  background: rgba(232, 182, 97, 0.06);
+}
+.navbtn.primary .lb {
+  font-weight: 600;
+}
+.navbtn.primary.on {
+  background: rgba(232, 182, 97, 0.28);
+  border-color: rgba(232, 182, 97, 0.6);
 }
 .navbtn:active {
   background: rgba(255, 255, 255, 0.06);
@@ -2093,16 +2169,6 @@ kbd {
    an overlap impossible even for a frame. */
 #ui.compact.build-open .side.right {
   display: none;
-}
-#ui.compact .side > .panel {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  overflow: hidden;
-}
-#ui.compact .sheet-body {
-  overflow-y: auto;
-  min-height: 0;
 }
 #ui.compact .panel h3 {
   padding: 12px 13px 10px;

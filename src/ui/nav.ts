@@ -36,12 +36,18 @@ export interface NavState {
 
 /** The desktop toolbar: everything at once, because there is room for it. */
 export function toolbarMarkup(nav: NavState): string {
-  const b = (act: string, label: string, on: boolean, title: string, expands = true) =>
-    `<button class="btn ${on ? 'on' : ''}" data-act="${act}" title="${esc(title)}" aria-label="${esc(title)}"
+  const b = (act: string, label: string, on: boolean, title: string, expands = true, cls = '') =>
+    `<button class="btn ${cls} ${on ? 'on' : ''}" data-act="${act}" title="${esc(title)}" aria-label="${esc(title)}"
       ${expands ? `aria-expanded="${on}"` : `aria-pressed="${on}"`}>${label}</button>`;
 
+  /*
+   * Build is the only verb up here — the rest are places to go and look at
+   * something — so it carries the weight of one and keeps it whether or not the
+   * list is open. Being the open panel is then a further step up rather than
+   * the only time it is coloured at all.
+   */
   return [
-    b('toggle-build', '🔨 Build', nav.buildOpen, 'Buildings you can place (B)'),
+    b('toggle-build', '🔨 Build', nav.buildOpen, 'Buildings you can place (B)', true, 'primary'),
     `<span class="divider" aria-hidden="true"></span>`,
     b('modal-people', '👥', nav.modal === 'people', 'People and jobs (P)'),
     b('modal-journal', '📖', nav.modal === 'journal', 'Kingdom journal (J)'),
@@ -56,12 +62,14 @@ export function toolbarMarkup(nav: NavState): string {
  * guess, and the guess is different for everybody.
  */
 export function bottomNavMarkup(nav: NavState): string {
-  const item = (act: string, icon: string, label: string, on: boolean, title: string, open = on) =>
-    `<button class="navbtn ${on ? 'on' : ''}" data-act="${act}" aria-expanded="${open}" aria-label="${esc(title)}">
+  const item = (act: string, icon: string, label: string, on: boolean, title: string, open = on, cls = '') =>
+    `<button class="navbtn ${cls} ${on ? 'on' : ''}" data-act="${act}" aria-expanded="${open}" aria-label="${esc(title)}">
       <span class="ic" aria-hidden="true">${icon}</span><span class="lb">${esc(label)}</span></button>`;
 
+  // Four of these five are somewhere to look; Build is the one that does
+  // something to the kingdom, and reads that way even when it is not the open one.
   return `<nav class="bottomnav" aria-label="Main">
-    ${item('toggle-build', '🔨', 'Build', nav.buildActive, 'Build — place a building', nav.buildOpen)}
+    ${item('toggle-build', '🔨', 'Build', nav.buildActive, 'Build — place a building', nav.buildOpen, 'primary')}
     ${item('modal-people', '👥', 'People', nav.modal === 'people', 'People and jobs')}
     ${item('modal-journal', '📖', 'Journal', nav.modal === 'journal', 'Kingdom journal')}
     ${item('modal-wildlife', '🔭', 'Wildlife', nav.modal === 'wildlife', 'Wildlife seen')}
