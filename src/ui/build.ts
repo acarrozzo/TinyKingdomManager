@@ -58,21 +58,26 @@ export function buildListMarkup(game: Game, env: UIEnv): string {
     const tally = counted
       ? `<span class="tally ${full ? 'at-limit' : ''}">${limit.built}/${limit.max} built</span>`
       : '';
+    // What a comfort is worth. The economy is shown plainly, and Vibes are part
+    // of it: a bench that quietly did something would be the wrong game.
+    const vibes = def.vibes ? `<span class="tally vibe">✦ ${def.vibes} Vibes</span>` : '';
     const html = full
       ? `<div class="build-item locked" aria-disabled="true">
-          <span class="row1"><span class="name">${esc(def.name)}</span>${tally}</span>
+          <span class="row1"><span class="name">${esc(def.name)}</span>${tally}${vibes}</span>
           <span class="desc">${esc(def.desc)}</span>
           <span class="warnline">${esc(
             def.unique
               ? 'The kingdom keeps one. Open it on the map to move it somewhere better.'
-              : 'Improving the commons allows another.',
+              : def.maxTotal !== undefined
+                ? 'That is as many as the kingdom keeps. Remove one to put it elsewhere.'
+                : 'Improving the commons allows another.',
           )}</span></div>`
       : `<button class="build-item ${on ? 'on' : ''} ${affordable ? '' : 'short'}"
           data-act="build" data-def="${id}" aria-pressed="${on}">
           <span class="row1"><span class="name">${esc(def.name)}</span>
           <span class="cost">${costLine(id)}</span></span>
           <span class="desc">${esc(def.desc)}</span>
-          ${tally}
+          ${tally}${vibes}
           ${affordable ? '' : `<span class="warnline">Not enough in store yet</span>`}</button>`;
     const list = groups.get(def.category) ?? [];
     list.push(html);

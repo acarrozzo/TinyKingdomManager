@@ -21,6 +21,57 @@ export const CARRY_CAPACITY = 12;
 export const DAY_LENGTH = 30 * 60;
 /** Days per season — 3 real hours at 1× = 6 days. */
 export const DAYS_PER_SEASON = 6;
+/** One game-minute in game seconds. Thirty of them make a day. */
+export const GAME_MINUTE = 60;
+
+/**
+ * How long a newcomer takes to arrive once there is a bed for them, in
+ * game-minutes, by how many people are already here.
+ *
+ * The window is a promise rather than a chance: with a bed free, somebody
+ * always turns up by the far end of it. Vibes decide where inside the window,
+ * and a little hidden variation keeps two identical kingdoms from filling up in
+ * lockstep. There is no roll that can fail, because a kingdom being told "no"
+ * with no reason it can see is the one thing this was rebuilt to stop.
+ */
+export const ARRIVAL_WINDOWS: { upTo: number; min: number; max: number }[] = [
+  { upTo: 1, min: 6, max: 9 },
+  { upTo: 3, min: 18, max: 26 },
+  { upTo: 7, min: 25, max: 35 },
+  { upTo: 15, min: 35, max: 50 },
+  { upTo: Infinity, min: 50, max: 75 },
+];
+
+/** The most each source of Vibes can be worth. The three add up to a hundred. */
+export const VIBE_MAX = { decor: 60, food: 30, wellbeing: 10 };
+
+/** What a number out of a hundred is actually called. */
+export const VIBE_BANDS: { from: number; name: string }[] = [
+  { from: 100, name: 'Immaculate' },
+  { from: 80, name: 'The Word Is Spreading' },
+  { from: 60, name: 'Lovely, Actually' },
+  { from: 40, name: 'Quite Nice' },
+  { from: 20, name: 'Getting There' },
+  { from: 0, name: 'A Bit Grim' },
+];
+
+/**
+ * Food security by loaves per villager: none, one each, two each, and so on up
+ * to four. Per head rather than per kingdom, so a larder that was reassuring at
+ * four people stops being reassuring at twelve without anything being rewritten.
+ * Read as a ramp between the points rather than as five steps.
+ */
+export const FOOD_VIBES = [0, 8, 16, 24, 30];
+
+/**
+ * What food is worth before the kingdom has ever baked. Neutral on purpose:
+ * there is no bread because there is no bakery, and marking a kingdom down for
+ * a system it has not been handed yet is a punishment for playing in order.
+ */
+export const FOOD_VIBES_NEUTRAL = 15;
+
+/** Hunger past which somebody is visibly struggling — the point their work slows. */
+export const SEVERE_HUNGER = 0.85;
 
 export const RESOURCE_META: Record<string, { name: string; icon: string; color: string }> = {
   wood: { name: 'Wood', icon: '🪵', color: '#b0763f' },
@@ -342,8 +393,10 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     maxLevel: 1,
     order: 30,
     desc: 'People gather at wells. Nobody has ever been able to explain why.',
-    how: 'It does nothing for the economy. People simply come and stand at it, which is what it is for. Build as many as you like.',
+    how: 'It does nothing for the economy. People simply come and stand at it, which is what it is for — and a place worth standing about in is a place worth walking to, which is the whole of how Vibes work. Twelve Vibes, the most of anything, and the kingdom keeps one.',
     unlock: 'well',
+    vibes: 12,
+    maxTotal: 1,
     solid: true,
   },
   bench: {
@@ -357,7 +410,9 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     maxLevel: 1,
     order: 31,
     desc: 'Somewhere to sit and not do very much.',
-    how: 'Villagers pass by, sit down for a while, and get up again no better off in any way that can be counted. It is the only building where they are recorded as resting rather than watching.',
+    how: 'Villagers pass by, sit down for a while, and get up again no better off in any way that can be counted. It is the only building where they are recorded as resting rather than watching. Five Vibes each, and the kingdom keeps two.',
+    vibes: 5,
+    maxTotal: 2,
     solid: false,
   },
   lantern: {
@@ -371,7 +426,9 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     maxLevel: 1,
     order: 32,
     desc: 'Lights a small circle of the kingdom after dark.',
-    how: 'Lights a small circle after dark and nothing else. It does not make anyone work later or walk faster; the kingdom just looks better with a few of them.',
+    how: 'Lights a small circle after dark and nothing else. It does not make anyone work later or walk faster; the kingdom just looks better with a few of them, which is worth two Vibes apiece. Eight is as many as anybody has ever wanted at once.',
+    vibes: 2,
+    maxTotal: 8,
     light: [{ x: 0.5, y: 0.4, radius: 52, color: '#ffbe63' }],
     solid: false,
   },
@@ -386,7 +443,9 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     maxLevel: 1,
     order: 33,
     desc: 'Pretty. Certain small creatures have opinions about flowers.',
-    how: 'Somewhere to stop and look. Certain small creatures have opinions about flowers, though nobody has written down what those opinions are.',
+    how: 'Somewhere to stop and look. Certain small creatures have opinions about flowers, though nobody has written down what those opinions are. Three Vibes each, up to four beds of them.',
+    vibes: 3,
+    maxTotal: 4,
     solid: false,
   },
   sapling: {
@@ -398,9 +457,14 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     cost: { wood: 2 },
     labour: 5,
     maxLevel: 1,
-    order: 34,
+    // Off the menu. It was the one comfort that did nothing at all — it is not a
+    // tree anybody can fell and it is worth no Vibes — so with the comforts now
+    // counted it had become a row that only ever wasted the wood. The def stays
+    // so that kingdoms with saplings already planted still open; those stand
+    // where they were put and go on being small.
+    order: -1,
     desc: 'Plant a tree. It will take a while, but it will get there.',
-    how: 'A tree in the sense that it is trying. Nothing harvests it and nothing depends on it — it stands where you put it and gets on with being small.',
+    how: 'A tree in the sense that it is trying. Nothing harvests it and nothing depends on it — it stands where you put it and gets on with being small. The kingdom no longer plants new ones.',
     solid: false,
   },
   statue: {
@@ -414,13 +478,17 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     maxLevel: 1,
     order: 35,
     desc: 'Nobody remembers putting it there, which is impressive, because you did.',
-    how: 'It produces nothing and improves nothing. People walk over to look at it, which over a long enough evening is a kind of production.',
+    how: 'It produces nothing and improves nothing. People walk over to look at it, which over a long enough evening is a kind of production — and ten Vibes, which is the second most of anything. There is only ever one.',
     unlock: 'statue',
+    vibes: 10,
+    maxTotal: 1,
     solid: true,
   },
 };
 
-// Negative order marks a landmark the player never places or removes.
+// Negative order keeps a building out of the menu — either a landmark the
+// player never places (the commons) or one the kingdom has stopped building
+// (the sapling) whose def has to stay for the saves that contain them.
 export const BUILD_ORDER: BuildingId[] = (Object.keys(BUILDINGS) as BuildingId[])
   .filter((k) => BUILDINGS[k].order >= 0)
   .sort((a, b) => BUILDINGS[a].order - BUILDINGS[b].order);

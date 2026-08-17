@@ -52,8 +52,10 @@ export function commonsLevel(g: GameState): number {
 }
 
 /**
- * How many of a kind may stand at once, and how many do. `max` is `Infinity`
- * for the small comforts, which are freely repeatable and always were.
+ * How many of a kind may stand at once, and how many do. Three different rules
+ * answer it: one for the institutions, one for the kinds the commons hands out
+ * an allowance of, and a flat `maxTotal` for the comforts — which are counted
+ * now that they are what the kingdom's Vibes are made of.
  *
  * A building being *moved* does not count twice. Its destination is a site like
  * any other, but the kingdom still has the one lodge — counting the site as a
@@ -65,6 +67,9 @@ export function buildLimit(g: GameState, id: BuildingId): { built: number; max: 
   const built = g.buildings.filter((b) => b.def === id && !b.relocOf).length;
   if (def.once) return { built, max: 1 };
   if (def.unique) return { built, max: 1 };
+  // A flat ceiling the commons has no say in — the comforts, whose limits are
+  // what keep decorating a set of choices rather than a slider.
+  if (def.maxTotal !== undefined) return { built, max: def.maxTotal };
   if (!def.maxCount) return { built, max: Infinity };
   const level = commonsLevel(g);
   // Before the camp stands there is no allowance at all, which is moot — the
@@ -204,7 +209,7 @@ export function buildGoals(): Goal[] {
     {
       id: 'pop6',
       title: 'Grow to six villagers',
-      desc: 'Spare beds and a full larder tend to attract travellers.',
+      desc: 'Beds decide how many may live here; Vibes decide how quickly an empty one is filled. A cabin does the first, and a bench or two does the second.',
       done: false,
       check: (g) => g.villagers.length >= 6,
     },
@@ -233,7 +238,7 @@ export function buildGoals(): Goal[] {
     {
       id: 'pop12',
       title: 'Grow to twelve villagers',
-      desc: 'A proper little place, at this point.',
+      desc: 'A proper little place, at this point. Bread in store and somewhere pleasant to arrive at are what shorten the walk.',
       done: false,
       check: (g) => g.villagers.length >= 12,
     },

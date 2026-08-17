@@ -48,7 +48,7 @@ npm run build        # typecheck + production bundle (~50 kB gzipped)
 
 ## Verifying changes — do not skip this
 
-There are three harnesses, and they exist because this project has three whole
+There are four harnesses, and they exist because this project has four whole
 classes of bug that reading code will not catch.
 
 ### Simulation: `npm run sim`
@@ -61,9 +61,13 @@ npm run roundtrip -- k.json           # check a save survives serialisation
 ```
 
 Runs the whole kingdom headless with no rendering, playing it roughly the way a
-player would — placing buildings, staffing jobs, reacting to shortages — then
-prints population, storage, every villager's experience, when each species was
-first noticed, goals, journal, and consistency checks.
+player would — placing buildings, staffing jobs, reacting to shortages,
+decorating once the bread is coming — then prints population against beds, the
+Vibes broken into their three parts, the arrival window and what is on its way,
+storage, every villager's experience, when each species was first noticed,
+goals, journal, and consistency checks. The arrivals list at the end is the
+quickest read on pacing: the gap between each line should sit inside the window
+printed at the top.
 
 **Run this after any change to `sim/`, and always after touching `defs.ts`.** It
 is how the economy was balanced and it catches things that look fine in code:
@@ -122,6 +126,26 @@ both in the source and on screen: a footprint left claimed by a building that
 has walked away, a worker pointing at a corner with nothing on it, a level or a
 name quietly reset to what a new one would have had.
 
+### Arrivals: `npm run popcheck`
+
+```bash
+npm run popcheck
+npm run popcheck -- 4242              # …on a different island
+```
+
+Drives the arrival rules one at a time on a real kingdom: the clock that must
+not run during the founding, the first companion landing inside six to nine
+game-minutes of the camp's second bed existing, progress *freezing* rather than
+emptying when every bed is full, both halves of a walk surviving a save, and
+Vibes shortening the wait without ever moving it outside the window.
+
+**Run this after any change to `population.ts`, `vibes.ts`, or anything that
+adds or removes beds.** `simcheck` shows that people turn up and roughly how
+fast; it cannot show the edges, and every one of those is invisible in the
+source and on screen alike. A kingdom that loses its accumulated wait the moment
+the beds fill, or hands the next traveller a fresh roll on every reload, looks
+exactly like a kingdom that does not — for hours.
+
 ### Visuals: `scripts/shot.mjs`
 
 ```bash
@@ -171,7 +195,8 @@ src/
     founding.ts       the opening: campsite rules and the stages after it
     villager.ts       needs, schedule, the planner — the heart of the sim
     wildlife.ts       habitat model, spawning, animal behaviour
-    population.ts     arrival pacing
+    population.ts     beds, arrival windows, who walks in
+    vibes.ts          how nice the place is, out of a hundred
     goals.ts          onboarding goals and unlocks
     journal.ts        kingdom history + transient toasts
     names.ts          name generation and villager chatter
@@ -195,7 +220,8 @@ src/
   ui/portraits.ts     map art painted into interface canvases
   ui/style.css        all styling
   game.ts             clock, input routing, every player-facing operation
-scripts/              simcheck.ts, worldcheck.ts, relocheck.ts, roundtrip.ts, shot.mjs
+scripts/              simcheck.ts, worldcheck.ts, relocheck.ts, popcheck.ts,
+                      roundtrip.ts, shot.mjs
 ```
 
 **`src/sim/defs.ts` holds essentially all the tuning**: buildings (size, cost,
@@ -289,9 +315,11 @@ offers **nothing at all** — the opening's one decision is not a building, and
 everything else would be unaffordable anyway.
 
 **The interface hides the store until there is one.** `#ui.founding` drops the
-whole resource cluster rather than showing `Store 0/0` about a pool that does not
-exist, and the goals panel shows one instruction instead of two and says what the
-founder is carrying. During founding the placement bar *is* the instruction, so
+resource chips and the store meter rather than showing `Store 0/0` about a pool
+that does not exist, and the goals panel shows one instruction instead of two and
+says what the founder is carrying. The people-and-Vibes pill beside them stays
+up throughout — `1/1` is a true thing to say about a kingdom of one, and it is
+the pill that answers "when does anybody else turn up". During founding the placement bar *is* the instruction, so
 the objective is hidden while it is up (`has-hint`) rather than saying the same
 thing twice — which is what went wrong at 844×390, where neither the old 600 nor
 the 820 pixel breakpoint fired and both were on screen at once.
@@ -308,14 +336,68 @@ version — including pinning somebody at the commons — and sets
 cabin would quietly undo whatever arrangement was just made. The flag clears
 if the house is demolished, or through "let them settle wherever".
 
+**Beds are the population cap, and there is no other one.** `housingCapacity`
+is the whole of it — two beds at the commons at every level, two, four or six in
+a Cabin — and `bedsFree` is what `updatePopulation` asks. There is no hidden
+hundred behind it any more. Housing under improvement keeps the beds it already
+had (`isOperational`), and the new ones land when the work does. If housing is
+taken down out from under people **nobody leaves**: the kingdom simply reads
+8/6 and no one else arrives until it does not.
+
+**An arrival is a promise, not a roll.** With a bed free somebody always turns
+up, inside a window set by how many people are already here — six to nine
+game-minutes for the second villager, out to fifty to seventy-five past sixteen
+(`ARRIVAL_WINDOWS`). The old model rolled a chance every gap and could say no
+twice running with nothing on screen to explain the silence; that is gone and
+must not come back. What varies is *where in the window*: Vibes slide it from
+the slow end to the fast end, and `arrival.jitter` — one hidden number per
+arrival, saved with the kingdom — shifts it a tenth of the window either way, so
+two identical kingdoms do not fill up in lockstep and a hundred Vibes is never
+exactly the minimum.
+
+Three properties of `updatePopulation` are load-bearing and easy to break by
+tidying. Progress is a **count-up in `g.arrival.progress`, and the target is
+recomputed from the current Vibes every tick** — storing a duration instead
+would mean a flowerbed planted mid-journey did nothing until the *next*
+traveller. A full kingdom **freezes** that progress rather than clearing it, so
+finishing a cabin ten minutes into a wait does not throw ten minutes away. And
+nothing about the arrival resets when beds are added: only an actual arrival
+does that. The interface is shown a *range* (`arrivalEta`) and never a
+countdown, and never the jitter.
+
 **Nobody walks in on a kingdom that does not exist yet.** `updatePopulation`
-returns before it even decrements its clock while founding runs, so the first
-stranger is not already overdue by the time the camp is finished. And when the
-*only* thing standing in the way is a bed, it retries after about a tenth of a
-day rather than the usual gap of nearly one: the player has just built a cabin,
-and being made to wait most of a day afterwards reads as the cabin not having
-worked. Neither changes how many people end up in a kingdom — the appeal roll
-still governs that — only how long the dead time is.
+returns before it touches anything while founding runs, so the first companion
+sets off when the Base Camp's second bed exists and not from a clock that was
+already running. During founding the top bar reads `1/1` rather than `1/0`.
+
+**Vibes are how nice the place is, out of a hundred, and they do exactly one
+thing.** `sim/vibes.ts` is the only place that reckons them, out of three parts:
+
+| source | max | what moves it |
+|---|---:|---|
+| Decorations | 60 | one of every comfort, at its own flat limit |
+| Food security | 30 | loaves per villager, a ramp through `FOOD_VIBES` |
+| Resident wellbeing | 10 | whether anybody is past `SEVERE_HUNGER` |
+
+The one thing they do is decide where in its window the next arrival lands.
+They are not a currency, they gate nothing, and no building's output depends on
+them. **Employment must never touch them**: an open job slot, a closed
+workplace and a kingdom of helpers all score the same, because being quietly
+marked down for not filling a post is the sort of hidden pressure this game does
+not do.
+
+Before the kingdom has ever baked (`stats.baked === 0`) food sits at a neutral
+15 and wellbeing at its full 10. That is not a rounding-off — it is the rule
+that the player is never marked down for a system they have not been handed yet,
+and the same rule any future source of Vibes has to follow.
+
+**Decorations are limited, and the limits are the design.** `maxTotal` on a
+`BuildingDef` is a flat ceiling the commons has no say in: Well 1, Bench 2,
+Lantern 8, Flower Bed 4, Standing Stone 1 — sixteen objects, and one of
+everything comes to exactly sixty. Decorating is therefore a set of decisions
+about *which*, made once, rather than a slider you drag until the meter fills.
+Adding a new comfort means taking Vibes off something else, not raising the
+total; `simcheck` fails a run whose decorations are worth more than sixty.
 
 **Buildings grow rather than being replaced.** There is one house — the **Cabin**,
 2 / 4 / 6 beds — and one heart — the **Commons**, named Base Camp, Settled Camp,
@@ -421,8 +503,9 @@ a worthwhile number of them.
 - **`maxCount: [...]`** — Cabin and Storehouse, indexed by the commons' level.
   Not unique, not unlimited; the count is one of the things the commons hands
   over as it grows.
-- **everything else** — benches, lanterns, flowerbeds, saplings, wells. Freely
-  repeatable, as they always were.
+- **`maxTotal: n`** — the comforts. A flat ceiling nothing raises, because those
+  counts are what hold the decoration half of Vibes to sixty. Nothing is freely
+  repeatable any more.
 
 `buildLimit()` in `goals.ts` is the one place that answers "how many, out of how
 many". The build menu shows the tally on **every** limited kind whether or not
@@ -740,7 +823,17 @@ Before, each box measured itself and told the next how far up to sit, and a hint
 that ran to four lines was written straight over. Four measured custom
 properties carry what CSS cannot know: `--dock-h`, `--top-h` (the strip wraps to
 two rows on a narrow window), `--sheet-h` and `--goals-h`. Position off those,
-never off a number that was true of one screen.
+never off a number that was true of one screen. The objective chip was still
+positioned off a hard-coded 48 and went straight through the resources the day
+the top bar grew a fourth pill; both of its rules read `--top-h` now.
+
+**Below 560 pixels the resource chips take a row of their own**, under the two
+pills that are each a single number — people-and-Vibes, and the store. Three
+pills and a clock do not fit across a phone held upright, and the strip is the
+only one of them that can shrink, so it was squeezed to nothing while the store
+pill ran on underneath the clock. Sideways there is width for all of it and
+vertical space is what is short, so that rule is by width rather than by
+`.compact`.
 
 **Placement on a touchscreen is preview-and-confirm.** `Game.requireConfirm` is
 set from `pointer: coarse`. A tap sets `Game.candidate` instead of building:
@@ -863,6 +956,19 @@ its history; a duplicate would weaken all of that and quietly become the
 optimal strategy besides. Adding a new principal production building means
 `unique: true` on it, not a count.
 
+**The Sapling is gone from the build menu, and the chance roll on arrivals is
+gone with it.** The sapling was the one comfort that did nothing whatever — not
+a tree anybody could fell, and worth no Vibes — so once comforts were counted it
+was a row that only ever wasted the wood. Its def stays, at `order: -1`, purely
+so that kingdoms with saplings already planted still open; they stand where they
+were put and are worth nothing. Do not add a replacement decoration: the sixteen
+that exist add up to sixty on purpose, and a seventeenth would have to take
+Vibes off one of them.
+
+The arrival roll went the same way. There is no `chance` anywhere in
+`population.ts` any more, and reintroducing one — as a failure case, a "quiet
+season", anything — undoes the whole point of the window.
+
 **Roads and paths are gone, and are not coming back.** `DESIGN.md` specifies
 them at length — player-placed roads, a meaningful movement bonus — and that
 part of the brief has been dropped on purpose. There is no paint tool, no
@@ -876,8 +982,13 @@ back to grass; see `deserialize` in `save/save.ts`.
 ## Scale reference
 
 Map 40×40 · a day is 30 real minutes at 1× (20 day / 10 night) · 6 days a season,
-24 a year · population cap 100, arriving roughly one per game-day early on ·
-Master rank is ~10–15 real hours of dedicated work in one trade · storage is a
+24 a year · **population is capped by beds and by nothing else** — 2 at the
+commons plus 2 / 4 / 6 a Cabin, so 20 at a Village Commons and 26 at a Kingdom
+Commons · with a bed free somebody always arrives, in 6–9 game-minutes at one
+villager, 18–26 at two or three, 25–35 to seven, 35–50 to fifteen and 50–75
+after that, Vibes deciding where in the window · Vibes are 60 decorations + 30
+food + 10 wellbeing, and the sixteen comforts a kingdom may keep come to exactly
+60 · Master rank is ~10–15 real hours of dedicated work in one trade · storage is a
 single shared pool fed by storage buildings: nothing at all until the Base Camp
 is finished, then 60 / 200 / 450 / 800 as the commons grows, and +250 per
 storehouse · housing is Cabins (2 / 4 / 6 beds) plus the commons' two beds

@@ -1,6 +1,6 @@
 /** GameState construction plus the shared queries every other system leans on. */
 
-import { RNG, clamp, nextId, seedGameplayRng, setIdFloor } from '../core/util';
+import { RNG, clamp, nextId, rng, seedGameplayRng, setIdFloor } from '../core/util';
 import type {
   Building,
   BuildingId,
@@ -13,7 +13,7 @@ import type {
   VillagerAppearance,
 } from '../types';
 import { STORED_RESOURCES, emptyStock } from '../types';
-import { BUILDINGS, DAY_LENGTH, DAYS_PER_SEASON, TRAIT_IDS } from './defs';
+import { BUILDINGS, DAYS_PER_SEASON, TRAIT_IDS, buildingName } from './defs';
 import { generateMap, tileAt } from '../world/terrain';
 import { makeName } from './names';
 import { buildGoals } from './goals';
@@ -127,7 +127,9 @@ export function newGame(seed = Math.floor(Math.random() * 1e9)): GameState {
     discovered: new Set(),
     toasts: [],
     storeFullNotice: 0,
-    arrivalTimer: DAY_LENGTH * 0.6,
+    // Nobody is on the road yet — the first companion starts walking when the
+    // camp's second bed exists, not on a clock that was running beforehand.
+    arrival: { progress: 0, jitter: rng.range(-1, 1) },
     weather: 0,
     weatherTimer: 400,
     weatherKind: 'clear',
@@ -319,6 +321,11 @@ export function nearestStore(g: GameState, x: number, y: number): Building | nul
   return best;
 }
 
+/**
+ * Every bed in the kingdom, which is also the most people it can hold — there
+ * is no separate population cap behind this number. A building being improved
+ * keeps the beds it already had; the new ones turn up when the work is done.
+ */
 export function housingCapacity(g: GameState): number {
   let cap = 0;
   for (const b of g.buildings) {
@@ -327,6 +334,40 @@ export function housingCapacity(g: GameState): number {
     if (def.housing) cap += def.housing[Math.min(b.level, def.housing.length) - 1];
   }
   return cap;
+}
+
+/**
+ * Beds standing empty. Goes negative when housing has been taken down out from
+ * under people, which is allowed and costs nobody their place: arrivals simply
+ * wait until the kingdom has room again.
+ */
+export function bedsFree(g: GameState): number {
+  return housingCapacity(g) - g.villagers.length;
+}
+
+/**
+ * Where the beds actually are, for the population panel. Named the way the
+ * player knows them: a commons by whatever it is called at this level, anything
+ * there are several of in the plural.
+ */
+export function bedSources(g: GameState): { label: string; beds: number }[] {
+  const rows = new Map<BuildingId, { beds: number; count: number; label: string }>();
+  for (const b of g.buildings) {
+    if (!isOperational(b)) continue;
+    const beds = homeCapacity(b);
+    if (beds <= 0) continue;
+    const row = rows.get(b.def) ?? { beds: 0, count: 0, label: '' };
+    row.beds += beds;
+    row.count++;
+    row.label =
+      b.def === 'commons'
+        ? buildingName(b.def, b.level)
+        : row.count > 1
+          ? `${BUILDINGS[b.def].name}s`
+          : BUILDINGS[b.def].name;
+    rows.set(b.def, row);
+  }
+  return [...rows.values()].map((r) => ({ label: r.label, beds: r.beds }));
 }
 
 export function homeCapacity(b: Building): number {

@@ -247,7 +247,7 @@ export function serialize(g: GameState): SavePayload {
     goalsDone: g.goals.filter((x) => x.done).map((x) => x.id),
     unlocked: [...g.unlocked],
     discovered: [...g.discovered],
-    arrivalTimer: g.arrivalTimer,
+    arrival: g.arrival,
     weather: g.weather,
     weatherTimer: g.weatherTimer,
     weatherKind: g.weatherKind,
@@ -397,7 +397,13 @@ export function deserialize(raw: unknown): GameState {
     discovered: new Set<SpeciesId>(p.discovered ?? []),
     toasts: [],
     storeFullNotice: 0,
-    arrivalTimer: p.arrivalTimer ?? 600,
+    // Both halves of the walk survive the save: the progress so far and the
+    // hidden variation this particular arrival was given. Rerolling the
+    // variation on load would make closing the tab a way of asking again.
+    arrival: {
+      progress: Math.max(0, p.arrival?.progress ?? 0),
+      jitter: clampJitter(p.arrival?.jitter),
+    },
     weather: p.weather ?? 0,
     weatherTimer: p.weatherTimer ?? 300,
     weatherKind: p.weatherKind ?? 'clear',
@@ -423,6 +429,17 @@ export function deserialize(raw: unknown): GameState {
  * untouched — the habitat cache is the only thing a load rebuilds, and the
  * caller does that. A missing block means a kingdom that has yet to run at all.
  */
+/**
+ * The hidden half of an arrival. A file written before arrivals worked this way
+ * has none, and a fresh draw is the honest answer there — but it is drawn from
+ * the gameplay stream rather than the clock, so the kingdom still opens the same
+ * way twice.
+ */
+function clampJitter(saved: unknown): number {
+  const j = Number(saved);
+  return Number.isFinite(j) ? clamp(j, -1, 1) : rng.range(-1, 1);
+}
+
 function reviveWildlife(saved: any): GameState['wildlife'] {
   const fresh = newWildlifeTimers();
   if (!saved || typeof saved !== 'object') return fresh;

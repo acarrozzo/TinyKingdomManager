@@ -20,6 +20,7 @@ export type ModalKind =
   | 'settings'
   | 'building'
   | 'stores'
+  | 'population'
   | 'goals'
   | 'more'
   | null;

@@ -930,7 +930,14 @@ export class Game {
     if (d.unique) {
       return `There is only ever one ${d.name.toLowerCase()}. Open the one you have and move it instead.`;
     }
-    return `The kingdom keeps ${max} ${max === 1 ? `${d.name.toLowerCase()}` : `${d.name.toLowerCase()}s`} at a time. Improving the commons allows another.`;
+    const kind = max === 1 ? d.name.toLowerCase() : `${d.name.toLowerCase()}s`;
+    // A comfort's ceiling is its own and nothing raises it — the way out is to
+    // take one down and put it somewhere better, which is the whole game those
+    // limits are there to make.
+    if (d.maxTotal !== undefined) {
+      return `The kingdom keeps ${max} ${kind}. Take one down if you would rather have it elsewhere.`;
+    }
+    return `The kingdom keeps ${max} ${kind} at a time. Improving the commons allows another.`;
   }
 
   /** The founding campsite rule, so the interface has one place to ask. */

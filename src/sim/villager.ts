@@ -13,6 +13,7 @@ import type { Building, GameState, JobId, PropId, ResourceId, Step, Villager } f
 import {
   BUILDINGS,
   CARRY_CAPACITY,
+  SEVERE_HUNGER,
   TERRAIN_SPEED,
   buildingName,
   rangeOf,
@@ -294,7 +295,10 @@ function traitWorkMul(v: Villager, job: JobId): number {
   if (v.trait === 'greenThumb' && job === 'farmer') m *= 1.2;
   if (v.trait === 'crafty' && (job === 'baker' || job === 'miller')) m *= 1.2;
   if (v.trait === 'steady') m *= 1.06;
-  if (v.hunger > 0.85) m *= 0.78;
+  // The same threshold the kingdom's wellbeing is judged on, so "going properly
+  // hungry" means one thing whether you read it in the panel or watch it in the
+  // work rate. It slows people down and does nothing worse than that.
+  if (v.hunger >= SEVERE_HUNGER) m *= 0.78;
   if (v.energy < 0.15) m *= 0.85;
   return m;
 }

@@ -32,7 +32,7 @@ import {
 import { buildingById, newGame } from '../sim/state';
 import { Focus, keepFocus } from './a11y';
 import { cap, el, esc, type UIEnv } from './context';
-import { Hud, storesBody } from './hud';
+import { Hud, populationBody, storesBody } from './hud';
 import { bottomNavMarkup, moreBody, toolbarMarkup, viewPadMarkup, type ModalKind, type NavState } from './nav';
 import { goalChipMarkup, goalPanelMarkup, goalsBody } from './goals';
 import { buildListMarkup, placementBarMarkup, toolHintMarkup } from './build';
@@ -51,7 +51,17 @@ import {
 } from './modals';
 
 /** Panels that cover the map and take the keyboard with them while they are up. */
-const TRUE_MODALS: ModalKind[] = ['journal', 'wildlife', 'people', 'settings', 'building', 'stores', 'goals', 'more'];
+const TRUE_MODALS: ModalKind[] = [
+  'journal',
+  'wildlife',
+  'people',
+  'settings',
+  'building',
+  'stores',
+  'population',
+  'goals',
+  'more',
+];
 
 export class UI {
   private root: HTMLElement;
@@ -329,8 +339,11 @@ export class UI {
     if (!editing || !this.sideRight.contains(active)) this.renderInspector();
     this.renderGoals();
     // A building panel is a live view of the place — who is standing in it, what
-    // is on the shelf — so it keeps up, unless a dropdown in it is open.
-    if (this.modal === 'building' && !(editing && this.modalHost.contains(active))) this.renderModal();
+    // is on the shelf — so it keeps up, unless a dropdown in it is open. The
+    // population sheet is the same: its arrival range shortens while it is open,
+    // and a range that only moves when you close and reopen it reads as broken.
+    const live = this.modal === 'building' || this.modal === 'population';
+    if (live && !(editing && this.modalHost.contains(active))) this.renderModal();
     this.measureSheet();
   }
 
@@ -610,6 +623,10 @@ export class UI {
         title = 'Stores';
         body = storesBody(this.game);
         break;
+      case 'population':
+        title = 'People & Vibes';
+        body = populationBody(this.game);
+        break;
       case 'goals':
         title = 'What to do next';
         body = goalsBody(this.game);
@@ -789,6 +806,9 @@ export class UI {
         // A control wherever there is no hover to explain the chips — which is
         // any touchscreen, not only a phone.
         if (this.env.compact || this.env.touch) this.setModal(this.modal === 'stores' ? null : 'stores');
+        break;
+      case 'open-population':
+        if (this.env.compact || this.env.touch) this.setModal(this.modal === 'population' ? null : 'population');
         break;
       case 'modal-settings':
         this.setModal(this.modal === 'settings' ? null : 'settings', Number(target.dataset.i ?? 0));

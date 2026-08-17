@@ -173,6 +173,18 @@ export interface BuildingDef {
    * one of the things the commons hands over as it grows.
    */
   maxCount?: number[];
+  /**
+   * How many may stand at once, full stop — a flat ceiling the commons has no
+   * say in. The comforts use this: their limit is what keeps decoration a set
+   * of choices about *which* rather than a slider you drag to a hundred Vibes.
+   */
+  maxTotal?: number;
+  /**
+   * What one of these contributes to the kingdom's Vibes while it stands. Only
+   * the comforts have it, and their limits are set so that all of them together
+   * come to exactly `VIBE_MAX.decor`.
+   */
+  vibes?: number;
   /** Sort weight in the build menu. */
   order: number;
 }
@@ -439,8 +451,17 @@ export interface GameState {
   toasts: Toast[];
   /** Transient: cooldown before saying again that the store has no room. */
   storeFullNotice: number;
-  /** Villager arrival pacing. */
-  arrivalTimer: number;
+  /**
+   * The newcomer currently on their way. `progress` is game seconds of walking
+   * accumulated so far, and `jitter` is the hidden variation that decides where
+   * inside the window this particular arrival lands — held from one arrival to
+   * the next, and saved, so that reloading is not a way of re-rolling it.
+   *
+   * A duration is deliberately *not* stored: the length of the wait is worked
+   * out from the current Vibes every tick, so improving the kingdom while
+   * somebody is on the road hurries them along rather than starting them again.
+   */
+  arrival: { progress: number; jitter: number };
   /** Weather: 0 = clear, rises toward 1 during rain/snow. */
   weather: number;
   weatherTimer: number;

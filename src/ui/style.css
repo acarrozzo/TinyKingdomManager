@@ -178,16 +178,16 @@ body {
  * While the kingdom is being founded there is no shared store and nothing in
  * it: the founder is carrying the only wood there is. Showing "Store 0/0" and a
  * row of zeroed resources would be describing a pool that does not exist yet,
- * so the whole left cluster waits until the Base Camp is finished. What the
+ * so the store and the chips wait until the Base Camp is finished. What the
  * founder is carrying is said in the goals panel instead, and drawn on the map.
+ *
+ * The people-and-Vibes pill stays up: one person and one bed is a true thing to
+ * say about a kingdom that is still being founded, and it is the pill that
+ * answers "when does anybody else turn up".
  */
-#ui.founding .topbar > .cluster:first-child {
+#ui.founding .stripwrap,
+#ui.founding .store-pill {
   display: none;
-}
-/* With the left cluster gone the clock is the only thing in the row, and
-   space-between would leave it stranded on the wrong side. */
-#ui.founding .topbar > .cluster:last-child {
-  margin-left: auto;
 }
 
 .pill {
@@ -272,6 +272,55 @@ body {
   margin-right: 2px;
 }
 
+/*
+ * How many people and how nice a place this is, side by side, because they are
+ * one question: the beds say how many may live here and the Vibes say how soon
+ * the next empty one is filled.
+ */
+.pop-pill {
+  position: relative;
+  font-size: 12.5px;
+  color: var(--dim);
+  cursor: pointer;
+}
+.pop-pill:hover {
+  color: var(--ink);
+}
+.pop-pill .pop,
+.pop-pill .vibe {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-variant-numeric: tabular-nums;
+}
+.pop-pill .icon {
+  font-size: 13px;
+  line-height: 1;
+}
+.pop-pill .val {
+  font-weight: 600;
+  color: var(--ink);
+}
+/* Every bed taken is not a warning — nothing is wrong — but it is the reason
+   nobody new is coming, so it is worth being able to see at a glance. */
+.pop-pill .pop.full .val {
+  color: var(--warn);
+}
+.pop-pill .vibe {
+  color: var(--dim);
+}
+.pop-pill .vibe .lb {
+  color: var(--dim);
+  font-size: 11.5px;
+}
+.pop-pill .vibe::before {
+  content: "";
+  width: 1px;
+  height: 14px;
+  background: var(--edge);
+  margin: 0 1px;
+}
+
 .storage {
   position: relative;
   display: flex;
@@ -319,7 +368,8 @@ body {
 }
 #ui .res:hover .tip,
 #ui .storage:hover .tip,
-#ui .pill:hover .storage .tip {
+#ui .pill:hover .storage .tip,
+#ui .pop-pill:hover .tip {
   display: flex;
 }
 #ui .tip .tip-head {
@@ -718,7 +768,8 @@ button {
    Shown whether or not the kingdom is at the ceiling: knowing there is room for
    one more storehouse is as much a part of planning as being told there is not. */
 .build-item .tally {
-  display: block;
+  display: inline-block;
+  margin-right: 9px;
   margin-top: 4px;
   font-size: 10.5px;
   color: var(--faint);
@@ -726,6 +777,12 @@ button {
 }
 .build-item .tally.at-limit {
   color: var(--accent);
+}
+/* What a comfort is worth to the kingdom's Vibes. Shown on the row rather than
+   only in the panel: it is the only thing separating a bench from a lantern. */
+.build-item .tally.vibe {
+  color: var(--accent);
+  opacity: 0.85;
 }
 .build-item.locked .row1 .tally {
   margin-top: 0;
@@ -1399,6 +1456,34 @@ button.tag {
   color: var(--faint);
   margin-bottom: 7px;
 }
+/*
+ * A label and a figure, the same shape a hover tip uses — because the sheets
+ * are the hover copy for screens that have no hover, and the two say the same
+ * things. Without this the rows run into one another as a single sentence,
+ * which is exactly how it looked on a phone before anyone screenshotted it.
+ */
+.bsec .tip-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 4px 0;
+  font-size: 12.5px;
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
+}
+.bsec .tip-row + .tip-row {
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+.bsec .tip-row span:last-child {
+  color: var(--ink);
+  font-weight: 600;
+}
+.bsec .tip-line {
+  display: block;
+  font-size: 12px;
+  color: var(--dim);
+  line-height: 1.5;
+}
 
 /*
  * People drift in and out of "Here now" constantly. The box is a fixed height
@@ -1870,17 +1955,40 @@ kbd {
 #ui.compact .topbar > .cluster:first-child {
   flex: 1;
   min-width: 0;
-  flex-wrap: nowrap;
+  /* Wraps, but only where it is told to: see `.stripwrap` below. */
+  flex-wrap: wrap;
 }
 #ui.compact .pill {
   padding: 5px 9px;
   gap: 5px;
+}
+/* On a phone the pill's own word for itself is a luxury: the star and the
+   number say it, and the pixels go back to the resource chips beside it. */
+#ui.compact .pop-pill .vibe .lb {
+  display: none;
 }
 /* Late-game there are six resources; let them scroll rather than clip. */
 #ui.compact .res-strip {
   overflow-x: auto;
   scrollbar-width: none;
   min-width: 0;
+}
+/*
+ * Held upright there is not room for three pills and a clock across 390 pixels,
+ * so the chips take a line of their own beneath the two that are each a single
+ * number: people-and-Vibes, and the store. Sharing the line meant the strip —
+ * the only thing in the row that can shrink — was squeezed down to a couple of
+ * pixels while the store pill ran on underneath the clock. Which of the three
+ * gives way is not a thing to leave to whichever numbers happen to be longest
+ * today. Sideways there is width for all of it, and vertical space is the thing
+ * in short supply, so the rule is by width rather than by `.compact`.
+ */
+@media (max-width: 560px) {
+  #ui.compact .stripwrap {
+    order: 2;
+    flex-basis: 100%;
+    min-width: 0;
+  }
 }
 #ui.compact .res-strip::-webkit-scrollbar {
   display: none;
@@ -1929,7 +2037,9 @@ kbd {
 
 /* The objective sits under the strip, out of the thumb's way. */
 #ui.compact .goals {
-  top: calc(48px + var(--safe-t));
+  /* Off the measured bar, not off a number: the strip takes a second row on a
+     phone, and a fixed 48 put the objective straight through the resources. */
+  top: calc(var(--top-h) + 14px + var(--safe-t));
   bottom: auto;
   left: calc(8px + var(--safe-l));
   right: calc(8px + var(--safe-r));
@@ -2145,7 +2255,9 @@ kbd {
   max-height: calc(100vh - var(--dock-h) - 40px);
 }
 #ui.compact.short .goals {
-  top: calc(44px + var(--safe-t));
+  /* Tighter than upright — vertical space is what is short here — but still off
+     the measured bar rather than off a number. */
+  top: calc(var(--top-h) + 8px + var(--safe-t));
 }
 /* Held sideways, a sheet reaches most of the way up. The objective stands down
    while it is open rather than being written over; More → What to do next

@@ -10,7 +10,18 @@
  * Pass one to see whether a conclusion holds on a different island.
  */
 
-import { newGame, assignJob, buildingById, makeBuilding, storageCapacity } from '../src/sim/state';
+import {
+  newGame,
+  assignJob,
+  bedSources,
+  bedsFree,
+  buildingById,
+  housingCapacity,
+  makeBuilding,
+  storageCapacity,
+} from '../src/sim/state';
+import { severelyHungry, vibesOf } from '../src/sim/vibes';
+import { arrivalEta, arrivalWindow } from '../src/sim/population';
 import { completeConstruction, updateVillagers } from '../src/sim/villager';
 import { updateWildlife } from '../src/sim/wildlife';
 import { updatePopulation } from '../src/sim/population';
@@ -242,6 +253,16 @@ function autoplay(state: GameState): void {
   if (!has('mill')) wants.push('mill');
   if (!has('bakery')) wants.push('bakery');
   if (beds - state.villagers.length < 2 && !improve(state, 'cabin')) wants.push('cabin');
+  /*
+   * Once bread is coming out of an oven a player starts making the place nice,
+   * and now that comforts are what the kingdom's Vibes are made of, that is a
+   * decision about how fast anybody else arrives. It is also the only thing
+   * that exercises the flat build limits and the decoration half of the meter,
+   * both of which would otherwise never be touched by a run.
+   */
+  if (done('bakery')) {
+    for (const def of ['bench', 'flowerbed', 'lantern', 'well', 'statue'] as BuildingId[]) wants.push(def);
+  }
   // Grow the commons whenever the kingdom has earned it. This is the spine of
   // the progression now, so the harness leans on it before anything else — a
   // run that never gets past a Base Camp is a run that never sees a storehouse.
@@ -388,6 +409,34 @@ line(`Day ${g.day}, ${g.season} of year ${g.year}   ·   population ${g.villager
 line(`Storage ${Object.entries(g.stock).map(([k, v]) => `${k} ${Math.floor(v)}`).join('  ')}   (cap ${storageCapacity(g)})`);
 line(`Stats: built ${g.stats.built}  harvested ${g.stats.harvested}  baked ${g.stats.baked}  arrivals ${g.stats.arrivals}`);
 
+/*
+ * People and Vibes. Beds are the only cap there is, and Vibes are the only
+ * thing deciding how fast an empty one fills, so a run that ends short of the
+ * population it should have reached is answered by exactly these two blocks —
+ * either the kingdom never built the beds or it never made itself worth
+ * walking to.
+ */
+{
+  const v = vibesOf(g);
+  const window = arrivalWindow(g.villagers.length);
+  const eta = arrivalEta(g);
+  line(
+    `\nPeople ${g.villagers.length}/${housingCapacity(g)} beds` +
+      ` (${bedSources(g).map((r) => `${r.label} ${r.beds}`).join(', ') || 'none'})`,
+  );
+  line(
+    `Vibes ${v.total}/100 — ${v.band}   decor ${Math.round(v.decor)}/60  food ${Math.round(v.food)}/30` +
+      `  wellbeing ${Math.round(v.wellbeing)}/10${v.preBread ? '  (neutral: nothing baked yet)' : ''}`,
+  );
+  line(
+    `Arrival window at this population ${window.min / 60}–${window.max / 60} game-min` +
+      (eta
+        ? `, next in roughly ${Math.floor(eta.lo / 60)}–${Math.ceil(eta.hi / 60)}`
+        : ', nobody on the way — every bed is taken'),
+  );
+  line(`Severely hungry: ${severelyHungry(g)}`);
+}
+
 line('\nBuildings');
 const byDef = new Map<string, { done: number; site: number; levels: number[] }>();
 for (const b of g.buildings) {
@@ -490,6 +539,21 @@ for (const v of g.villagers) {
 // a chisel — and the whole shape of the early game rests on there being none.
 if (!g.buildings.some((b) => b.def === 'quarry') && g.stock.stone > 0) {
   problems.push(`${Math.floor(g.stock.stone)} stone in a kingdom with no quarry`);
+}
+
+/*
+ * Beds are the population cap and the only one. Nothing in the harness takes
+ * housing down, so more people than beds here means somebody arrived through a
+ * door that should have been shut — and since nobody is ever asked to leave,
+ * an over-full kingdom is a state it could never get out of.
+ */
+if (bedsFree(g) < 0) {
+  problems.push(`${g.villagers.length} people in ${housingCapacity(g)} beds`);
+}
+{
+  const v = vibesOf(g);
+  if (v.total < 0 || v.total > 100) problems.push(`Vibes out of range: ${v.total}`);
+  if (v.decor > 60) problems.push(`decorations worth ${v.decor} Vibes, over the 60 they cap at`);
 }
 
 // Never more of a kind than the commons allows. The build menu refuses it and
