@@ -617,8 +617,14 @@ function shapeFor(def: BuildingId, level: number): { wall: number; roof: number;
       return { wall: up ? 24 : 20, roof: up ? 11 : 9, ov: 4, extra: 0 };
     case 'lodge':
       return { wall: 19, roof: 10, ov: 4, extra: 0 };
+    // The mine grows visibly as it is sunk deeper: a lean-to over a working
+    // face, then a headframe, then a taller one over a proper shaft. A building
+    // whose whole nature changes and whose silhouette does not is a change the
+    // player cannot see.
     case 'quarry':
-      return { wall: 6, roof: 7, ov: 3, extra: 16 };
+      return { wall: 6, roof: 7, ov: 3, extra: level >= 3 ? 34 : level === 2 ? 26 : 16 };
+    case 'forge':
+      return { wall: up ? 20 : 17, roof: up ? 10 : 9, ov: 3, extra: 20 };
     case 'farm':
       return { wall: 16, roof: 9, ov: 2, extra: 0 };
     case 'mill':
@@ -889,7 +895,8 @@ function drawFinished(
     }
     case 'quarry': {
       isoWalls(ctx, ox, baseY, w, h, s.wall, { left: '#8b8a83', right: '#6e6d67', top: '#9e9d95' }, 1);
-      // Lean-to over the working face, on four posts.
+      // Lean-to over the working face, on four posts. Every level keeps it —
+      // a Deep Mine is still a quarry, with more built on top.
       const shelterY = baseY - s.wall - 14;
       for (const p of [g.L, g.R, g.N, g.S]) px(ctx, p.x - 1, p.y - s.wall - 14, '#8a6b41', 2, 14);
       gableRoof(ctx, ox, shelterY + s.wall, w, h, s.wall, s.roof, s.ov, slate);
@@ -897,6 +904,62 @@ function drawFinished(
       px(ctx, bx - 9, baseY - 8, '#b6b5ac', 7, 1);
       px(ctx, bx + 1, baseY - 6, '#8b8a84', 6, 4);
       px(ctx, bx + 1, baseY - 6, '#9e9d95', 6, 1);
+
+      if (level >= 2) {
+        // A headframe over the shaft: two legs, a crossbeam and a winding wheel.
+        // This is the whole read on "there is a mine here now, not a quarry".
+        const topY = baseY - s.wall - 14 - s.roof - (level >= 3 ? 20 : 12);
+        const legH = baseY - 6 - topY;
+        px(ctx, bx - 8, topY, '#6b5334', 2, legH);
+        px(ctx, bx + 6, topY, '#6b5334', 2, legH);
+        px(ctx, bx - 8, topY - 1, '#8a6b41', 16, 2);
+        px(ctx, bx - 4, topY - 8, '#5c5148', 9, 8);
+        px(ctx, bx - 3, topY - 7, '#8f9299', 7, 6);
+        px(ctx, bx - 1, topY - 5, '#3f4348', 3, 2);
+        // The rope, and the cage on the end of it.
+        px(ctx, bx, topY + 2, '#4a4038', 1, 9);
+        px(ctx, bx - 3, topY + 11, '#6e6259', 7, 4);
+      }
+      if (level >= 3) {
+        // Spoil heap, and a lamp at the shaft mouth: the deep workings run on
+        // past dark whether or not anybody meant them to.
+        px(ctx, g.R.x - 13, g.R.y + 2, '#5f5b54', 11, 5);
+        px(ctx, g.R.x - 12, g.R.y, '#6e6a62', 9, 3);
+        px(ctx, g.R.x - 10, g.R.y - 2, '#7b776e', 5, 2);
+        px(ctx, bx + 9, baseY - 15, '#48413a', 2, 9);
+        px(ctx, bx + 8, baseY - 19, '#ffd894', 4, 4);
+      }
+      break;
+    }
+    case 'forge': {
+      // Squat and stone, because everything in it is hot. Low walls, a heavy
+      // roof, and a chimney doing most of the talking.
+      isoWalls(ctx, ox, baseY, w, h, s.wall, { left: '#8e8377', right: '#6f665c', top: '#a09587' }, 1);
+      const roof = gableRoof(ctx, ox, baseY, w, h, s.wall, s.roof, s.ov, slate);
+      // A wide mouth rather than a door: this is where the heat comes out, and
+      // it is the one part of the building that has to read from across the map.
+      addDoor(ctx, bx, baseY, front, 11, s.wall - 3, '#3a2c22');
+      const mouthX = front - 4;
+      const mouthRef = wallFootY(bx, baseY, mouthX);
+      const mouthDy: number[] = [];
+      for (let i = 0; i < 9; i++) {
+        const ax = mouthX + i;
+        const off = wallFootY(bx, baseY, ax) - mouthRef;
+        px(ctx, ax, mouthRef + off - 5, '#ff8a3c', 1, 4);
+        px(ctx, ax, mouthRef + off - 3, '#ffd07a', 1, 2);
+        mouthDy.push(off);
+      }
+      // The mouth is what lights up after dark rather than a window: a forge
+      // with nobody at it is dark, and one being worked is the brightest thing
+      // in the kingdom bar the fire itself.
+      windows.push({ x: mouthX, y: mouthRef - 5, w: 9, h: 5, dy: mouthDy });
+      chimney(ctx, roof.ridgeA.x + 3, roof.ridgeA.y - 3, 15, snow);
+      // Anvil out front, and a rack of bars leaning on the near wall.
+      px(ctx, g.L.x + 3, g.L.y + 4, '#4a4d52', 8, 3);
+      px(ctx, g.L.x + 5, g.L.y + 7, '#3a3d42', 4, 3);
+      px(ctx, g.R.x - 10, g.R.y + 1, '#9fa6ad', 2, 8);
+      px(ctx, g.R.x - 7, g.R.y + 2, '#8d949b', 2, 7);
+      px(ctx, g.R.x - 4, g.R.y + 3, '#c2cbd6', 2, 6);
       break;
     }
     case 'farm': {

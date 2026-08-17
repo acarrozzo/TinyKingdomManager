@@ -369,12 +369,38 @@ export function storesBody(game: Game): string {
     <div class="bsec"><div class="bh">What there is</div>${rows}</div>`;
 }
 
+/**
+ * Whether this resource has any business being on the strip yet.
+ *
+ * A chip for something the kingdom has never had and has no way of getting is
+ * noise, and there are eleven of them now. The rule is the same one everywhere:
+ * a resource appears once the kingdom can actually produce it, and once it has
+ * appeared it stays. Mithril appears for nobody, because nothing produces it.
+ */
 function everSeen(game: Game, res: ResourceId): boolean {
-  // Once a resource has ever been produced its chip stays visible.
   const g = game.state;
-  if (res === 'wheat') return g.stats.harvested > 0;
-  if (res === 'flour') return g.buildings.some((b) => b.def === 'mill');
-  if (res === 'bread') return g.stats.baked > 0;
-  if (res === 'coin') return g.stock.coin > 0;
-  return true;
+  const mineAt = (level: number) =>
+    g.buildings.some((b) => b.def === 'quarry' && (b.stage === 'done' || b.upgrading) && b.level >= level);
+  switch (res) {
+    case 'wheat':
+      return g.stats.harvested > 0;
+    case 'flour':
+      return g.buildings.some((b) => b.def === 'mill');
+    case 'bread':
+      return g.stats.baked > 0;
+    case 'ironOre':
+      return mineAt(2);
+    case 'coal':
+      return mineAt(3);
+    case 'ironBar':
+    case 'steelBar':
+      return g.buildings.some((b) => b.def === 'forge');
+    case 'mithrilOre':
+    case 'mithrilBar':
+      return false;
+    case 'coin':
+      return g.stock.coin > 0;
+    default:
+      return true;
+  }
 }

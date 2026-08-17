@@ -226,10 +226,20 @@ export function placementBarMarkup(game: Game, env: UIEnv): string {
  */
 function rangeNote(game: Game, def: BuildingId, level: number, spot: { x: number; y: number }): string {
   const d = BUILDINGS[def];
-  if (!d.harvests) return '';
-  const what = d.harvests === 'tree' ? 'trees' : 'boulders';
   const n = game.nodesInRange(def, level, spot.x, spot.y);
   const reach = rangeOf(def, level);
+  // A mine is not counting nodes: it is measuring the seam it would be cutting
+  // into, and it never runs out — thin rock means slow, not idle. Saying "it
+  // would stand idle" about a mine would be a lie about the one building whose
+  // whole point is that it does not stop.
+  if (d.extracts) {
+    if (n === 0) return `No rock within ${reach} tiles at all. `;
+    if (n < 20) return `A thin seam — ${n} tiles of rock within ${reach}. Slow going, but it never runs out. `;
+    if (n < 50) return `${n} tiles of rock within ${reach}. A fair seam. `;
+    return `${n} tiles of rock within ${reach}. As good as it gets. `;
+  }
+  if (!d.harvests) return '';
+  const what = d.harvests === 'tree' ? 'trees' : 'boulders';
   if (n === 0) return `Nothing to work: no ${what} at all within ${reach} tiles. It would stand idle. `;
   if (n < 8) return `Thin ground — only ${n} ${what} within ${reach} tiles. `;
   return `${n} ${what} within ${reach} tiles. `;
@@ -307,9 +317,14 @@ export function toolHintMarkup(game: Game, env: UIEnv): string {
  * side of the screen. The number is the part that always fits.
  */
 function liveRange(game: Game, def: BuildingId, level: number): string {
-  if (!BUILDINGS[def].harvests) return '';
+  const d = BUILDINGS[def];
+  if (!d.harvests && !d.extracts) return '';
   const spot = game.hover;
-  if (!spot) return 'The shaded ground is how far its workers will go. ';
+  if (!spot) {
+    return d.extracts
+      ? 'The shaded ground is the seam it would cut into; the marked tiles are rock. '
+      : 'The shaded ground is how far its workers will go. ';
+  }
   return rangeNote(game, def, level, spot);
 }
 

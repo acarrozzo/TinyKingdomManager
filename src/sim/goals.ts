@@ -10,7 +10,7 @@
  */
 
 import type { BuildingId, GameState, Goal } from '../types';
-import { BUILDINGS } from './defs';
+import { BUILDINGS, RESOURCE_META, extractsOf } from './defs';
 import { journal, toast } from './journal';
 import { deposit } from './state';
 import { rankOf } from './defs';
@@ -43,6 +43,35 @@ const COMMONS_UNLOCKS: Record<number, string[]> = {
 /** Called when the commons is finished or improved, with the level it now is. */
 export function unlockCommonsTier(g: GameState, level: number): void {
   for (const key of COMMONS_UNLOCKS[level] ?? []) unlock(g, key);
+}
+
+/**
+ * The mine's own tier, handed over the same way the commons hands over its own.
+ * There is only one entry and it is the whole reason the Iron Mine exists: ore
+ * with nowhere to take it would be a resource that did nothing.
+ */
+const MINE_UNLOCKS: Record<number, string[]> = {
+  2: ['forge'],
+};
+
+/** Called when the mine is finished or sunk deeper, with the level it now is. */
+export function unlockMineTier(g: GameState, level: number): void {
+  for (const key of MINE_UNLOCKS[level] ?? []) unlock(g, key);
+}
+
+/** What the mine's next step hands over, for the checklist in its own panel. */
+export function mineGrants(level: number): string[] {
+  const out: string[] = [];
+  const next = level + 1;
+  for (const key of MINE_UNLOCKS[next] ?? []) {
+    const def = (BUILDINGS as Record<string, { name: string } | undefined>)[key];
+    if (def) out.push(`Opens the ${def.name}`);
+  }
+  const before = new Set(extractsOf('quarry', level));
+  for (const res of extractsOf('quarry', next)) {
+    if (!before.has(res)) out.push(`Starts bringing up ${RESOURCE_META[res].name}`);
+  }
+  return out;
 }
 
 /** The commons' level, which is what every building count is measured against. */
@@ -171,7 +200,7 @@ export function buildGoals(): Goal[] {
     {
       id: 'stone',
       title: 'Open a Quarry and stock 40 stone',
-      desc: 'Nothing breaks a boulder by hand. Place the quarry against rocky ground, with boulders inside the ring, and put somebody on it — every scrap of stone the kingdom will ever have comes from there.',
+      desc: 'Nothing comes out of the ground by hand. The quarry has to stand on or against rocky ground — the more rock inside the ring, the faster it works — and then somebody has to be put on it. Every scrap of stone the kingdom will ever have comes from there.',
       done: false,
       check: (g) => g.stock.stone >= 40,
       unlocks: 'mill',
@@ -219,6 +248,28 @@ export function buildGoals(): Goal[] {
       desc: 'A permanent hearth, tables people eat at, a notice board nobody reads. The camp asks for bread of your own baking, six people about, and somebody settled into a trade.',
       done: false,
       check: (g) => has(g, 'commons', 3),
+    },
+    {
+      id: 'iron',
+      title: 'Sink the quarry into an Iron Mine',
+      desc: 'The same rock has ore in it further down. Open the mine on the map and improve it — the same miners bring up both, and nobody needs moving.',
+      done: false,
+      check: (g) => has(g, 'quarry', 2),
+    },
+    {
+      id: 'forge',
+      title: 'Put a smith to work at the Forge',
+      desc: 'One iron ore makes one iron bar, and that part wants no coal whatever. Coal comes later, and only for steel.',
+      done: false,
+      check: (g) => g.stats.smelted >= 5,
+      reward: { coin: 25 },
+    },
+    {
+      id: 'steel',
+      title: 'Make a Steel Bar',
+      desc: 'One iron bar and two coal. The coal wants a Deep Mine, which is what the mine becomes after the Iron Mine.',
+      done: false,
+      check: (g) => g.stock.steelBar >= 1,
     },
     {
       id: 'adept',

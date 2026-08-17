@@ -9,7 +9,7 @@
  * shell updates the existing nodes rather than replacing the panel.
  */
 
-import type { Building, ResourceId, SpeciesId, Villager } from '../types';
+import type { Building, Recipe, ResourceId, SpeciesId, Villager } from '../types';
 import {
   BUILDINGS,
   JOB_META,
@@ -18,12 +18,19 @@ import {
   SPECIES,
   SPECIES_ORDER,
   buildingName,
+  extractsOf,
+  focusLabel,
+  focusOptions,
   rangeOf,
   rankOf,
+  recipeOutput,
+  recipesOf,
   relocateCost,
+  richnessMul,
+  upgradeReqsOf,
 } from '../sim/defs';
 import { buildingById, homeCapacity, jobSlots, villagerById, xpOf } from '../sim/state';
-import { buildLimit, commonsGrants } from '../sim/goals';
+import { buildLimit, commonsGrants, mineGrants } from '../sim/goals';
 import { labourNeeded, siteNeeds } from '../sim/villager';
 import { protectedBuilding } from '../sim/founding';
 import { fmtDuration } from '../core/util';
@@ -42,7 +49,7 @@ export function buildingTabs(b: Building): string[] {
   const def = BUILDINGS[b.def];
   if (b.stage !== 'done') return ['Site', 'About'];
   const tabs = ['People'];
-  if (def.recipe || def.plots || def.harvests) tabs.push('Work');
+  if (def.recipe || def.recipes || def.plots || def.harvests || def.extracts) tabs.push('Work');
   tabs.push('About');
   return tabs;
 }
@@ -253,38 +260,100 @@ function moveInOptions(game: Game, b: Building): string {
   return out;
 }
 
+/**
+ * The box that says what a building has been told to concentrate on.
+ *
+ * Only appears where there is genuinely a choice — two or more things this
+ * building could be making at this level. It is a plain `<select>` because
+ * changing it is meant to be as cheap as it sounds: nothing is thrown away,
+ * nobody is reassigned, and setting it back costs the same nothing.
+ */
+function focusPicker(b: Building, heading: string, note: string): string {
+  const options = focusOptions(b.def, b.level);
+  if (options.length === 0) return '';
+  const current = b.focus ?? 'balanced';
+  const rows = options
+    .map(
+      (f) =>
+        `<option value="${f}"${f === current ? ' selected' : ''}>${esc(focusLabel(f))}</option>`,
+    )
+    .join('');
+  return `<div class="bsec"><div class="bh">${esc(heading)}</div>
+    <label class="kv"><span class="k">Working on</span>
+      <span class="v"><select class="sel" data-act="set-focus" data-id="${b.id}"
+        aria-label="What this building concentrates on">${rows}</select></span></label>
+    <div class="tiny muted" style="margin-top:7px;line-height:1.55">${esc(note)}</div></div>`;
+}
+
+/** One recipe as a row of tags: everything in, everything out, and how long. */
+function recipeRow(r: Recipe, active: boolean): string {
+  const ins = (Object.keys(r.inputs) as ResourceId[])
+    .map((res) => `<span class="tag">${RESOURCE_META[res].icon} ${r.inputs[res]} ${esc(RESOURCE_META[res].name)}</span>`)
+    .join('<span class="muted" aria-hidden="true">+</span>');
+  const outs = (Object.keys(r.outputs) as ResourceId[])
+    .map(
+      (res) =>
+        `<span class="tag accent">${RESOURCE_META[res].icon} ${r.outputs[res]} ${esc(RESOURCE_META[res].name)}</span>`,
+    )
+    .join('');
+  return `<div class="row tiny" style="gap:6px;margin-bottom:6px;opacity:${r.locked ? 0.45 : active ? 1 : 0.7}">
+    ${ins}<span class="muted" aria-hidden="true">→</span>${outs}
+    <span class="muted">${r.locked ? 'nobody here has seen any' : `${Math.round(r.seconds)}s`}</span></div>`;
+}
+
 /** What the place is actually doing: the recipe, the fields, the shelf. */
 function buildingWork(game: Game, b: Building): string {
   const g = game.state;
   const def = BUILDINGS[b.def];
+  const recipes = recipesOf(b.def);
   let out = '';
 
-  if (def.recipe) {
-    const inRes = Object.keys(def.recipe.inputs)[0] as ResourceId;
-    const outRes = Object.keys(def.recipe.outputs)[0] as ResourceId;
-    const inQty = def.recipe.inputs[inRes] ?? 0;
-    const outQty = def.recipe.outputs[outRes] ?? 0;
-    const held = Math.floor(b.input[inRes] ?? 0);
-    const made = Math.floor(b.output[outRes] ?? 0);
+  if (recipes.length) {
+    const live = recipes.filter((r) => !r.locked);
+    const current = live.find((r) => recipeOutput(r) === b.focus) ?? live[0];
+    // Everything the current recipe wants, against what is actually on the
+    // shelf — a two-input recipe that shows only one of them is how somebody
+    // ends up convinced their forge is broken.
+    const wantRows = (Object.keys(current.inputs) as ResourceId[])
+      .map((res) => {
+        const need = current.inputs[res] ?? 0;
+        const held = Math.floor(b.input[res] ?? 0);
+        return `<div class="kv"><span class="k">${RESOURCE_META[res].name} on hand</span>
+          <span class="v" style="color:${held >= need ? 'var(--good)' : 'var(--faint)'}">${held} of ${need}</span></div>`;
+      })
+      .join('');
+    const shelf = (Object.keys(b.output) as ResourceId[])
+      .filter((res) => (b.output[res] ?? 0) > 0)
+      .map(
+        (res) =>
+          `<div class="kv"><span class="k">${RESOURCE_META[res].name} waiting to be carried off</span>
+            <span class="v">${Math.floor(b.output[res] ?? 0)}</span></div>`,
+      )
+      .join('');
+    const short = (Object.keys(current.inputs) as ResourceId[]).find(
+      (res) => (b.input[res] ?? 0) < (current.inputs[res] ?? 0),
+    );
+
     out += `<div class="bsec"><div class="bh">Makes</div>
-      <div class="row tiny" style="gap:6px">
-        <span class="tag">${RESOURCE_META[inRes].icon} ${inQty} ${RESOURCE_META[inRes].name}</span>
-        <span class="muted" aria-hidden="true">→</span>
-        <span class="tag accent">${RESOURCE_META[outRes].icon} ${outQty} ${RESOURCE_META[outRes].name}</span>
-        <span class="muted">every ${Math.round(def.recipe.seconds)}s</span>
-      </div>
-      <div class="need" style="margin-top:10px"><span aria-hidden="true">🔨</span>
+      ${recipes.map((r) => recipeRow(r, r === current)).join('')}
+      <div class="need" style="margin-top:4px"><span aria-hidden="true">🔨</span>
         <span class="track"><i style="width:${Math.round(Math.min(1, b.progress) * 100)}%;background:var(--good)"></i></span>
         <span class="num">${Math.round(Math.min(1, b.progress) * 100)}%</span></div>
-      <div class="kv" style="margin-top:8px"><span class="k">${RESOURCE_META[inRes].name} on hand</span><span class="v">${held}</span></div>
-      <div class="kv"><span class="k">${RESOURCE_META[outRes].name} waiting to be carried off</span><span class="v">${made}</span></div>
+      <div style="margin-top:8px">${wantRows}</div>
+      ${shelf}
       <div class="tiny muted" style="margin-top:7px;line-height:1.55">${
         b.workers.length === 0
           ? 'Nobody is here to run it, so it sits idle.'
-          : held < inQty
-            ? `Short of ${RESOURCE_META[inRes].name.toLowerCase()}. Whoever works here will go and fetch some${g.stock[inRes] > 0 ? '' : ', once the kingdom has any'}.`
+          : short
+            ? `Short of ${RESOURCE_META[short].name.toLowerCase()}. Whoever works here will go and fetch some${g.stock[short] > 0 ? '' : ', once the kingdom has any'}.`
             : 'Everything it needs is to hand.'
       }</div></div>`;
+
+    out += focusPicker(
+      b,
+      'What it is making',
+      'Balanced smelts ore into iron and only reaches for the coal once there are bars to spare. Name one and it will favour that instead. Changing your mind costs nothing, and nothing in progress is lost.',
+    );
   }
 
   if (def.plots && b.plots.length) {
@@ -305,6 +374,55 @@ function buildingWork(game: Game, b: Building): string {
       }</div></div>`;
   }
 
+  // The mine: what this level reaches, how good the seam under it is, and what
+  // the next level would add. Deliberately not a count of anything that can run
+  // out — the whole point of the building is that its ground does not.
+  if (def.extracts) {
+    const reach = rangeOf(b.def, b.level);
+    const rock = game.nodesInRange(b.def, b.level, b.x, b.y);
+    const pace = Math.round(richnessMul(rock) * 100);
+    const gets = extractsOf(b.def, b.level);
+    // Only describe the next step as a next step when it is one. The last is
+    // deliberately out of reach, and dangling mithril in front of somebody who
+    // can never have it would be the panel telling them to go and get it.
+    const reachable = b.level < def.maxLevel && !upgradeReqsOf(b.def, b.level).some((r) => r.impossible);
+    const next = reachable ? extractsOf(b.def, b.level + 1).filter((r) => !gets.includes(r)) : [];
+    const horizon = !reachable && b.level < def.maxLevel;
+    const shelf = (Object.keys(b.output) as ResourceId[])
+      .filter((res) => (b.output[res] ?? 0) > 0)
+      .map(
+        (res) =>
+          `<div class="kv"><span class="k">${RESOURCE_META[res].name} waiting to be carried off</span>
+            <span class="v">${Math.floor(b.output[res] ?? 0)}</span></div>`,
+      )
+      .join('');
+
+    out += `<div class="bsec"><div class="bh">Getting out</div>
+      <div class="row tiny" style="gap:6px;margin-bottom:8px">${gets
+        .map((res) => `<span class="tag accent">${RESOURCE_META[res].icon} ${esc(RESOURCE_META[res].name)}</span>`)
+        .join('')}</div>
+      <div class="kv"><span class="k">Rock within ${reach} tiles</span><span class="v">${rock}</span></div>
+      <div class="kv"><span class="k">Which makes the work</span><span class="v">${pace}% of full pace</span></div>
+      ${shelf}
+      <div class="tiny muted" style="margin-top:7px;line-height:1.55">${
+        b.workers.length === 0
+          ? 'Nobody is here to work it. The rock is not going anywhere.'
+          : 'They cut into the ground the building stands on, so this never runs out — thin rock only means slower. The loose boulders lying about are scenery, and finite: nothing puts one back.'
+      }${
+        next.length
+          ? ` Sinking it deeper would add ${next.map((r) => RESOURCE_META[r].name.toLowerCase()).join(' and ')}, without giving up any of this.`
+          : horizon
+            ? ' There is said to be mithril somewhere below the deep workings. Nobody here has found any, and nobody here knows how they would.'
+            : ''
+      }</div></div>`;
+
+    out += focusPicker(
+      b,
+      'What they are cutting for',
+      'Balanced follows whatever the kingdom is shortest of rather than keeping equal piles. Name one material and they will favour it — and if there is nowhere left to put that one, they quietly work on something else instead of stopping.',
+    );
+  }
+
   if (def.harvests) {
     const what = def.harvests === 'tree' ? 'trees' : 'boulders';
     const res = def.harvests === 'tree' ? 'wood' : 'stone';
@@ -318,11 +436,7 @@ function buildingWork(game: Game, b: Building): string {
           ? `Nothing left within reach. They will range further, and be slower for it, until these grow back — and if this ground is worked out for good, ${
               game.canRelocate(b) ? 'move it somewhere with more in it.' : 'it can be moved once it is finished.'
             }`
-          : `Workers here take the nearest ${what}, haul the load to the closest store, and come back for more. ${
-              def.harvests === 'boulder'
-                ? 'Worked-out boulders leave rubble, and rubble gathers back into a boulder in time, so the ground recovers.'
-                : 'Felled trees leave stumps, and stumps grow back.'
-            }`
+          : `Workers here take the nearest ${what}, haul the load to the closest store, and come back for more. Felled trees leave stumps, and stumps grow back.`
       }</div></div>`;
   }
   return out || `<div class="tiny muted">Nothing is made here.</div>`;
@@ -397,6 +511,15 @@ function buildingAbout(game: Game, b: Building): string {
   if (def.storage) facts.push(kv('Adds to the store', `${def.storage[Math.min(b.level, def.storage.length) - 1]}`));
   if (def.job) facts.push(kv('Trade', JOB_META[def.job].name));
   if (def.harvests) facts.push(kv('Workers range', `${rangeOf(b.def, b.level)} tiles`));
+  if (def.extracts) {
+    facts.push(kv('Seam reaches', `${rangeOf(b.def, b.level)} tiles`));
+    facts.push(
+      kv(
+        'Brings up',
+        extractsOf(b.def, b.level).map((r) => RESOURCE_META[r].name).join(', '),
+      ),
+    );
+  }
   const limit = buildLimit(g, b.def);
   if (Number.isFinite(limit.max)) {
     facts.push(kv('The kingdom keeps', def.unique ? 'One, and it can be moved' : `${limit.built} of ${limit.max}`));
@@ -470,10 +593,18 @@ function improveSection(game: Game, b: Building): string {
   // in the store — and off the unlock tier where the commons is concerned, so
   // the answer to "why bother" is on the same screen as the price.
   const gains = improveGains(b);
-  if (def.harvests && def.range && b.level < def.range.length) {
-    gains.push(`Workers range: ${rangeOf(b.def, b.level)} → ${rangeOf(b.def, b.level + 1)} tiles`);
+  if ((def.harvests || def.extracts) && def.range && b.level < def.range.length) {
+    gains.push(
+      def.extracts
+        ? `Seam reaches: ${rangeOf(b.def, b.level)} → ${rangeOf(b.def, b.level + 1)} tiles`
+        : `Workers range: ${rangeOf(b.def, b.level)} → ${rangeOf(b.def, b.level + 1)} tiles`,
+    );
   }
   if (b.def === 'commons') gains.push(...commonsGrants(g, b.level));
+  // The mine's own tier, said the same way: what it starts bringing up, and
+  // what that opens. This is the answer to "why sink it deeper", and it has to
+  // be on the same screen as the price.
+  if (b.def === 'quarry') gains.push(...mineGrants(b.level));
 
   const waiting = [
     ...game.upgradeRequirements(b).filter((r) => !r.met).map((r) => r.label.toLowerCase()),

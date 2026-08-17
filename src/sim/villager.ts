@@ -9,16 +9,24 @@
  */
 
 import { RNG, clamp, dist, rng } from '../core/util';
-import type { Building, GameState, JobId, PropId, ResourceId, Step, Villager } from '../types';
+import type { Building, GameState, JobId, PropId, Recipe, ResourceId, Step, Villager } from '../types';
 import {
+  BALANCE_TARGET,
   BUILDINGS,
   CARRY_CAPACITY,
+  MINE_SECONDS,
+  MINE_YIELD,
   SEVERE_HUNGER,
   TERRAIN_SPEED,
   buildingName,
+  extractsOf,
+  liveRecipesOf,
+  outputsOf,
   rangeOf,
+  recipeOutput,
   relocateCost,
   relocateLabour,
+  richnessMul,
   skillMul,
   upgradeCostOf,
   xpGain,
@@ -40,10 +48,10 @@ import {
   withdraw,
   xpOf,
 } from './state';
-import { BOULDER_REGROW, TREE_REGROW, findNode, isWalkable, tileAt } from '../world/terrain';
+import { TREE_REGROW, findNode, isWalkable, rockInRange, tileAt } from '../world/terrain';
 import { findPath, footprintApproach } from '../world/path';
 import { CHATTER } from './names';
-import { unlockCommonsTier } from './goals';
+import { unlockCommonsTier, unlockMineTier } from './goals';
 import { journal, note, toast } from './journal';
 import {
   commonsOf,
@@ -62,8 +70,6 @@ const INPUT_CAP = 14;
 const OUTPUT_CAP = 14;
 const CHOP_SECONDS = 4.5;
 const CHOP_YIELD = 3;
-const MINE_SECONDS = 5.5;
-const MINE_YIELD = 2;
 const PLANT_SECONDS = 3.5;
 const HARVEST_SECONDS = 3.5;
 const HARVEST_YIELD = 3;
@@ -413,10 +419,34 @@ function doEffect(g: GameState, v: Villager, step: Extract<Step, { t: 'effect' }
       }
       break;
     }
+    case 'extract': {
+      const b = buildingById(g, step.id ?? 0);
+      const res = step.res;
+      if (!b || !res) break;
+      const got = MINE_YIELD[res] ?? 2;
+      b.output[res] = (b.output[res] ?? 0) + got;
+      // Only stone is counted, and only because the mine's own improvements ask
+      // for it. It has to be an accomplishment rather than a stock level: what
+      // is in the store goes down again the moment anybody builds a cabin.
+      if (res === 'stone') g.stats.mined += got;
+      if (res === 'ironOre' && !g.unlocked.has('seen:ironOre')) {
+        g.unlocked.add('seen:ironOre');
+        journal(g, `${v.name} brought up the first iron ore.`, '⛏️');
+        note(g, v.id, 'Brought up the kingdom’s first iron ore.');
+      }
+      if (res === 'coal' && !g.unlocked.has('seen:coal')) {
+        g.unlocked.add('seen:coal');
+        journal(g, `${v.name} struck coal in the deep workings.`, '⛏️');
+        note(g, v.id, 'Struck the first coal.');
+      }
+      break;
+    }
     case 'batch': {
       const b = buildingById(g, step.id ?? 0);
       if (!b) break;
-      const recipe = BUILDINGS[b.def].recipe;
+      // Which recipe ran is carried on the step, because the forge has several
+      // and the one it started is the one that has to be paid for.
+      const recipe = recipeFor(b, step.res);
       if (!recipe) break;
       for (const k in recipe.inputs) {
         const res = k as ResourceId;
@@ -436,6 +466,17 @@ function doEffect(g: GameState, v: Villager, step: Extract<Step, { t: 'effect' }
             note(g, v.id, 'Baked the first loaf in the kingdom.');
           }
           g.stats.baked += made;
+        }
+        if (res === 'ironBar' || res === 'steelBar') {
+          if (g.stats.smelted === 0) {
+            journal(g, `${v.name} drew the first bar out of the forge.`, '🔥');
+            note(g, v.id, 'Made the kingdom’s first bar of iron.');
+          }
+          if (res === 'steelBar' && !g.unlocked.has('seen:steelBar')) {
+            g.unlocked.add('seen:steelBar');
+            journal(g, `${v.name} made steel, which nobody here had seen before.`, '🔥');
+          }
+          g.stats.smelted += made;
         }
       }
       break;
@@ -533,6 +574,9 @@ export function completeConstruction(g: GameState, b: Building): void {
   // congratulates you on a Settled Camp and the storehouse it lets you build
   // both hang off the same moment.
   if (b.def === 'commons') unlockCommonsTier(g, b.level);
+  // And the mine does the same for the buildings that only make sense once it
+  // has gone deep enough to feed them: an Iron Mine is what a forge is for.
+  if (b.def === 'quarry') unlockMineTier(g, b.level);
 
   // A finished house takes in anyone still sleeping out at the commons.
   if (def.housing) {
@@ -870,13 +914,14 @@ function planWork(g: GameState, v: Villager): boolean {
   if (workplace && workplace.stage === 'done') {
     switch (v.job) {
       case 'woodcutter':
-        return planHarvestNode(g, v, workplace, 'tree', 'wood');
-      case 'stoneworker':
-        return planHarvestNode(g, v, workplace, 'boulder', 'stone');
+        return planHarvestTrees(g, v, workplace);
+      case 'miner':
+        return planExtract(g, v, workplace);
       case 'farmer':
         return planFarm(g, v, workplace);
       case 'miller':
       case 'baker':
+      case 'smith':
         return planProduce(g, v, workplace);
       default:
         break;
@@ -893,43 +938,135 @@ function storeLeg(g: GameState, store: Building): Step[] {
   ];
 }
 
-/** Woodcutters and stoneworkers: walk out to a node, work it, haul the load back. */
-function planHarvestNode(
-  g: GameState,
-  v: Villager,
-  workplace: Building,
-  prop: 'tree' | 'boulder',
-  res: ResourceId,
-): boolean {
+/**
+ * Woodcutters: walk out to a tree, fell it, haul the load back.
+ *
+ * Trees are the only nodes anybody works this way now. The mine does not send
+ * people out to boulders — it takes its material from the ground it stands on
+ * (`planExtract`), which is why surface rock can be finite without the kingdom
+ * ever running out of stone.
+ */
+function planHarvestTrees(g: GameState, v: Villager, workplace: Building): boolean {
   if (storageFree(g) < 4) {
     noticeStoreFull(g);
     return planLeisureFallback(g, v, 'Nowhere to put it.');
   }
   // Plenty of this already: lend a hand elsewhere rather than filling the barn.
-  if (glutOf(g, res)) return planHelper(g, v);
+  if (glutOf(g, 'wood')) return planHelper(g, v);
 
   // The reach drawn on the map when this was placed is the reach used here.
   const reach = rangeOf(workplace.def, workplace.level);
   const c = buildingCentre(workplace);
-  const node = findNode(g, c.x, c.y, prop, reach) ?? findNode(g, v.x, v.y, prop, reach + 7);
+  const node = findNode(g, c.x, c.y, 'tree', reach) ?? findNode(g, v.x, v.y, 'tree', reach + 7);
   if (!node) return planHelper(g, v);
 
   const goals = neighbours(g, node.x, node.y);
   if (goals.length === 0) return planHelper(g, v);
   claim(g, v, 'node', node.y * g.w + node.x, node.x, node.y);
 
-  const isTree = prop === 'tree';
-  const job: JobId = isTree ? 'woodcutter' : 'stoneworker';
-  const per = isTree ? CHOP_YIELD : MINE_YIELD;
-  const trips = clamp(Math.floor(CARRY_CAPACITY / per), 1, 4);
+  const trips = clamp(Math.floor(CARRY_CAPACITY / CHOP_YIELD), 1, 4);
   const steps: Step[] = [{ t: 'move', x: node.x, y: node.y, goals }];
   for (let i = 0; i < trips; i++) {
-    steps.push({ t: 'act', dur: isTree ? CHOP_SECONDS : MINE_SECONDS, kind: 'gathering', xp: job });
-    steps.push({ t: 'take', res, qty: per, from: 'tile', x: node.x, y: node.y });
+    steps.push({ t: 'act', dur: CHOP_SECONDS, kind: 'gathering', xp: 'woodcutter' });
+    steps.push({ t: 'take', res: 'wood', qty: CHOP_YIELD, from: 'tile', x: node.x, y: node.y });
   }
   const store = nearestStore(g, node.x, node.y);
   if (store) steps.push(...storeLeg(g, store));
   v.plan = steps;
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// The mine
+// ---------------------------------------------------------------------------
+
+/** Everything sitting on a building's output shelf, whatever it is. */
+function shelfTotal(b: Building): number {
+  let n = 0;
+  for (const k in b.output) n += b.output[k as ResourceId] ?? 0;
+  return n;
+}
+
+/** The largest single thing on the shelf, which is what a trip to the store takes. */
+function biggestOnShelf(b: Building): { res: ResourceId; qty: number } | null {
+  let best: { res: ResourceId; qty: number } | null = null;
+  for (const k in b.output) {
+    const res = k as ResourceId;
+    const qty = b.output[res] ?? 0;
+    if (qty > 0 && (!best || qty > best.qty)) best = { res, qty };
+  }
+  return best;
+}
+
+/**
+ * What this mine's people are getting out today.
+ *
+ * A focus is a preference, not an instruction that can fail. If the kingdom
+ * already has more of the favoured material than it can sensibly store, the mine
+ * quietly works on something else rather than stopping — the same
+ * nothing-is-ever-punishing rule the rest of the game runs on. Balanced means
+ * "whatever we are shortest of", measured against `BALANCE_TARGET` rather than
+ * against each other, because a kingdom wants far more stone than it does ore.
+ *
+ * Mithril is filtered out unconditionally. The level that would list it cannot
+ * be reached, and this is the second lock on that.
+ */
+function chooseExtraction(g: GameState, b: Building): ResourceId | null {
+  const all: ResourceId[] = extractsOf(b.def, b.level).filter((r) => r !== 'mithrilOre');
+  const open = all.filter((r) => !glutOf(g, r));
+  if (open.length === 0) return null;
+  const focus = b.focus;
+  if (focus && focus !== 'balanced' && open.includes(focus as ResourceId)) return focus as ResourceId;
+  let best = open[0];
+  let bestShare = Infinity;
+  for (const res of open) {
+    const share = g.stock[res] / (BALANCE_TARGET[res] ?? 100);
+    if (share < bestShare) {
+      bestShare = share;
+      best = res;
+    }
+  }
+  return best;
+}
+
+/**
+ * Miners: a stint at the rock face, then the load down to the store.
+ *
+ * There is no node to walk to and nothing to claim, because the seam is the
+ * ground the building stands on — the work happens at the mine and the only
+ * thing the site decides is how fast, through how much rock is inside its reach.
+ * The trip to the store is still a walk somebody makes, so the material still
+ * arrives in the kingdom by being carried there.
+ */
+function planExtract(g: GameState, v: Villager, mine: Building): boolean {
+  const store = nearestStore(g, mine.x, mine.y);
+  const shelf = shelfTotal(mine);
+  const res = chooseExtraction(g, mine);
+
+  // Clear the shelf when it is worth a trip, or when there is nothing worth
+  // cutting — a full shelf must never be the reason a mine stands still.
+  const load = biggestOnShelf(mine);
+  if (store && load && storageFree(g) > 0 && (shelf >= CARRY_CAPACITY || !res || shelf >= OUTPUT_CAP)) {
+    planWalkTo(g, v, mine, [
+      { t: 'take', res: load.res, qty: Math.min(load.qty, CARRY_CAPACITY), from: 'building', id: mine.id },
+      ...storeLeg(g, store),
+    ]);
+    return true;
+  }
+
+  if (storageFree(g) < 4) {
+    noticeStoreFull(g);
+    return planLeisureFallback(g, v, 'Nowhere to put it.');
+  }
+  // Everything this mine can reach is already piled high. Go and be useful.
+  if (!res) return planHelper(g, v);
+
+  const c = buildingCentre(mine);
+  const rock = rockInRange(g, c.x, c.y, rangeOf(mine.def, mine.level));
+  planWalkTo(g, v, mine, [
+    { t: 'act', dur: MINE_SECONDS / richnessMul(rock), kind: 'gathering', xp: 'miner' },
+    { t: 'effect', kind: 'extract', id: mine.id, res },
+  ]);
   return true;
 }
 
@@ -1062,52 +1199,129 @@ function planFarm(g: GameState, v: Villager, farm: Building): boolean {
   return planHelper(g, v);
 }
 
-/** Millers and bakers: run a batch, clear the shelf, or fetch what they lack. */
+// ---------------------------------------------------------------------------
+// Workshops
+// ---------------------------------------------------------------------------
+
+/** What a recipe asks for, as pairs rather than a sparse record. */
+function inputsOf(r: Recipe): { res: ResourceId; qty: number }[] {
+  return (Object.keys(r.inputs) as ResourceId[]).map((res) => ({ res, qty: r.inputs[res] ?? 0 }));
+}
+
+/** The recipe a `batch` step is paying for, found by what it makes. */
+function recipeFor(b: Building, res?: ResourceId): Recipe | null {
+  const list = liveRecipesOf(b.def);
+  if (!res) return list[0] ?? null;
+  return list.find((r) => recipeOutput(r) === res) ?? null;
+}
+
+/** Everything for one batch is already on the workshop's own shelves. */
+function hasInputs(b: Building, r: Recipe): boolean {
+  return inputsOf(r).every((i) => (b.input[i.res] ?? 0) >= i.qty);
+}
+
+/** The shelves plus the store between them could cover one batch. */
+function couldSupply(g: GameState, b: Building, r: Recipe): boolean {
+  return inputsOf(r).every((i) => (b.input[i.res] ?? 0) + g.stock[i.res] >= i.qty);
+}
+
+/**
+ * Which of a workshop's recipes to work on next.
+ *
+ * Most buildings have exactly one and this is a formality. The forge has two —
+ * iron, and steel out of iron — and the choice follows the same rules the mine's
+ * does: a focus is a preference rather than an order, a glutted output steps
+ * aside, and Balanced means whatever the kingdom is furthest below wanting.
+ * Nothing here can fail in a way the player has to fix; the worst case is that
+ * the forge waits, which is what a forge with no ore should do.
+ */
+function chooseRecipe(g: GameState, b: Building): Recipe | null {
+  const runnable = liveRecipesOf(b.def).filter(
+    (r) => !glutOf(g, recipeOutput(r)) && couldSupply(g, b, r),
+  );
+  if (runnable.length === 0) return null;
+  const focus = b.focus;
+  if (focus && focus !== 'balanced') {
+    const wanted = runnable.find((r) => recipeOutput(r) === focus);
+    if (wanted) return wanted;
+  }
+  // Something already half-set-up wins over starting a different job.
+  const ready = runnable.filter((r) => hasInputs(b, r));
+  const pool = ready.length ? ready : runnable;
+  let best = pool[0];
+  let bestShare = Infinity;
+  for (const r of pool) {
+    const out = recipeOutput(r);
+    const share = g.stock[out] / (BALANCE_TARGET[out] ?? 100);
+    if (share < bestShare) {
+      bestShare = share;
+      best = r;
+    }
+  }
+  return best;
+}
+
+/** What this workshop is short of for a given recipe, and could fetch today. */
+function missingInput(g: GameState, b: Building, r: Recipe): { res: ResourceId; qty: number } | null {
+  for (const i of inputsOf(r)) {
+    const held = b.input[i.res] ?? 0;
+    if (held >= i.qty) continue;
+    if (g.stock[i.res] <= 0) continue;
+    return { res: i.res, qty: Math.min(CARRY_CAPACITY, g.stock[i.res], Math.max(i.qty, INPUT_CAP) - held) };
+  }
+  return null;
+}
+
+/** Millers, bakers and smiths: run a batch, clear the shelf, or fetch what they lack. */
 function planProduce(g: GameState, v: Villager, b: Building): boolean {
   const def = BUILDINGS[b.def];
-  const recipe = def.recipe;
-  if (!recipe) return planHelper(g, v);
+  if (liveRecipesOf(b.def).length === 0) return planHelper(g, v);
 
-  const outRes = Object.keys(recipe.outputs)[0] as ResourceId;
-  const inRes = Object.keys(recipe.inputs)[0] as ResourceId;
-  const outHeld = b.output[outRes] ?? 0;
-  const inHeld = b.input[inRes] ?? 0;
-  const needed = recipe.inputs[inRes] ?? 1;
   const store = nearestStore(g, b.x, b.y);
-
   // A workshop is as capable of burying the kingdom as a woodcutter is, and for
   // a while nothing stopped one: a mill with wheat coming in and no bakery yet
   // built ground every last sheaf into flour, filled the store with it, and
-  // left everybody else — the stoneworkers who would have quarried the stone
-  // the bakery was waiting on — with nowhere to put anything down. The rule is
-  // the same one the gatherers follow: past a third of the whole store, go and
-  // be useful elsewhere. Clearing the shelf below is deliberately left running,
-  // so a workshop that has already made the stuff still gets it carried off.
-  const glutted = glutOf(g, outRes);
+  // left everybody else — the miners who would have cut the stone the bakery
+  // was waiting on — with nowhere to put anything down. The rule is the same one
+  // the gatherers follow: past a third of the whole store, go and be useful
+  // elsewhere. `chooseRecipe` is where that happens; clearing the shelf below is
+  // deliberately left running, so a workshop that has already made the stuff
+  // still gets it carried off.
+  const recipe = chooseRecipe(g, b);
+  const shelf = shelfTotal(b);
+  const load = biggestOnShelf(b);
 
   // Clear the output shelf before it jams the workshop.
-  if (store && storageFree(g) > 0 && (outHeld >= CARRY_CAPACITY || (outHeld > 0 && inHeld < needed))) {
+  if (
+    store &&
+    load &&
+    storageFree(g) > 0 &&
+    (shelf >= CARRY_CAPACITY || shelf >= OUTPUT_CAP || !recipe || !hasInputs(b, recipe))
+  ) {
     planWalkTo(g, v, b, [
-      { t: 'take', res: outRes, qty: Math.min(outHeld, CARRY_CAPACITY), from: 'building', id: b.id },
+      { t: 'take', res: load.res, qty: Math.min(load.qty, CARRY_CAPACITY), from: 'building', id: b.id },
       ...storeLeg(g, store),
     ]);
     return true;
   }
 
-  if (!glutted && inHeld >= needed && outHeld + (recipe.outputs[outRes] ?? 0) <= OUTPUT_CAP) {
+  if (!recipe) return planHelper(g, v);
+
+  if (hasInputs(b, recipe) && shelf < OUTPUT_CAP) {
     planWalkTo(g, v, b, [
       { t: 'act', dur: recipe.seconds, kind: 'working', xp: def.job },
-      { t: 'effect', kind: 'batch', id: b.id },
+      { t: 'effect', kind: 'batch', id: b.id, res: recipeOutput(recipe) },
     ]);
     return true;
   }
 
   // Fetch raw materials personally rather than waiting for a helper to notice.
-  if (!glutted && inHeld < needed && store && g.stock[inRes] >= needed) {
+  const want = store ? missingInput(g, b, recipe) : null;
+  if (store && want) {
     const sdef = BUILDINGS[store.def];
     v.plan = [
       { t: 'move', x: store.x, y: store.y, goals: footprintApproach(g, store.x, store.y, sdef.w, sdef.h) },
-      { t: 'take', res: inRes, qty: Math.min(CARRY_CAPACITY, g.stock[inRes], INPUT_CAP - inHeld), from: 'store' },
+      { t: 'take', res: want.res, qty: want.qty, from: 'store' },
       approachSteps(g, b),
       { t: 'give', to: 'building', id: b.id },
     ];
@@ -1153,16 +1367,16 @@ function planHelper(g: GameState, v: Villager): boolean {
     return true;
   }
 
-  // 3. Workshops running dry that nobody is currently supplying.
+  // 3. Workshops running dry that nobody is currently supplying. The glut check
+  //    is inside `chooseRecipe`: there is no sense carrying wheat to a mill that
+  //    has stopped grinding it, or coal to a forge that has stopped burning it.
   for (const b of g.buildings) {
     if (b.stage !== 'done' || b.workers.length === 0) continue;
-    const def = BUILDINGS[b.def];
-    if (!def.recipe) continue;
-    // No sense carrying wheat to a mill that has stopped grinding it.
-    if (glutOf(g, Object.keys(def.recipe.outputs)[0] as ResourceId)) continue;
-    const inRes = Object.keys(def.recipe.inputs)[0] as ResourceId;
-    const held = b.input[inRes] ?? 0;
-    if (held >= INPUT_CAP * 0.6 || g.stock[inRes] < 2) continue;
+    if (liveRecipesOf(b.def).length === 0) continue;
+    const recipe = chooseRecipe(g, b);
+    if (!recipe || hasInputs(b, recipe)) continue;
+    const want = missingInput(g, b, recipe);
+    if (!want || want.qty < 2) continue;
     if (isClaimed(g, 'restock', b.id, v.id)) continue;
     const store = nearestStore(g, b.x, b.y);
     if (!store) continue;
@@ -1170,28 +1384,26 @@ function planHelper(g: GameState, v: Villager): boolean {
     const sdef = BUILDINGS[store.def];
     v.plan = [
       { t: 'move', x: store.x, y: store.y, goals: footprintApproach(g, store.x, store.y, sdef.w, sdef.h) },
-      { t: 'take', res: inRes, qty: Math.min(CARRY_CAPACITY, g.stock[inRes], INPUT_CAP - held), from: 'store' },
+      { t: 'take', res: want.res, qty: want.qty, from: 'store' },
       approachSteps(g, b),
       { t: 'give', to: 'building', id: b.id },
     ];
     return true;
   }
 
-  // 4. Workshops with finished goods piling up.
+  // 4. Anywhere with finished goods piling up — a workshop's shelf or a mine's.
   for (const b of g.buildings) {
     if (b.stage !== 'done') continue;
-    const def = BUILDINGS[b.def];
-    if (!def.recipe) continue;
-    const outRes = Object.keys(def.recipe.outputs)[0] as ResourceId;
-    const held = b.output[outRes] ?? 0;
-    if (held < 4 || storageFree(g) < 2) continue;
+    if (outputsOf(b.def, b.level).length === 0) continue;
+    const load = biggestOnShelf(b);
+    if (!load || load.qty < 4 || storageFree(g) < 2) continue;
     if (isClaimed(g, 'collect', b.id, v.id)) continue;
     const store = nearestStore(g, b.x, b.y);
     if (!store) continue;
     claim(g, v, 'collect', b.id);
     v.plan = [
       approachSteps(g, b),
-      { t: 'take', res: outRes, qty: Math.min(held, CARRY_CAPACITY), from: 'building', id: b.id },
+      { t: 'take', res: load.res, qty: Math.min(load.qty, CARRY_CAPACITY), from: 'building', id: b.id },
       ...storeLeg(g, store),
     ];
     return true;
@@ -1434,7 +1646,14 @@ function growCrops(g: GameState, dt: number): void {
   }
 }
 
-/** Worked-out trees become stumps and boulders become rubble; both come back. */
+/**
+ * Worked-out trees become stumps, and stumps come back.
+ *
+ * Boulders are not swept, because nothing works one out any more: the only thing
+ * that ever removes a boulder is building over it, and that is meant to be
+ * permanent. Surface rock is the finite half of the kingdom's stone and the mine
+ * is the endless half.
+ */
 let sweepCursor = 0;
 function sweepDepletedNodes(g: GameState): void {
   for (let i = 0; i < 300; i++) {
@@ -1444,10 +1663,6 @@ function sweepDepletedNodes(g: GameState): void {
     if (t.prop === 'tree') {
       t.prop = 'stump';
       t.regrow = TREE_REGROW;
-      t.claimed = 0;
-    } else if (t.prop === 'boulder') {
-      t.prop = 'pebbles';
-      t.regrow = BOULDER_REGROW;
       t.claimed = 0;
     }
   }

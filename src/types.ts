@@ -1,16 +1,61 @@
 /** Shared type vocabulary for the whole simulation. */
 
-export type ResourceId = 'wood' | 'stone' | 'wheat' | 'flour' | 'bread' | 'coin';
+/**
+ * Everything the kingdom can hold. Processed metals are **Bars**, never ingots,
+ * and the mithril pair exists here without anything in the game producing it —
+ * the Mithril Mine and the forge's mithril recipe are both written down and
+ * openly out of reach, the same way the Kingdom Commons is.
+ */
+export type ResourceId =
+  | 'wood'
+  | 'stone'
+  | 'wheat'
+  | 'flour'
+  | 'bread'
+  | 'ironOre'
+  | 'coal'
+  | 'ironBar'
+  | 'steelBar'
+  | 'mithrilOre'
+  | 'mithrilBar'
+  | 'coin';
 
-export const RESOURCE_ORDER: ResourceId[] = ['wood', 'stone', 'wheat', 'flour', 'bread', 'coin'];
+/** Roughly the order a kingdom meets them in, which is the order the strip shows. */
+export const RESOURCE_ORDER: ResourceId[] = [
+  'wood',
+  'stone',
+  'wheat',
+  'flour',
+  'bread',
+  'ironOre',
+  'coal',
+  'ironBar',
+  'steelBar',
+  'mithrilOre',
+  'mithrilBar',
+  'coin',
+];
 
 /** Coins live outside the physical storage pool — they are carried, not stacked in a barn. */
-export const STORED_RESOURCES: ResourceId[] = ['wood', 'stone', 'wheat', 'flour', 'bread'];
+export const STORED_RESOURCES: ResourceId[] = RESOURCE_ORDER.filter((r) => r !== 'coin');
 
 export type Stock = Record<ResourceId, number>;
 
 export function emptyStock(): Stock {
-  return { wood: 0, stone: 0, wheat: 0, flour: 0, bread: 0, coin: 0 };
+  return {
+    wood: 0,
+    stone: 0,
+    wheat: 0,
+    flour: 0,
+    bread: 0,
+    ironOre: 0,
+    coal: 0,
+    ironBar: 0,
+    steelBar: 0,
+    mithrilOre: 0,
+    mithrilBar: 0,
+    coin: 0,
+  };
 }
 
 export type TerrainId = 'water' | 'shallow' | 'sand' | 'grass' | 'meadow' | 'forest' | 'rocky';
@@ -51,10 +96,14 @@ export const SEASONS: Season[] = ['spring', 'summer', 'autumn', 'winter'];
 export type JobId =
   | 'helper'
   | 'woodcutter'
-  | 'stoneworker'
+  // One trade works the mine, whatever the mine has reached. A Deep Mine
+  // producing three materials does not want three kinds of worker; the building
+  // decides what they are getting out today and they get it.
+  | 'miner'
   | 'farmer'
   | 'miller'
   | 'baker'
+  | 'smith'
   | 'keeper';
 
 export type TraitId =
@@ -72,10 +121,13 @@ export type BuildingId =
   | 'cabin'
   | 'storehouse'
   | 'lodge'
+  // The mine at every stage of it: Quarry, Iron Mine, Deep Mine, Mithril Mine.
+  // One building that grows, so the id stays what it always was.
   | 'quarry'
   | 'farm'
   | 'mill'
   | 'bakery'
+  | 'forge'
   | 'well'
   | 'bench'
   | 'lantern'
@@ -90,6 +142,13 @@ export interface Recipe {
   outputs: Partial<Record<ResourceId, number>>;
   /** Base seconds of work for one batch at skill 1.0. */
   seconds: number;
+  /**
+   * Written down but not yet possible — the forge's mithril recipe. The panel
+   * shows it greyed rather than hiding it, for the same reason the last step of
+   * the commons is shown: a horizon reads as a horizon, a gap reads as a bug.
+   * Nothing in the planner will ever run one.
+   */
+  locked?: boolean;
 }
 
 /**
@@ -100,6 +159,12 @@ export interface Recipe {
 export interface UpgradeReq {
   label: string;
   met: (g: GameState) => boolean;
+  /**
+   * Nothing in the game can satisfy this yet — the Kingdom Commons and the
+   * Mithril Mine both end on one. Shown rather than hidden, but the interface
+   * has to know not to describe the step beyond it as something to work towards.
+   */
+  impossible?: boolean;
 }
 
 export interface BuildingDef {
@@ -141,12 +206,31 @@ export interface BuildingDef {
   slots?: number[];
   job?: JobId;
   recipe?: Recipe;
+  /**
+   * Everything this building can make, in the order it should be offered. A
+   * workshop with one recipe uses `recipe`; the forge has several and picks
+   * between them from its focus. `recipesOf` in `defs.ts` answers both.
+   */
+  recipes?: Recipe[];
   /** Node prop harvested by this building's workers. */
   harvests?: PropId;
   /**
-   * How far this building's workers range for their nodes, per level. Shown to
-   * the player while placing or moving it, because a lodge with no trees in
-   * reach is the one placement mistake that looks fine and produces nothing.
+   * What this building takes out of the ground it stands on, per level — the
+   * mine, and nothing else. Level 1 is stone alone; each improvement adds a
+   * material without taking one away, and the same workers get all of them.
+   * There are no nodes involved: the rock underneath does not run out.
+   */
+  extracts?: ResourceId[][];
+  /**
+   * Has to stand on or against rocky ground. Only the mine, and it is the whole
+   * of what makes where you sink it a decision.
+   */
+  needsRock?: boolean;
+  /**
+   * How far this building's workers range for their nodes, per level — or, for
+   * the mine, how far the seam it is working spreads. Shown to the player while
+   * placing or moving it, because a lodge with no trees in reach is the one
+   * placement mistake that looks fine and produces nothing.
    */
   range?: number[];
   /** Farm plots are generated inside the footprint. */
@@ -191,6 +275,13 @@ export interface BuildingDef {
 
 export type BuildStage = 'planned' | 'building' | 'done';
 
+/**
+ * What a building has been asked to concentrate on. `'balanced'` is not "equal
+ * amounts of everything" — it is "whatever the kingdom is shortest of", worked
+ * out afresh each time somebody starts a stint.
+ */
+export type Focus = ResourceId | 'balanced';
+
 export interface Building {
   id: number;
   def: BuildingId;
@@ -215,6 +306,13 @@ export interface Building {
   plots: { x: number; y: number; state: 'empty' | 'growing' | 'ripe'; growth: number; claimed: number }[];
   /** True while an upgrade is under construction. */
   upgrading: boolean;
+  /**
+   * What this building has been told to concentrate on: a resource id, or
+   * `'balanced'`, which is the default and means the building decides for itself
+   * from what the kingdom is short of. Only the mine and the forge have one, it
+   * costs nothing to change, and changing it back costs nothing either.
+   */
+  focus?: Focus;
   /**
    * A move under way. The building being moved carries `movingTo`, the id of a
    * plain construction site standing on the new ground; that site carries
@@ -272,9 +370,11 @@ export type Step =
   /** Deferred consequence, applied the instant the preceding action finishes. */
   | {
       t: 'effect';
-      kind: 'eat' | 'sow' | 'reap' | 'batch' | 'arrived' | 'settled';
+      kind: 'eat' | 'sow' | 'reap' | 'batch' | 'extract' | 'arrived' | 'settled';
       id?: number;
       slot?: number;
+      /** Which material this stint at the rock face was for, or which recipe ran. */
+      res?: ResourceId;
     };
 
 export interface Villager {
@@ -487,6 +587,15 @@ export interface GameState {
     harvested: number;
     baked: number;
     arrivals: number;
+    /**
+     * Stone taken out of the rock by the mine. Counted because the mine's own
+     * improvements ask for it, and an accomplishment has to be something that
+     * cannot un-happen — what is *in* the store goes down again the moment
+     * anybody builds anything.
+     */
+    mined: number;
+    /** Bars off the forge, iron and steel alike. Same reasoning. */
+    smelted: number;
   };
   nameSeq: number;
 }

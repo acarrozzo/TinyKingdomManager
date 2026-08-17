@@ -8,7 +8,7 @@
  */
 
 import { clamp, hash2 } from '../core/util';
-import type { Building, GameState, PropId, Season, Villager } from '../types';
+import type { Building, GameState, PropId, Season, TerrainId, Villager } from '../types';
 import { BUILDINGS } from '../sim/defs';
 import { HALF_H, HALF_W, toGridX, toGridY, toScreenX, toScreenY } from '../world/iso';
 import { CAMP_HALF, CAMP_SPAN } from '../world/terrain';
@@ -48,7 +48,11 @@ export interface RenderOptions {
    * decision is being made, because a permanent ring round the lodge would be a
    * diagram laid over a place people live.
    */
-  range: { cx: number; cy: number; radius: number; prop: PropId } | null;
+  /**
+   * The reach to draw, and what to mark inside it: a lodge marks the trees its
+   * people will walk to, a mine marks the rocky ground its seam runs through.
+   */
+  range: { cx: number; cy: number; radius: number; prop: PropId | null; terrain: TerrainId | null } | null;
   demolish: boolean;
 }
 
@@ -541,7 +545,7 @@ export class Renderer {
    * is a thing you can see at a glance rather than a shaded blob.
    */
   private drawWorkRange(g: GameState, range: NonNullable<RenderOptions['range']>): void {
-    const { cx, cy, radius, prop } = range;
+    const { cx, cy, radius, prop, terrain } = range;
     const b = this.bctx;
 
     /*
@@ -589,16 +593,31 @@ export class Renderer {
       for (let x = x0; x <= x1; x++) {
         if ((x - cx) ** 2 + (y - cy) ** 2 > r2) continue;
         const t = g.tiles[y * g.w + x];
-        if (t.prop !== prop || t.amount <= 0) continue;
+        // Either kind of mark, never both — a live node, or ground of the kind
+        // this building works.
+        const marked = prop ? t.prop === prop && t.amount > 0 : terrain ? t.terrain === terrain : false;
+        if (!marked) continue;
         // On the tile itself rather than on the sprite standing on it: the tree
         // is drawn later and would cover a mark placed at its crown.
         const sx = Math.round(toScreenX(x, y) - this.viewX);
         const sy = Math.round(toScreenY(x, y) - this.viewY);
-        b.fillStyle = 'rgba(30,24,16,0.55)';
-        b.fillRect(sx - 2, sy - 1, 5, 3);
-        b.fillStyle = '#ffe9a6';
-        b.fillRect(sx - 1, sy, 3, 1);
-        b.fillRect(sx, sy - 1, 1, 3);
+        if (prop) {
+          // A node is a thing you count, so it gets a mark you can pick out.
+          b.fillStyle = 'rgba(30,24,16,0.55)';
+          b.fillRect(sx - 2, sy - 1, 5, 3);
+          b.fillStyle = '#ffe9a6';
+          b.fillRect(sx - 1, sy, 3, 1);
+          b.fillRect(sx, sy - 1, 1, 3);
+        } else {
+          // Rock is measured by the acre rather than counted, and there can be
+          // a hundred tiles of it inside the ring: a plus sign on every one is
+          // a rash. A single quiet pip reads as texture, which is the honest
+          // picture — the number in the placement bar is the precise part.
+          b.fillStyle = 'rgba(20,18,16,0.4)';
+          b.fillRect(sx - 1, sy, 3, 2);
+          b.fillStyle = 'rgba(255,233,166,0.75)';
+          b.fillRect(sx, sy, 2, 1);
+        }
       }
   }
 

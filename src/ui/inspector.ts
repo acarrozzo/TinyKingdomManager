@@ -187,8 +187,11 @@ export function tileCard(game: Game): string {
     const yields = prop.yields;
     const rows: string[] = [];
     if (yields && tile.amount > 0) {
+      // "left" only where somebody actually comes and takes it. A boulder is
+      // nobody's job: the stone in it is only ever recovered by building over
+      // it, so saying "stone left" would promise a delivery that never comes.
       rows.push(
-        `<div class="kv"><span class="k">${RESOURCE_META[yields].name} left</span>
+        `<div class="kv"><span class="k">${RESOURCE_META[yields].name} ${prop.worked ? 'left' : 'in it'}</span>
           <span class="v">${RESOURCE_META[yields].icon} ${Math.floor(tile.amount)}</span></div>`,
       );
     }

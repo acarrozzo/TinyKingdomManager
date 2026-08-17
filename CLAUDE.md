@@ -41,7 +41,7 @@ Concretely, that means:
 npm install
 npm run dev          # http://localhost:5173
 npm run typecheck    # tsc --noEmit — strict, noUnusedLocals/Parameters on
-npm run build        # typecheck + production bundle (~50 kB gzipped)
+npm run build        # typecheck + production bundle (~80 kB gzipped)
 ```
 
 ---
@@ -74,8 +74,23 @@ is how the economy was balanced and it catches things that look fine in code:
 production chains that silently never run, one resource crowding every other out
 of storage, wildlife arriving far too fast, XP curves that take 40 hours.
 
+It also asserts the things that must never be true whatever the balance: stone
+in a kingdom with no quarry, ore before an Iron Mine, coal before a Deep Mine,
+bars with no forge, any mithril at all, and rubble counting down to become a
+boulder again. Those are the rules of the world rather than tuning, so they fail
+the run rather than showing up in a number somebody has to notice.
+
+Two things about the harness are load-bearing and easy to undo by tidying. It
+**staffs before it builds**, and never gates staffing on whether something is
+under construction — it used to do both at the foot of one early return, so a
+site the kingdom could not yet pay for froze the whole run: nobody could be put
+on the mine, so no stone was cut, so the site stayed unpaid, for twenty days.
+And it plays by the interface's own rules, including `needsRock`, so it can no
+more drop a quarry on a meadow than the player can.
+
 A run of ~600–1000 game-minutes is the useful range. Under ~300 you will not see
-the bakery come online; over ~1200 the kingdom has plateaued and tells you little.
+the bakery come online, and under ~450 you will not see a forge; over ~1200 the
+kingdom has plateaued and tells you little.
 
 **The run is reproducible.** The gameplay RNG starts from the world's seed
 rather than the clock, so two runs of the same seed and length are byte-for-byte
@@ -95,8 +110,9 @@ Generates island after island and checks each one is a kingdom somebody could
 start on: the wood and stone the first hour needs, a choice of at least six
 three-by-three campsites the game's own rule would accept, at least four trees
 the founder can walk to from where they start, at least three places a Quarry
-could stand and reach fourteen boulders, a beach that connects to it on foot,
-sane tiles, and the same seed giving the same world twice.
+could legally stand — on or against rock, with twenty-five tiles of rock inside
+its reach — a beach that connects to it on foot, sane tiles, and the same seed
+giving the same world twice.
 
 **Run this after any change to `world/terrain.ts`.** Generation leans on random
 scatter, and a scatter with a give-up guard is not a guarantee — the failures it
@@ -105,9 +121,11 @@ and the founder walks up a beach to an island with no firewood on it. It prints
 the failing seed so the world can be regenerated on its own.
 
 The quarry check earns its place now that stone comes from a quarry and from
-nowhere else: an island whose boulders are scattered too thinly for any one
-quarry to reach a worthwhile number of them is not a hard start, it is a kingdom
-that cannot pass its second commons.
+nowhere else: an island whose rock is all across the water or all under the pond
+is not a hard start, it is a kingdom that cannot pass its second commons. It
+measures *rocky ground* rather than boulders, because that is what the mine
+works — boulders are finite scenery, and a site with none of them left beside it
+is still a perfectly good mine.
 
 ### Moving buildings: `npm run reloccheck`
 
@@ -187,7 +205,7 @@ src/
   core/util.ts        seeded RNG, value noise, small maths, id counter
   world/
     iso.ts            projection (32×16 diamonds, 2:1)
-    terrain.ts        map generation, tile queries, node regrowth
+    terrain.ts        map generation, tile queries, tree regrowth, rock queries
     path.ts           A* weighted by terrain speed
   sim/
     defs.ts           ALL game data and tuning — see below
@@ -430,6 +448,10 @@ but not break stone is one waiting on permission rather than on itself. What the
 later levels give is mostly *room* — one more cabin and one more storehouse each
 — which is a reward you can act on rather than a new menu entry.
 
+The mine's ladder follows the same two rules, and the second one is why the
+Deep Mine asks for a forge rather than the Iron Mine doing so: the Iron Mine is
+what opens the forge.
+
 Two rules that are easy to break. **No level may require something it is itself
 responsible for unlocking** — that is why bread gates the Village Commons rather
 than the Settled Camp, and why the food chain (Farm, Windmill, Bakery) is
@@ -487,17 +509,43 @@ comes before the quarry may ask for stone. `simcheck` fails the run if a kingdom
 with no quarry has any stone at all, which is the cheapest way to catch a new
 source being added by accident.
 
-Two things keep it from being a trap. Boulders regrow — `updateTerrain` turns
-rubble back into a boulder **wherever it stands**, not only on rocky ground,
-which was a real bug the moment stone stopped being pickable by hand. And
-`worldcheck` guarantees every island has somewhere a quarry can stand and reach
-a worthwhile number of them.
+**The mine works the ground it stands on, not the boulders lying on it.** There
+are no nodes involved and nothing to walk out to: `needsRock` on the def makes
+`footprintProblem` refuse any spot that is not on or against rocky terrain, and
+after that the seam is endless. What the site decides is only how *fast* —
+`rockInRange` counts the rocky tiles inside `rangeOf`, and `richnessMul` turns
+that into a multiplier between `RICH_MIN` and 1. Thin rock means slow, never
+idle, and the placement bar says so in those words: telling somebody their mine
+would stand idle would be a lie about the one building that never stops.
+
+That is what lets surface rock be **finite**. Boulders never come back —
+`updateTerrain` regrows stumps and nothing else, `sweepDepletedNodes` has no
+boulder branch, and the only thing that ever removes one is building over it,
+which is meant to be permanent. Do not reintroduce boulder regrowth or a
+`BOULDER_REGROW`; the finite half of the kingdom's stone is scenery, and the
+endless half is a building somebody had to site properly.
+
+**The mine is a ladder, and it is the game's second one.** Quarry → Iron Mine →
+Deep Mine → Mithril Mine, through `levelNames` and `MINE_REQS` in `defs.ts`,
+with `unlockMineTier` in `goals.ts` handing over the Forge when it reaches an
+Iron Mine — exactly as `unlockCommonsTier` hands over its own tier. `extracts`
+lists what each level brings up and it **never shrinks**: a Deep Mine still cuts
+stone, so no improvement ever asks the kingdom to give something up. The last
+step is `met: () => false` with `impossible: true`, and that flag is what stops
+the panel describing mithril as something to work towards.
+
+**One trade works the whole mine.** `miner` covers stone, ore and coal alike;
+improving the building never reassigns anybody, and there are no tools, no
+pickaxes, no durability and no per-material workers. If that ever seems wanted,
+it is not: the whole point of the building is that it is one place with one job
+at it.
 
 **Buildings come in four kinds, and the kind is a `BuildingDef` flag.**
 
 - **The commons** — `once`, never in the menu, never removable, never movable.
   It stands where the kingdom began.
-- **`unique: true`** — Lodge, Quarry, Farm, Windmill, Bakery. One at a time.
+- **`unique: true`** — Lodge, Quarry, Farm, Windmill, Bakery, Forge. One at a
+  time.
   They grow through improvement rather than duplication, and rather than
   building a second you **move** the one you have.
 - **`maxCount: [...]`** — Cabin and Storehouse, indexed by the commons' level.
@@ -572,10 +620,10 @@ never collapses" actually true.
 It applies to **workshops as well as gatherers**, and that was missing for a
 long time without showing: a mill with wheat coming in and no bakery built yet
 ground every last sheaf into flour, filled the store with it, and left the
-stoneworkers who would have quarried the stone the bakery was waiting on with
-nowhere to put anything down. `planProduce` checks the glut before it runs a
-batch or fetches inputs, and `planHelper`'s restock step will not carry wheat to
-a mill that has stopped. Clearing the output shelf is deliberately *not* gated —
+miners who would have cut the stone the bakery was waiting on with nowhere to
+put anything down. `chooseRecipe` checks the glut before a workshop starts
+anything, and `planHelper`'s restock step goes through the same function, so it
+will not carry wheat to a mill that has stopped or coal to a forge that has. Clearing the output shelf is deliberately *not* gated —
 a workshop that has already made the stuff still gets it carried off.
 
 Hand-gathering has the same idea in `gatherTarget()`: the flat target (120 wood)
@@ -592,6 +640,24 @@ costs.
 `NODE_WORK` list trees and nothing else, so there is no path through
 `planGatherNode` that produces stone and no way for a helper to find one.
 See "Stone comes from a quarry" below.
+
+**A workshop may know several recipes, and the forge does.** `recipesOf` answers
+for both shapes — `recipe` for the buildings with one, `recipes` for the forge —
+and everything downstream reads inputs as a *set* rather than as
+`Object.keys(inputs)[0]`, because Steel is one iron bar and two coal and a panel
+that shows one of those is how somebody concludes their forge is broken. A
+`batch` step carries the output it is paying for, since by the time it lands the
+building may be minded to do something else. A recipe with `locked: true` — the
+mithril one — is shown greyed and never run.
+
+**Balanced is not "equal piles".** `chooseExtraction` and `chooseRecipe` both
+pick whatever the kingdom is furthest below wanting, measured against
+`BALANCE_TARGET` rather than against each other, because a kingdom wants far
+more stone than it does ore. A focus is a *preference*: if the favoured material
+is glutted the building quietly works on something else rather than stopping,
+which is the same nothing-is-ever-punishing rule as everywhere else. `Focus`
+lives on the `Building`, is saved, and `focusOptions` offers only what this
+building at this level can actually produce.
 
 **Putting a load down never fails.** `deposit()` is clipped by capacity, but
 `deliver()` — what a villager carrying goods actually calls — always accepts the
@@ -927,7 +993,11 @@ these is mostly new data in `defs.ts` plus a system module, not surgery.
 
 Also unbuilt and worth knowing: there is currently no Carpenter, Scholar,
 Merchant or Animal Keeper profession (the `keeper` job id exists but nothing
-uses it), and `coin` has no sink beyond a single goal reward.
+uses it), and `coin` has no sink beyond a single goal reward. **Iron and steel
+bars have no sink either** — the chain is the content for now, exactly as the
+coin is. Mithril is a step further out: the resources, the Mithril Mine and the
+forge's mithril recipe are all written down and none of them is reachable, and
+`simcheck` fails the run if any mithril ever exists.
 
 ---
 
@@ -946,11 +1016,25 @@ break boulders for stone the way they fell trees for wood. They cannot any more:
 stone is the Quarry's alone, and the whole early game is shaped by that one
 dependency. `NODE_WORK` lists trees and nothing else, so there is no code path
 left to reintroduce it by accident. If the run-up to a quarry ever needs to be
-gentler, tune the quarry — its cost, its reach, how fast a stoneworker swings —
-not the rule.
+gentler, tune the quarry — its cost, its reach, how fast a miner swings — not
+the rule.
 
-**A second Lodge, Quarry, Farm, Windmill or Bakery is gone, and is not coming
-back.** These are institutions rather than production units. If one is in a bad
+**Boulders as a renewable resource are gone, and are not coming back.** They
+used to be the quarry's nodes and to regrow from rubble on a timer. Now nothing
+harvests one, nothing regrows one, and the mine takes its material from the rock
+underneath instead. Surface rock being finite is what gives the early kingdom a
+clock; the mine's seam being endless is what stops that clock ever becoming a
+dead end. Reintroducing regrowth would quietly undo both.
+
+**Separate workers per material are gone before they arrived, and so are
+tools.** One `miner` works whatever the mine has reached, one `smith` works
+whatever the forge is set to. No pickaxes, no hatchets, no inventories, no
+durability, no replacing anything. If a material ever needs to feel harder to
+get, that is a number on the building, not a new class of person or a thing to
+carry.
+
+**A second Lodge, Quarry, Farm, Windmill, Bakery or Forge is gone, and is not
+coming back.** These are institutions rather than production units. If one is in a bad
 spot the answer is to move it, which keeps its level, its name, its workers and
 its history; a duplicate would weaken all of that and quietly become the
 optimal strategy besides. Adding a new principal production building means
@@ -995,13 +1079,16 @@ storehouse · housing is Cabins (2 / 4 / 6 beds) plus the commons' two beds
 outdoors, which never increase · the kingdom keeps as many Cabins and
 Storehouses as the commons has levels, 1 each at Base Camp up to 4 each at
 Kingdom Commons, and exactly one of each principal production building · a lodge
-or quarry reaches 13 tiles, 17 once improved · founding itself is about a minute
+or quarry reaches 13 tiles, and the mine's seam 13 / 15 / 17 / 19 as it is sunk
+deeper · a mine works at full pace on 70 rocky tiles inside that reach and at
+0.55× on none, never at nothing · the forge is 1 ore → 1 iron bar with no coal
+at all, and 1 iron bar + 2 coal → 1 steel bar · founding itself is about a minute
 and a half at 1×, twenty seconds of it the walk up the beach and twenty the tree
 · a generated island carries at least 55 trees and 26 boulders within 14 tiles of
 the middle, a choice of at least 6 legal campsites, at least 4 trees within 9
 tiles of where the kingdom begins — the nearest about 3 — and at least 3 places a
-quarry could stand and reach 14 boulders (in practice a hundred or more, the best
-of them reaching forty to ninety).
+quarry could legally stand with 25 tiles of rock inside its reach (in practice
+fifty or more such sites, the best of them reaching 127 to 187 tiles of rock).
 
 Per-resource shelf limits — one good never taking more than a share of the
 store — have been discussed and deliberately deferred. Any such limit has to

@@ -989,6 +989,11 @@ export class UI {
       case 'move-home':
         this.game.setHome(id, Number(target.value));
         break;
+      // What a mine or a forge is concentrating on. Nothing is spent and nothing
+      // is lost, so there is no confirmation and no way to get it wrong.
+      case 'set-focus':
+        this.game.setFocus(id, target.value);
+        break;
       case 'set-bubbles':
         this.game.updateSettings({ showBubbles: target.checked });
         break;

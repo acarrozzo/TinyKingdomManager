@@ -27,7 +27,7 @@ import { updateWildlife } from '../src/sim/wildlife';
 import { updatePopulation } from '../src/sim/population';
 import { atBuildLimit, availableToBuild, buildLimit, updateGoals } from '../src/sim/goals';
 import { chooseCamp, suggestCamp } from '../src/sim/founding';
-import { updateTerrain, tileAt } from '../src/world/terrain';
+import { updateTerrain, tileAt, touchesRock } from '../src/world/terrain';
 import {
   BUILDINGS,
   CARRY_CAPACITY,
@@ -40,6 +40,7 @@ import {
 } from '../src/sim/defs';
 import { rng } from '../src/core/util';
 import type { Building, BuildingId, GameState } from '../src/types';
+import { STORED_RESOURCES } from '../src/types';
 import { seasonForDay } from '../src/sim/state';
 import { serialize } from '../src/save/save';
 import { writeFileSync } from 'node:fs';
@@ -49,6 +50,9 @@ const g = newGame(Number(process.argv[3] ?? 12345));
 
 function place(def: BuildingId, x: number, y: number): boolean {
   const d = BUILDINGS[def];
+  // The mine works the ground it stands on, so the harness may no more drop one
+  // on a meadow than the player can.
+  if (d.needsRock && !touchesRock(g, x, y, d.w, d.h)) return false;
   for (let dy = 0; dy < d.h; dy++)
     for (let dx = 0; dx < d.w; dx++) {
       const t = tileAt(g, x + dx, y + dy);
@@ -88,6 +92,7 @@ function findSpot(def: BuildingId, near: { x: number; y: number }, minR = 3, max
             break;
           }
         }
+      if (ok && d.needsRock && !touchesRock(g, x, y, d.w, d.h)) ok = false;
       if (ok) return { x, y };
     }
   }
@@ -96,7 +101,7 @@ function findSpot(def: BuildingId, near: { x: number; y: number }, minR = 3, max
 
 /** Plays the kingdom the way a player would, reacting to what it needs. */
 function usedStorage(state: GameState): number {
-  return ['wood', 'stone', 'wheat', 'flour', 'bread'].reduce((n, k) => n + state.stock[k as 'wood'], 0);
+  return STORED_RESOURCES.reduce((n, k) => n + state.stock[k], 0);
 }
 
 /** Starts an improvement on the least-improved building of a kind, if allowed. */
@@ -212,6 +217,19 @@ function autoplay(state: GameState): void {
   const fire = { x: heart.x + 1, y: heart.y + 1 };
   const has = (def: BuildingId) => state.buildings.some((b) => b.def === def);
   const done = (def: BuildingId) => state.buildings.some((b) => b.def === def && b.stage === 'done');
+
+  /*
+   * Staffing first, and never gated on whether something is being built.
+   *
+   * It used to sit at the foot of this function, after an early return that
+   * fires whenever any site is under way — which meant a site the kingdom could
+   * not yet pay for froze the whole harness: nobody could be put on the mine,
+   * so no stone was cut, so the site stayed unpaid, for the rest of the run.
+   * A player looking at a stalled extension does not stand and watch it; they
+   * go and put somebody on the thing that makes what it is waiting for.
+   */
+  staff(state);
+
   const building = state.buildings.some((b) => b.stage === 'building');
   if (building) return;
 
@@ -252,6 +270,7 @@ function autoplay(state: GameState): void {
   if (!has('farm')) wants.push('farm');
   if (!has('mill')) wants.push('mill');
   if (!has('bakery')) wants.push('bakery');
+  if (!has('forge')) wants.push('forge');
   if (beds - state.villagers.length < 2 && !improve(state, 'cabin')) wants.push('cabin');
   /*
    * Once bread is coming out of an oven a player starts making the place nice,
@@ -267,6 +286,10 @@ function autoplay(state: GameState): void {
   // the progression now, so the harness leans on it before anything else — a
   // run that never gets past a Base Camp is a run that never sees a storehouse.
   improve(state, 'commons');
+  // And sink the mine deeper whenever the kingdom has earned it. It is the other
+  // ladder in the game, and a run that never gets past a Quarry is a run that
+  // never sees iron, a forge or a single bar.
+  improve(state, 'quarry');
   considerMove(state);
 
   // Improving a storehouse is what a player does when they are allowed only so
@@ -285,15 +308,17 @@ function autoplay(state: GameState): void {
     let afford = true;
     for (const k in cost) if (state.stock[k as 'wood'] < (cost[k as 'wood'] ?? 0)) afford = false;
     if (!afford) continue;
-    // Woodcutters want trees; quarries want rock.
+    // Woodcutters want trees; the mine wants rocky ground under it, which is a
+    // terrain now rather than a prop — the boulders lying on it are scenery.
     let near = { x: fire.x, y: fire.y };
     if (def === 'lodge' || def === 'quarry') {
-      const target = def === 'lodge' ? 'tree' : 'boulder';
       let best: { x: number; y: number } | null = null;
       let bestD = Infinity;
       for (let y = 0; y < state.h; y++)
         for (let x = 0; x < state.w; x++) {
-          if (state.tiles[y * state.w + x].prop !== target) continue;
+          const t = state.tiles[y * state.w + x];
+          const wanted = def === 'lodge' ? t.prop === 'tree' : t.terrain === 'rocky';
+          if (!wanted) continue;
           const d = (x - fire.x) ** 2 + (y - fire.y) ** 2;
           if (d < bestD) {
             bestD = d;
@@ -310,36 +335,49 @@ function autoplay(state: GameState): void {
     break;
   }
 
-  // Staff buildings the way a player would: food chain first, and never let a
-  // single trade swallow every free pair of hands.
-  //
-  // The quarry outranks the lodge, and that is not a preference but the shape
-  // of the economy: any helper with nothing better to do will fell a tree, and
-  // no helper can break a boulder, so an unstaffed lodge costs the kingdom some
-  // speed while an unstaffed quarry costs it stone altogether — and stone is
-  // what every cabin, every commons and half the workshops are waiting on.
-  const priority: BuildingId[] = ['bakery', 'mill', 'farm', 'quarry', 'lodge'];
-  const softCap: Partial<Record<BuildingId, number>> = { lodge: 2, quarry: 2, farm: 2, mill: 1, bakery: 2 };
+  void done;
+}
 
-  for (const def of priority) {
+/*
+ * Staff buildings the way a player would: the mine and the food chain first,
+ * and never let a single trade swallow every free pair of hands.
+ *
+ * The mine leads, and that is not a preference but the shape of the economy:
+ * any helper with nothing better to do will fell a tree, and no helper can cut
+ * stone, so an unstaffed lodge costs the kingdom some speed while an unstaffed
+ * mine costs it stone altogether — and stone is what every cabin, every commons
+ * and half the workshops are waiting on. The forge comes last, because nothing
+ * is yet waiting on a bar.
+ */
+const PRIORITY: BuildingId[] = ['quarry', 'bakery', 'mill', 'farm', 'lodge', 'forge'];
+const SOFT_CAP: Partial<Record<BuildingId, number>> = {
+  lodge: 2,
+  quarry: 2,
+  farm: 2,
+  mill: 1,
+  bakery: 2,
+  forge: 1,
+};
+
+function staff(state: GameState): void {
+  for (const def of PRIORITY) {
     for (const b of state.buildings) {
       if (b.def !== def || b.stage !== 'done') continue;
       const d = BUILDINGS[b.def];
       if (!d.slots || !d.job) continue;
-      const slots = Math.min(d.slots[Math.min(b.level, d.slots.length) - 1], softCap[def] ?? 99);
+      const slots = Math.min(d.slots[Math.min(b.level, d.slots.length) - 1], SOFT_CAP[def] ?? 99);
       while (b.workers.length < slots) {
         // Always keep a third of the kingdom free for hauling and building.
         const helpers = state.villagers.filter((v) => v.workplace === 0);
         if (helpers.length <= Math.max(1, Math.floor(state.villagers.length / 3))) {
-          rebalance(state, priority);
+          rebalance(state, PRIORITY);
           return;
         }
         if (!assignJob(state, helpers[0], b.id)) return;
       }
     }
   }
-  rebalance(state, priority);
-  void done;
+  rebalance(state, PRIORITY);
 }
 
 /**
@@ -407,7 +445,10 @@ const line = (s = '') => console.log(s);
 line(`\n=== ${minutes} game-minutes simulated (${(minutes / 30).toFixed(1)} kingdom days) ===\n`);
 line(`Day ${g.day}, ${g.season} of year ${g.year}   ·   population ${g.villagers.length}`);
 line(`Storage ${Object.entries(g.stock).map(([k, v]) => `${k} ${Math.floor(v)}`).join('  ')}   (cap ${storageCapacity(g)})`);
-line(`Stats: built ${g.stats.built}  harvested ${g.stats.harvested}  baked ${g.stats.baked}  arrivals ${g.stats.arrivals}`);
+line(
+  `Stats: built ${g.stats.built}  harvested ${g.stats.harvested}  baked ${g.stats.baked}` +
+    `  mined ${Math.floor(g.stats.mined)}  smelted ${Math.floor(g.stats.smelted)}  arrivals ${g.stats.arrivals}`,
+);
 
 /*
  * People and Vibes. Beds are the only cap there is, and Vibes are the only
@@ -517,7 +558,7 @@ for (const k in g.stock) {
   if (val < -0.001) problems.push(`negative ${k}: ${val}`);
   if (!Number.isFinite(val)) problems.push(`non-finite ${k}`);
 }
-const used = ['wood', 'stone', 'wheat', 'flour', 'bread'].reduce((n, k) => n + g.stock[k as 'wood'], 0);
+const used = usedStorage(g);
 // A full store may be overshot by whatever was already in people's arms — loads
 // already carried are always allowed to land. Anything beyond that is a leak.
 const inFlight = g.villagers.length * CARRY_CAPACITY;
@@ -539,6 +580,37 @@ for (const v of g.villagers) {
 // a chisel — and the whole shape of the early game rests on there being none.
 if (!g.buildings.some((b) => b.def === 'quarry') && g.stock.stone > 0) {
   problems.push(`${Math.floor(g.stock.stone)} stone in a kingdom with no quarry`);
+}
+
+/*
+ * Everything else out of the ground has exactly one source too, and it is the
+ * same building at a particular depth. Ore in a kingdom whose mine is still a
+ * quarry, or coal before there is a Deep Mine, means a level gate leaked — and
+ * the ladder is the whole of the mid-game.
+ */
+{
+  const mine = g.buildings.find((b) => b.def === 'quarry' && b.stage === 'done');
+  const depth = mine?.level ?? 0;
+  if (depth < 2 && g.stock.ironOre > 0) problems.push(`${Math.floor(g.stock.ironOre)} iron ore without an Iron Mine`);
+  if (depth < 3 && g.stock.coal > 0) problems.push(`${Math.floor(g.stock.coal)} coal without a Deep Mine`);
+  if (!g.buildings.some((b) => b.def === 'forge') && g.stock.ironBar + g.stock.steelBar > 0) {
+    problems.push('bars in a kingdom with no forge');
+  }
+}
+
+// Mithril is written down and nothing produces it. If any ever turns up, the
+// level-4 gate or the extraction filter has come undone.
+if (g.stock.mithrilOre > 0 || g.stock.mithrilBar > 0) {
+  problems.push('mithril exists, and it is not supposed to');
+}
+
+// Boulders never come back. A tile holding rubble with a regrow timer on it
+// means something is still treating surface rock as a renewable node.
+for (const t of g.tiles) {
+  if (t.prop === 'pebbles' && t.regrow > 0) {
+    problems.push('rubble is counting down to becoming a boulder again');
+    break;
+  }
 }
 
 /*

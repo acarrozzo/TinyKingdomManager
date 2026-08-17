@@ -34,9 +34,14 @@ const SETTINGS_KEY = 'tkm.settings';
  * now allowed, and its quarry was bought partly with stone that nothing in this
  * version could have produced — so its economy is not one this version could
  * ever have arrived at.
+ * 7: the quarry became a mine that grows — Quarry, Iron Mine, Deep Mine — and
+ * six materials exist that did not: iron ore, coal, iron bars, steel bars and
+ * the two mithril entries nothing yet produces. A version 6 quarry harvested
+ * boulders that regrew; this one cuts into the ground it stands on and boulders
+ * never come back. Neither the stores nor the buildings mean the same thing.
  * Older files are refused rather than guessed at.
  */
-export const SAVE_VERSION = 6;
+export const SAVE_VERSION = 7;
 
 export interface SlotInfo {
   id: string;
@@ -201,6 +206,11 @@ export function serialize(g: GameState): SavePayload {
       residents: b.residents,
       plots: b.plots.map((p) => ({ x: p.x, y: p.y, state: p.state, growth: p.growth })),
       upgrading: b.upgrading,
+      // What the mine or the forge has been told to concentrate on. Saved
+      // because it is a decision the player made about a particular building,
+      // and finding it back at Balanced after a reload would read as the game
+      // having quietly overruled them.
+      focus: b.focus,
       // A move under way is two records pointing at each other, and both ends
       // are saved: closing the tab in the middle of moving the quarry should
       // find it still on its way, not silently back where it started.
@@ -411,7 +421,7 @@ export function deserialize(raw: unknown): GameState {
     wildlife: reviveWildlife(p.wildlife),
     founderId: p.founderId ?? 0,
     founding: p.founding,
-    stats: p.stats ?? { built: 0, harvested: 0, baked: 0, arrivals: 1 },
+    stats: { built: 0, harvested: 0, baked: 0, arrivals: 1, mined: 0, smelted: 0, ...(p.stats ?? {}) },
     nameSeq: 0,
   };
 

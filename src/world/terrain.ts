@@ -7,11 +7,18 @@ import { TERRAIN_SPEED } from '../sim/defs';
 export const MAP_W = 40;
 export const MAP_H = 40;
 
-/** Tree/boulder yields and regrowth pacing, in game seconds. */
+/**
+ * What a node holds, and how long a felled tree takes to come back.
+ *
+ * There is no boulder equivalent, and there must not be one. Surface boulders
+ * are finite: nothing puts one back, and one built over is gone for good. What
+ * the kingdom mines comes out of the rocky *ground* a quarry stands on, which
+ * does not run out at all — so the finite thing is scenery and the endless thing
+ * is a building somebody had to site properly.
+ */
 export const TREE_WOOD = 18;
 export const BOULDER_STONE = 24;
 export const TREE_REGROW = 60 * 60 * 1.2;
-export const BOULDER_REGROW = 60 * 60 * 2.0;
 
 /**
  * How far from the middle of the island the centre of the Base Camp may be, in
@@ -594,7 +601,14 @@ export function findNode(
   return best;
 }
 
-/** Advances node regrowth. Depleted trees leave stumps that quietly come back. */
+/**
+ * Advances node regrowth. Depleted trees leave stumps that quietly come back.
+ *
+ * Trees, and only trees. Pebbles are not on a timer and never turn back into a
+ * boulder: surface rock is finite by design, which is what makes sinking a
+ * quarry — whose seam is endless — the thing the early kingdom is working
+ * towards rather than a convenience.
+ */
 export function updateTerrain(g: GameState, dt: number): void {
   // Sampled rather than exhaustive: the whole map every few seconds is plenty.
   const stride = 8;
@@ -608,17 +622,58 @@ export function updateTerrain(g: GameState, dt: number): void {
         if (t.prop === 'stump') {
           t.prop = 'tree';
           t.amount = TREE_WOOD;
-        } else if (t.prop === 'pebbles') {
-          // Anywhere, not only on rocky ground. Rubble with a timer on it is
-          // rubble left by a worked-out boulder, wherever that boulder happened
-          // to stand — and generation scatters plenty of them onto grass. The
-          // old terrain test quietly made those a one-off, which was survivable
-          // while stone could be picked up by hand and is not now that the
-          // quarry is the only source there is.
-          t.prop = 'boulder';
-          t.amount = BOULDER_STONE;
         }
       }
     }
   }
+}
+
+/**
+ * How much rocky ground lies inside a circle of tiles — the seam a mine placed
+ * here would be working, and the one number that decides how fast it works.
+ *
+ * The distance is tested rather than only the bounding box, because a square
+ * would make "thirteen tiles" eighteen at the corners, and this is a figure the
+ * placement bar says out loud.
+ */
+export function rockInRange(
+  g: { tiles: Tile[]; w: number; h: number },
+  cx: number,
+  cy: number,
+  radius: number,
+): number {
+  let n = 0;
+  const r2 = radius * radius;
+  const x0 = clamp(Math.floor(cx - radius), 0, g.w - 1);
+  const x1 = clamp(Math.ceil(cx + radius), 0, g.w - 1);
+  const y0 = clamp(Math.floor(cy - radius), 0, g.h - 1);
+  const y1 = clamp(Math.ceil(cy + radius), 0, g.h - 1);
+  for (let y = y0; y <= y1; y++)
+    for (let x = x0; x <= x1; x++) {
+      if (g.tiles[y * g.w + x].terrain !== 'rocky') continue;
+      if ((x - cx) ** 2 + (y - cy) ** 2 > r2) continue;
+      n++;
+    }
+  return n;
+}
+
+/**
+ * Whether a footprint here would be on or against rock. "Against" is the ring of
+ * tiles immediately around it, so a quarry can sit beside a rock face rather
+ * than having to be built on top of one — which on a lot of islands would mean
+ * building it somewhere nobody can walk to.
+ */
+export function touchesRock(
+  g: { tiles: Tile[]; w: number; h: number },
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+): boolean {
+  for (let ty = y - 1; ty <= y + h; ty++)
+    for (let tx = x - 1; tx <= x + w; tx++) {
+      if (!inBounds(g, tx, ty)) continue;
+      if (g.tiles[ty * g.w + tx].terrain === 'rocky') return true;
+    }
+  return false;
 }

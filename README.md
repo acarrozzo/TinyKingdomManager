@@ -21,14 +21,17 @@ The brief's "Initial Scope" loop, built end to end and balanced against a
 headless simulator (see [Development tools](#development-tools)).
 
 **The world.** A 40×40 isometric island generated per save: woodland, meadow,
-rocky ground, a pond, and a beach. Trees and boulders are real resource nodes
-that deplete, leave stumps and rubble, and slowly grow back.
+rocky ground, a pond, and a beach. Trees are real resource nodes that deplete,
+leave stumps and grow back. Surface boulders do not: they are finite, and one
+built over is gone for good. Everything the kingdom digs up comes instead out of
+the rocky ground a mine stands on, which does not run out.
 
-**The loop.** One villager → choose a campsite → gather fallen branches → the
-first fire is lit there → Small Chest → Cabin → Storehouse →
-Woodcutter's Lodge → Quarry → Wheat Farm → Windmill → Bakery. Wheat becomes
-flour becomes bread, and every step of that is carried across the map on foot by
-someone you can click on.
+**The loop.** One villager → choose a campsite → fell one tree by hand → the
+Base Camp goes up on that load → Cabin → Storehouse → Woodcutter's Lodge →
+Quarry → Wheat Farm → Windmill → Bakery, and then the mine sunk deeper into an
+Iron Mine and a Deep Mine with a Forge behind it. Wheat becomes flour becomes
+bread; ore becomes iron becomes steel. Every step of that is carried across the
+map on foot by someone you can click on.
 
 **Construction.** Nothing appears when you buy it. A placed building becomes a
 site with corner posts; villagers haul the materials over, then put in the
@@ -42,7 +45,7 @@ much of the day your workers spend walking. A full store stops people gathering 
 someone putting down what they are already holding, so the meter can read a
 little over its limit while the last loads come in.
 
-**Jobs and experience.** Helper, Woodcutter, Stoneworker, Farmer, Miller, Baker.
+**Jobs and experience.** Helper, Woodcutter, Miner, Farmer, Miller, Baker, Smith.
 Experience accrues per profession, only from doing the work, and is kept
 forever — Novice / Adept / Journeyman / Expert / Master. Moving a master farmer
 to the mill costs you their farming output, not their farming history. Skill is

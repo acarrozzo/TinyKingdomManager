@@ -9,6 +9,7 @@ import type {
   Animal,
   Building,
   BuildingId,
+  Focus,
   GameState,
   ResourceId,
   Season,
@@ -21,6 +22,7 @@ import {
   DAYS_PER_SEASON,
   JOB_META,
   buildingName,
+  focusOptions,
   rangeOf,
   relocateCost,
   upgradeCostOf,
@@ -38,6 +40,7 @@ import {
   seasonForDay,
   setHome as setVillagerHome,
   storageCapacity,
+  storageUsed,
   villagerById,
 } from './sim/state';
 import { completeConstruction, siteNeeds, updateVillagers } from './sim/villager';
@@ -52,7 +55,7 @@ import { updateWildlife, rebuildHabitat } from './sim/wildlife';
 import { updatePopulation } from './sim/population';
 import { updateGoals, availableToBuild, buildLimit } from './sim/goals';
 import { journal, toast, updateToasts } from './sim/journal';
-import { tileAt, updateTerrain } from './world/terrain';
+import { rockInRange, tileAt, touchesRock, updateTerrain } from './world/terrain';
 import { toScreenX, toScreenY } from './world/iso';
 import { Camera } from './render/camera';
 import { Renderer, type RenderOptions } from './render/renderer';
@@ -463,27 +466,33 @@ export class Game {
     }
     if (!def) return null;
     const d = BUILDINGS[def];
-    if (!d.harvests) return null;
+    // Two things draw a ring, and they mark different ground inside it: a lodge
+    // marks the trees its people will walk to, a mine marks the rock its seam
+    // runs through. Everything else has no reach worth showing.
+    if (!d.harvests && !d.extracts) return null;
     return {
       cx: spot.x + (d.w - 1) / 2,
       cy: spot.y + (d.h - 1) / 2,
       radius: rangeOf(def, level),
-      prop: d.harvests,
+      prop: d.harvests ?? null,
+      terrain: d.extracts ? 'rocky' : null,
     };
   }
 
   /**
-   * How many live nodes a building of this kind would have inside its reach if
-   * it stood here. The placement bar says the number out loud, because a ring
-   * with four trees in it and a ring with forty look much the same at a glance.
+   * What a building of this kind would have inside its reach if it stood here —
+   * live nodes for a lodge, rocky tiles for a mine. The placement bar says the
+   * number out loud, because a ring with four trees in it and a ring with forty
+   * look much the same at a glance.
    */
   nodesInRange(def: BuildingId, level: number, x: number, y: number): number {
     const d = BUILDINGS[def];
-    if (!d.harvests) return 0;
     const g = this.state;
     const cx = x + (d.w - 1) / 2;
     const cy = y + (d.h - 1) / 2;
     const r = rangeOf(def, level);
+    if (d.extracts) return rockInRange(g, cx, cy, r);
+    if (!d.harvests) return 0;
     let n = 0;
     for (let ty = Math.max(0, Math.floor(cy - r)); ty <= Math.min(g.h - 1, Math.ceil(cy + r)); ty++)
       for (let tx = Math.max(0, Math.floor(cx - r)); tx <= Math.min(g.w - 1, Math.ceil(cx + r)); tx++) {
@@ -493,6 +502,26 @@ export class Game {
         n++;
       }
     return n;
+  }
+
+  /**
+   * Tells a building what to concentrate on. Free, instant and reversible: no
+   * work is thrown away, nobody is reassigned, and setting it back to Balanced
+   * costs exactly as little as setting it in the first place.
+   */
+  setFocus(id: number, focus: string): void {
+    const b = buildingById(this.state, id);
+    if (!b) return;
+    const allowed = focusOptions(b.def, b.level);
+    if (!allowed.includes(focus as Focus)) return;
+    b.focus = focus as Focus;
+    // Everybody there re-decides at once, or the change does not visibly happen
+    // until whoever is mid-stint finishes it.
+    for (const wid of b.workers) {
+      const v = villagerById(this.state, wid);
+      if (v) abandonPlan(this.state, v);
+    }
+    this.notify();
   }
 
   // -------------------------------------------------------------------------
@@ -896,6 +925,13 @@ export class Game {
         }
         if (t.plot && t.plot !== ignoreId) return 'A farm plot is in the way.';
       }
+    // The mine works the ground it stands on, so it has to be standing on some.
+    // Said as a fact about this spot rather than as a rule, like every other
+    // refusal here — and with the thing to look for, since rocky ground is not
+    // always obvious at a glance from three zoom levels out.
+    if (d.needsRock && !touchesRock(g, x, y, d.w, d.h)) {
+      return 'No rock here to work. It has to sit on rocky ground, or right against it.';
+    }
     return null;
   }
 
@@ -1467,9 +1503,11 @@ export class Game {
   // -------------------------------------------------------------------------
 
   storageInfo(): { used: number; cap: number } {
-    let used = 0;
-    for (const res of ['wood', 'stone', 'wheat', 'flour', 'bread'] as ResourceId[]) used += this.state.stock[res];
-    return { used, cap: storageCapacity(this.state) };
+    // Through `storageUsed`, which reads `STORED_RESOURCES`, rather than a list
+    // kept by hand here. The hand-kept one stopped naming everything the moment
+    // ore and coal existed, and a store meter that under-reports by six
+    // materials reads "half full" at the exact moment nobody can gather.
+    return { used: storageUsed(this.state), cap: storageCapacity(this.state) };
   }
 
   selectedVillager(): Villager | null {

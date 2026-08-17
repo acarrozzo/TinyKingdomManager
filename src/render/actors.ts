@@ -392,8 +392,10 @@ function jobGlyph(g: GameState, v: Villager, fallback: string): string {
     switch (BUILDINGS[b.def].job) {
       case 'woodcutter':
         return 'axe';
-      case 'stoneworker':
+      case 'miner':
         return 'pick';
+      case 'smith':
+        return 'hammer';
       case 'farmer':
         return 'wheat';
       case 'miller':

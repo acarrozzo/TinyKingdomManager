@@ -3,10 +3,12 @@
 import type {
   BuildingDef,
   BuildingId,
+  Focus,
   GameState,
   JobId,
   PropId,
   Rank,
+  Recipe,
   ResourceId,
   SpeciesDef,
   SpeciesId,
@@ -79,6 +81,13 @@ export const RESOURCE_META: Record<string, { name: string; icon: string; color: 
   wheat: { name: 'Wheat', icon: '🌾', color: '#e0b95c' },
   flour: { name: 'Flour', icon: '🥣', color: '#e8dcc4' },
   bread: { name: 'Bread', icon: '🍞', color: '#c98a4b' },
+  // Processed metal is a Bar. Not an ingot, anywhere, ever.
+  ironOre: { name: 'Iron Ore', icon: '🟤', color: '#8d6a52' },
+  coal: { name: 'Coal', icon: '⚫', color: '#4a4a4e' },
+  ironBar: { name: 'Iron Bar', icon: '🔩', color: '#9fa6ad' },
+  steelBar: { name: 'Steel Bar', icon: '🔗', color: '#c2cbd6' },
+  mithrilOre: { name: 'Mithril Ore', icon: '🔷', color: '#7fb6cf' },
+  mithrilBar: { name: 'Mithril Bar', icon: '💠', color: '#a8e0f0' },
   coin: { name: 'Coins', icon: '🪙', color: '#f0c860' },
 };
 
@@ -89,7 +98,7 @@ export const RESOURCE_INFO: Record<string, { from: string; used: string }> = {
     used: 'Nearly every building, from a cabin at 20 up to a windmill at 50, and every step the commons takes.',
   },
   stone: {
-    from: 'Stoneworkers at the quarry, and nowhere else. Boulders are too much for bare hands; until there is a quarry they simply stand there being scenery.',
+    from: 'Miners cutting it out of the rocky ground the quarry stands on, and nowhere else. The loose boulders lying about are scenery — too much for bare hands, and gone for good once anything is built over one.',
     used: 'Improving the commons or a cabin, wells, and the workshops further along the chain.',
   },
   wheat: {
@@ -104,6 +113,30 @@ export const RESOURCE_INFO: Record<string, { from: string; used: string }> = {
     from: 'The bakery, three loaves a batch.',
     used: 'Eaten. It is the only thing anybody eats, so keep some in store.',
   },
+  ironOre: {
+    from: 'The mine, once it has been sunk deep enough to be an Iron Mine. The same miners bring it up as bring up the stone.',
+    used: 'Smelted into iron bars at the forge, one for one, with no coal wanted.',
+  },
+  coal: {
+    from: 'A Deep Mine, which is the third thing the mine becomes. Nothing else in the kingdom turns any up.',
+    used: 'Only the forge burns it, and only for steel: two coal to every iron bar going into one.',
+  },
+  ironBar: {
+    from: 'The forge, one bar from one iron ore. No coal is needed for this part, which surprises people.',
+    used: 'The heavier building work, and the first half of every steel bar.',
+  },
+  steelBar: {
+    from: 'The forge again: one iron bar and two coal make one steel bar.',
+    used: 'Nothing yet. It piles up handsomely and waits for the kingdom to think of something.',
+  },
+  mithrilOre: {
+    from: 'Nowhere. There is talk of a seam under the deep workings, and talk is as far as it has got.',
+    used: 'Nothing, since there is none of it.',
+  },
+  mithrilBar: {
+    from: 'Nowhere yet. The forge would want one mithril ore and four coal, if there were any ore.',
+    used: 'Nothing, since there is none of it.',
+  },
   coin: {
     from: 'Set aside now and then when the kingdom reaches something.',
     used: 'Nothing yet. They sit in a tin and wait for a use.',
@@ -114,13 +147,18 @@ export const JOB_META: Record<JobId, { name: string; icon: string; desc: string 
   helper: {
     name: 'Helper',
     icon: '🧺',
-    desc: 'Fells trees by hand, hauls goods between buildings, and helps raise new construction. Stone is beyond bare hands; that wants a quarry.',
+    desc: 'Fells trees by hand, hauls goods between buildings, and helps raise new construction. Anything out of the ground is beyond bare hands; that wants a mine.',
   },
   woodcutter: { name: 'Woodcutter', icon: '🪓', desc: 'Fells trees near the lodge and carries wood to storage.' },
-  stoneworker: { name: 'Stoneworker', icon: '⛏️', desc: 'Works the boulders near the quarry for stone.' },
+  miner: {
+    name: 'Miner',
+    icon: '⛏️',
+    desc: 'Cuts stone out of the rock at the mine — and iron ore, and coal, as the mine goes deeper. One trade for the lot of it.',
+  },
   farmer: { name: 'Farmer', icon: '🌱', desc: 'Sows and harvests the wheat plots around the farm.' },
   miller: { name: 'Miller', icon: '🌬️', desc: 'Grinds wheat into flour at the windmill.' },
   baker: { name: 'Baker', icon: '👩‍🍳', desc: 'Turns flour into bread the whole kingdom eats.' },
+  smith: { name: 'Smith', icon: '🔥', desc: 'Smelts ore into iron bars at the forge, and iron bars into steel.' },
   keeper: { name: 'Keeper', icon: '🐾', desc: 'Looks after the kingdom’s animals.' },
 };
 
@@ -164,9 +202,14 @@ export function xpGain(current: number, seconds: number): number {
   return seconds * 0.05 * falloff;
 }
 
-/** A finished building of a kind, for the requirement predicates below. */
+/**
+ * A finished building of a kind, for the requirement predicates below. One that
+ * is mid-improvement still counts: it is standing, it is working, and a
+ * requirement that blinked off while somebody put a chimney on a cabin would be
+ * telling the kingdom it had gone backwards.
+ */
 function standing(g: GameState, def: BuildingId): boolean {
-  return g.buildings.some((b) => b.def === def && b.stage === 'done');
+  return g.buildings.some((b) => b.def === def && (b.stage === 'done' || b.upgrading));
 }
 
 /**
@@ -197,8 +240,40 @@ const COMMONS_REQS: UpgradeReq[][] = [
       met: (g) => g.buildings.some((b) => b.stage === 'done' && !!BUILDINGS[b.def].job && b.workers.length > 0),
     },
   ],
-  [{ label: 'A way of building that nobody here knows', met: () => false }],
+  [{ label: 'A way of building that nobody here knows', met: () => false, impossible: true }],
 ];
+
+/**
+ * What the mine must have done before it goes deeper. It is the kingdom's other
+ * ladder — Quarry, Iron Mine, Deep Mine — and it obeys the same two rules the
+ * commons does.
+ *
+ * No step may ask for something the same step unlocks: the Iron Mine is what
+ * hands over the forge, so it is the step *after* that may ask for iron off it.
+ * And every requirement is an accomplishment rather than a stock level, because
+ * what is in the store goes down again the moment anybody builds a cabin.
+ *
+ * The last step is deliberately out of reach, exactly like the Kingdom Commons.
+ * Turning mithril on later is a one-line change to that predicate.
+ */
+const MINE_REQS: UpgradeReq[][] = [
+  [
+    { label: 'A settled camp to work out of', met: (g) => commonsAt(g, 2) },
+    { label: 'Two hundred stone out of this rock', met: (g) => g.stats.mined >= 200 },
+  ],
+  [
+    { label: 'A forge, standing and lit', met: (g) => standing(g, 'forge') },
+    { label: 'Twenty bars off it', met: (g) => g.stats.smelted >= 20 },
+  ],
+  [{ label: 'A seam nobody here has found yet', met: () => false, impossible: true }],
+];
+
+/** The commons at a given level, for the requirements above. */
+function commonsAt(g: GameState, level: number): boolean {
+  return g.buildings.some(
+    (b) => b.def === 'commons' && (b.stage === 'done' || b.upgrading) && b.level >= level,
+  );
+}
 
 export const BUILDINGS: Record<BuildingId, BuildingDef> = {
   commons: {
@@ -301,6 +376,10 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
   quarry: {
     id: 'quarry',
     name: 'Quarry',
+    // One building, sunk deeper. A Quarry cuts stone; an Iron Mine finds ore in
+    // the same rock; a Deep Mine reaches the coal. The fourth name is written
+    // down and openly out of reach, like the Kingdom Commons.
+    levelNames: ['Quarry', 'Iron Mine', 'Deep Mine', 'Mithril Mine'],
     category: 'production',
     w: 2,
     h: 2,
@@ -308,17 +387,61 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     // of stone, so a quarry that cost stone could never be built at all.
     cost: { wood: 30 },
     labour: 60,
-    maxLevel: 2,
-    upgradeCostMul: 2.2,
+    maxLevel: 4,
+    // Explicit rather than a multiplier, because each step wants a material the
+    // step before it could not produce — which is the whole shape of the ladder.
+    // Every one of these has to fit inside the storage the kingdom has by then:
+    // a Settled Camp holds 200, a Village Commons 450.
+    upgradeCosts: [
+      { wood: 70, stone: 45 },
+      { wood: 120, stone: 90, ironBar: 12 },
+      { wood: 200, stone: 160, steelBar: 20 },
+    ],
+    upgradeReqs: MINE_REQS,
     order: 21,
-    desc: 'The only stone in the kingdom comes from here. Place it against rocky ground.',
-    how: 'Stoneworkers break the loose boulders within thirteen tiles of the quarry — seventeen once it is improved — and range further when the near ones are worked out. The reach is drawn on the map while you are placing or moving it, along with every boulder inside it. Worked-out boulders leave rubble, and rubble gathers back into a boulder in time, so a quarry does not exhaust its ground for good. Nothing else in the kingdom produces stone: bare hands will not break a boulder, and clearing one to build on wastes it until this stands. As with wood, stoneworkers down tools and help elsewhere once stone is past about a third of the store. There is only ever one quarry; if the rock around it runs thin, move it.',
-    slots: [2, 3],
-    job: 'stoneworker',
-    harvests: 'boulder',
-    range: [13, 17],
+    desc: 'Everything that comes out of the ground comes out of here. It has to stand on or against rocky ground.',
+    how: 'Miners work the rock the building itself stands on, so it wants rocky ground under it or beside it — the ring drawn while you place it is how far the seam spreads, and the more rock inside that ring the faster the work goes. It does not depend on the loose boulders lying about; those are scenery, they are finite, and building over one is the end of it. The rock underneath is not: a quarry goes on producing indefinitely. Sunk deeper it becomes an Iron Mine, then a Deep Mine, and each step adds a material without taking one away — the same people work it, and nobody needs reassigning. What they bring up is set by the Getting out box on this panel: leave it Balanced and they follow whatever the kingdom is shortest of, or name one material and they will favour it. Changing your mind costs nothing. As with wood, they down tools and go help elsewhere once one material is past about a third of the store. There is only ever one mine; if you have sunk it in the wrong place, move it.',
+    slots: [2, 3, 3, 4],
+    job: 'miner',
+    // Never shrinks. An improvement adds to this list, so a Deep Mine still
+    // brings up stone and the kingdom is never asked to give something up.
+    extracts: [
+      ['stone'],
+      ['stone', 'ironOre'],
+      ['stone', 'ironOre', 'coal'],
+      ['stone', 'ironOre', 'coal', 'mithrilOre'],
+    ],
+    needsRock: true,
+    range: [13, 15, 17, 19],
     unique: true,
     unlock: 'quarry',
+    solid: true,
+  },
+  forge: {
+    id: 'forge',
+    name: 'Forge',
+    category: 'production',
+    w: 2,
+    h: 2,
+    cost: { wood: 45, stone: 60 },
+    labour: 130,
+    maxLevel: 2,
+    upgradeCostMul: 2.0,
+    order: 25,
+    desc: 'Ore becomes iron, and iron becomes steel. Wants an Iron Mine behind it.',
+    how: 'One iron ore makes one iron bar, and that part wants no coal at all — the coal is for the next step, where one iron bar and two coal make one steel bar. There is a third recipe written on the wall, for mithril, and nobody here has ever seen any. The smith fetches their own materials from the store and carries the bars back. Which of the two it is working on is set by the Making box on this panel; left Balanced it smelts ore into iron and only reaches for the coal once there are bars to spare. Short of something, it simply waits — nothing here is spoiled or lost by a shelf running empty. There is one forge, and it can be moved.',
+    slots: [1, 2],
+    job: 'smith',
+    // Iron wants no coal. That is the one thing about this building people get
+    // wrong, so it is the first recipe and the copy says it twice.
+    recipes: [
+      { inputs: { ironOre: 1 }, outputs: { ironBar: 1 }, seconds: 14 },
+      { inputs: { ironBar: 1, coal: 2 }, outputs: { steelBar: 1 }, seconds: 26 },
+      { inputs: { mithrilOre: 1, coal: 4 }, outputs: { mithrilBar: 1 }, seconds: 40, locked: true },
+    ],
+    unique: true,
+    unlock: 'forge',
+    light: [{ x: 1.0, y: 1.3, radius: 46, color: '#ff8a3c' }],
     solid: true,
   },
   farm: {
@@ -531,8 +654,113 @@ export function upgradeReqsOf(def: BuildingId, level: number): UpgradeReq[] {
   return BUILDINGS[def].upgradeReqs?.[level - 1] ?? [];
 }
 
+// ---------------------------------------------------------------------------
+// Making things: recipes, extraction, and what a building may be told to favour
+// ---------------------------------------------------------------------------
+
+/**
+ * Everything this building knows how to make. A workshop with a single recipe
+ * keeps saying `recipe`; the forge lists several. One function so that nothing
+ * downstream has to care which kind it is holding.
+ */
+export function recipesOf(def: BuildingId): Recipe[] {
+  const d = BUILDINGS[def];
+  if (d.recipes) return d.recipes;
+  return d.recipe ? [d.recipe] : [];
+}
+
+/** Recipes a smith could actually run today — the mithril one never is. */
+export function liveRecipesOf(def: BuildingId): Recipe[] {
+  return recipesOf(def).filter((r) => !r.locked);
+}
+
+/** What one batch of a recipe is called by, which is its first output. */
+export function recipeOutput(r: Recipe): ResourceId {
+  return Object.keys(r.outputs)[0] as ResourceId;
+}
+
+/** What a mine at this level brings up. Empty for everything that is not a mine. */
+export function extractsOf(def: BuildingId, level: number): ResourceId[] {
+  const d = BUILDINGS[def];
+  if (!d.extracts) return [];
+  return d.extracts[Math.min(level, d.extracts.length) - 1];
+}
+
+/**
+ * Everything a building of this kind and level produces, however it produces it
+ * — recipe outputs and mined materials alike. The helper ladder uses this to
+ * decide whether there is a shelf worth clearing.
+ */
+export function outputsOf(def: BuildingId, level: number): ResourceId[] {
+  return [...extractsOf(def, level), ...liveRecipesOf(def).map(recipeOutput)];
+}
+
+/**
+ * The focus settings this building may be given right now — Balanced, then one
+ * per thing it can currently produce.
+ *
+ * Only what this *level* reaches is offered. A Quarry does not list Iron Ore it
+ * cannot get at, and the forge does not list mithril; offering a choice that
+ * cannot be acted on is worse than not offering it, because the player spends
+ * the next ten minutes wondering why nothing happened.
+ */
+export function focusOptions(def: BuildingId, level: number): Focus[] {
+  const made = outputsOf(def, level);
+  if (made.length < 2) return [];
+  return ['balanced', ...made];
+}
+
+/** What a focus setting is called in the panel. */
+export function focusLabel(f: Focus): string {
+  return f === 'balanced' ? 'Balanced' : RESOURCE_META[f].name;
+}
+
+/**
+ * How much of a material the kingdom wants to be sitting on before a Balanced
+ * mine stops favouring it. Not equal quantities — stone is what half the
+ * kingdom is built out of and ore is not, so "shortest of" is measured against
+ * these rather than against each other.
+ */
+export const BALANCE_TARGET: Partial<Record<ResourceId, number>> = {
+  stone: 160,
+  ironOre: 40,
+  coal: 40,
+  mithrilOre: 20,
+  ironBar: 30,
+  steelBar: 20,
+  mithrilBar: 10,
+};
+
 /** Default reach for a building whose workers go out to nodes. */
 export const DEFAULT_WORK_RANGE = 13;
+
+// ---------------------------------------------------------------------------
+// The mine
+// ---------------------------------------------------------------------------
+
+/** Seconds of work for one load at the rock face, before skill and richness. */
+export const MINE_SECONDS = 7;
+/** What one stint brings up. Ore and coal come slower than plain stone. */
+export const MINE_YIELD: Partial<Record<ResourceId, number>> = {
+  stone: 3,
+  ironOre: 2,
+  coal: 2,
+  mithrilOre: 1,
+};
+/**
+ * Rocky tiles inside the mine's reach at which the seam is as good as it gets.
+ * Below it the work is slower — never stopped, since the placement rule already
+ * guarantees rock under the building, and a mine that produced nothing at all
+ * would be a punishment for a decision made an hour earlier.
+ */
+export const RICH_ROCK = 70;
+export const RICH_MIN = 0.55;
+
+/** How fast a mine on this much rock works, as a multiplier. */
+export function richnessMul(rockTiles: number): number {
+  const t = Math.min(1, rockTiles / RICH_ROCK);
+  return RICH_MIN + (1 - RICH_MIN) * t;
+}
 
 /**
  * How far this building's workers will go for their nodes. One number, used by
@@ -623,7 +851,7 @@ export const TERRAIN_META: Record<TerrainId, { name: string; desc: string; like:
   },
   rocky: {
     name: 'Rocky ground',
-    desc: 'Awkward footing, so slower going. The boulders here are the kingdom’s only stone, and it takes a quarry to work them.',
+    desc: 'Awkward footing, so slower going. This is the ground a quarry has to stand on or against — everything the kingdom digs up comes out of rock like this.',
     like: 'rocky ground like this',
     feel: 'Bare and exposed. What comes up here usually has a reason.',
   },
@@ -635,22 +863,23 @@ export const TERRAIN_META: Record<TerrainId, { name: string; desc: string; like:
  */
 export const PROP_META: Record<
   PropId,
-  { name: string; desc: string; yields?: ResourceId; regrowsFrom?: PropId }
+  { name: string; desc: string; yields?: ResourceId; worked?: boolean; regrowsFrom?: PropId }
 > = {
   tree: {
     name: 'Tree',
     desc: 'Anyone can fell it for wood, axe or no axe. A woodcutter is simply quicker about it.',
     yields: 'wood',
+    worked: true,
   },
   stump: { name: 'Stump', desc: 'Felled. Left alone, it will come back as a tree.', regrowsFrom: 'tree' },
   boulder: {
     name: 'Boulder',
-    desc: 'Far too much for bare hands. A stoneworker sent out from a quarry can break it for stone; until then it is part of the landscape.',
+    desc: 'Loose rock, and there is only so much of it: nothing puts a boulder back. Far too much for bare hands, though a kingdom with a quarry can make use of one rolled aside to build. A good sign of the sort of ground a quarry wants.',
     yields: 'stone',
   },
   pebbles: {
     name: 'Pebbles',
-    desc: 'Loose chippings. Where a boulder was worked, another gathers in time.',
+    desc: 'Loose chippings, going nowhere. Nothing grows back out of them.',
   },
   bush: { name: 'Bush', desc: 'Scrub. Slows a walk slightly and gives small animals somewhere to hide.' },
   flowers: { name: 'Wildflowers', desc: 'No use whatsoever. Some things are fonder of a tile for having them.' },

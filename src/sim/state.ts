@@ -137,7 +137,7 @@ export function newGame(seed = Math.floor(Math.random() * 1e9)): GameState {
     wildlife: newWildlifeTimers(),
     founderId: 0,
     founding: { stage: 'arriving', x: map.start.x, y: map.start.y },
-    stats: { built: 0, harvested: 0, baked: 0, arrivals: 1 },
+    stats: { built: 0, harvested: 0, baked: 0, arrivals: 1, mined: 0, smelted: 0 },
     nameSeq: 0,
   };
   g.goals = buildGoals();
