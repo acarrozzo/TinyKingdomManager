@@ -229,6 +229,7 @@ src/
   save/save.ts        slots, RLE tile packing, export/import
   ui/ui.ts            the shell: what is open, where it goes, what a click means
   ui/context.ts       UIEnv (compact/short/touch), esc/el, activity labels
+  ui/daystrip.ts      the day laid flat along the top edge, sun or moon on it
   ui/hud.ts           top strip — resources, store meter, clock, stores sheet
   ui/nav.ts           desktop toolbar, phone bottom nav, view pad, More sheet
   ui/goals.ts         goal panel, phone objective chip, full goal sheet
@@ -746,14 +747,69 @@ are screen-space text drawn after upscaling.
 
 ---
 
-## The time of day, drawn twice
+## The time of day, drawn three times
 
 `render/sky.ts` is the one place that turns `dayT` into something to look at,
-and **two things read from it that must never disagree**: the sky above the
-island's horizon, and the direction every shadow on the ground falls. They are
-the same fact told twice, and they are told twice on purpose — the sky is the
-precise reading and it is not always on screen; the shadows are the approximate
-one and they are on every tile at every zoom.
+and **three things read from it that must never disagree**: the sky above the
+island's horizon, the day strip along the top of the screen, and the direction
+every shadow on the ground falls. That is the same fact told three times, and
+it is told three times on purpose, because each one answers a question the
+others cannot:
+
+| | answers | on screen |
+|---|---|---|
+| the sky | what it looks like out there | zoomed out, or panned north |
+| the day strip | what the hour is, and how much light is left | always |
+| the shadows | roughly when it is, without looking away from the work | every tile, every zoom |
+
+The sky came first and is the most beautiful of the three; it is also the one
+you cannot see with the camera down among the buildings, which is what the other
+two are for. **`drawSun` and `drawMoon` live in `sky.ts`** rather than in the
+renderer, because both the sky and the strip put a sun on a canvas and a sun
+that is a different sun in each of them is two suns.
+
+**The strip is the whole day, and the bands never move.** The body's position
+along it *is* the time, and because dusk always begins in the same place you can
+see how much daylight is left without anything saying so in words. A strip that
+showed only the current crossing would answer "how far through this one" and not
+"how much is left", which is the question somebody with a half-built cabin
+actually has.
+
+**`stripT` decides where in the day the left edge falls, and everything the
+strip draws goes through it** — the body, the four marks, and the colours (via
+its inverse, `stripDayT`). It is rotated so the sun is highest exactly halfway
+across, which puts daylight in the middle with dawn and dusk flanking it and
+night at both ends, symmetrical about the centre. Centring on twelve *by the
+clock* would push the whole arc right, because this kingdom's day runs half five
+to a quarter to eleven and its `DAY_MIDPOINT` is nearer two. The colours are
+sampled from `skyColors` at even spacings across the width rather than mapped
+from the stop table, because the day wraps round the ends of the strip and
+mapped stops come out of order there.
+
+**It is a track, not a street.** The ribbon is seven pixels deep and drawn at
+`TRACK_ALPHA`, so the map still shows through it, and the body is larger than
+the ribbon and overhangs it top and bottom. A band as tall as the thing riding
+it reads as another bar of interface; a wire with a bead on it reads as a sky.
+The four marks are drawn at *full* strength either side of the ribbon rather
+than through its alpha, where they came out invisible — and each is a dark line
+with a light one beside it, because a dark tick disappears against a night
+kingdom and a light one disappears against a meadow.
+
+**The strip takes no pointer events at all.** Most of its height is transparent,
+and a full-width see-through box that swallows drags on the map is the exact bug
+`#ui > * { pointer-events: auto }` has caused twice already. The hover is picked
+up from a `window` listener against a cached rect instead.
+
+It is a picture and not a control — nothing on it can be clicked, because time
+is the one thing here nobody can hurry. It repaints only when the signature
+changes, which at ordinary speed is a couple of times a second: the body crosses
+about a pixel a second, and repainting a gradient sixty times a second to move
+something that far is work nobody asked for.
+
+**`DAY_STRIP_H` and `--sky-h` have to agree**, and both are the box rather than
+the ribbon. The strip is folded into the measured `--top-h`, so everything
+positioned off that clears it; without that the whole interface rides up under
+the pills the moment the strip appears.
 
 **The sky sits above the island's north corner, which is world y 0.** Everything
 above that row is off the map entirely, so it can honestly be called sky; the
@@ -801,9 +857,10 @@ length: the true figure runs away to infinity at the rim, and a tree whose
 shadow crosses half the island reads as a bug rather than as a sunrise.
 
 **Nothing here is a mechanic.** Time of day already drives sleep, work hours and
-which animals are about. The sky and the shadows only draw it, and the hover tip
-on the sun says what is happening rather than offering anything to do about it —
-time is the one thing in this game that cannot be hurried.
+which animals are about. All three of these only draw it, and the hover tip says
+what is happening rather than offering anything to do about it. That tip is
+raised from either place the body appears — over the island, or anywhere along
+the strip, which is a far more forgiving target than a disc nine pixels across.
 
 ---
 
@@ -1023,7 +1080,8 @@ be replaced.
   whether anything changed. A redraw that does happen still has to carry the
   scroll position of anything scrollable across it.
 - **Everything floating over the map has an explicit `z-index`, and the ladder
-  is written down in `style.css`** — rails and sheets 15, objectives 16, view
+  is written down in `style.css`** — day strip 14, rails and sheets 15,
+  objectives 16, view
   pad 20, modals 24, dock 25, toasts 28, hover tips 40. Before that only the
   dock and the pad carried a number and the rest sorted by document order,
   which is how the zoom buttons came to paint through a modal's scrim. The dock

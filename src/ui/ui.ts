@@ -32,6 +32,7 @@ import {
 import { buildingById, newGame } from '../sim/state';
 import { Focus, keepFocus } from './a11y';
 import { cap, el, esc, setHtml, type UIEnv } from './context';
+import { DAY_STRIP_H, DayStrip } from './daystrip';
 import { Hud, populationBody, storesBody } from './hud';
 import { bottomNavMarkup, moreBody, toolbarMarkup, viewPadMarkup, type ModalKind, type NavState } from './nav';
 import { goalChipMarkup, goalPanelMarkup, goalsBody } from './goals';
@@ -68,6 +69,7 @@ export class UI {
   private game: Game;
   private focus: Focus;
   private hud: Hud;
+  private dayStrip: DayStrip;
 
   private env: UIEnv = { compact: false, short: false, touch: false };
   private modal: ModalKind = null;
@@ -101,6 +103,11 @@ export class UI {
     this.root = root;
     this.game = game;
     this.root.innerHTML = '';
+
+    // Above the pills rather than behind them: the sun crosses the whole width
+    // twice a day, and half of those crossings would be spent behind the clock.
+    this.dayStrip = new DayStrip();
+    this.root.appendChild(this.dayStrip.el);
 
     this.topbar = el('div', 'topbar hide-in-clean');
     this.root.appendChild(this.topbar);
@@ -181,7 +188,11 @@ export class UI {
      */
     const measure = () => {
       this.root.style.setProperty('--dock-h', `${Math.round(this.dock.getBoundingClientRect().height)}px`);
-      this.root.style.setProperty('--top-h', `${Math.round(this.topbar.getBoundingClientRect().height)}px`);
+      // The day strip is part of the furniture at the top, so it goes into the
+      // same measurement: everything below positions off `--top-h` and would
+      // otherwise ride up under the pills the moment the strip appeared.
+      const top = this.topbar.getBoundingClientRect().height + DAY_STRIP_H;
+      this.root.style.setProperty('--top-h', `${Math.round(top)}px`);
     };
     const ro = new ResizeObserver(measure);
     ro.observe(this.dock);
@@ -309,6 +320,7 @@ export class UI {
     // sitting there reading 0/0 and quietly lying about what "0" means.
     this.root.classList.toggle('founding', !foundingDone(g));
 
+    this.dayStrip.tick(g);
     const clock = this.hud.tick(this.game, this.env);
     this.cleanT.textContent = clock;
     const chipSea = this.root.querySelector('.clean-chip .sea');
@@ -456,13 +468,15 @@ export class UI {
   }
 
   /**
-   * The hover detail for the sun and the moon. Positioned under whichever it
-   * is, and nudged back on screen when that would run it off the edge — the
-   * body spends a good part of the day near the rim of the view, which is
-   * exactly where a tooltip anchored to it would go missing.
+   * The hover detail for the sun and the moon, from either place they appear —
+   * the body itself out over the island, or anywhere along the day strip, which
+   * is a far more forgiving target than a disc nine pixels across. Nudged back
+   * on screen when it would run off the edge: the body spends a good part of
+   * the day near the rim, which is exactly where a tip anchored to it goes
+   * missing.
    */
   private renderSkyTip(): void {
-    const at = this.game.skyHover;
+    const at = this.game.skyHover ?? this.dayStrip.hover;
     if (!at) {
       if (this.skyTip.classList.contains('on')) this.skyTip.classList.remove('on');
       return;

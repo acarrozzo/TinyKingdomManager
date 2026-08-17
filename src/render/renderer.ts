@@ -14,7 +14,7 @@ import { HALF_H, HALF_W, TILE_H, toGridX, toGridY, toScreenX, toScreenY } from '
 import { CAMP_HALF, CAMP_SPAN } from '../world/terrain';
 import { Camera } from './camera';
 import { ambientTint } from './palette';
-import { celestial, skyColors, sunlight, type Sunlight } from './sky';
+import { celestial, drawMoon, drawSun, skyColors, sunlight, type Sunlight } from './sky';
 import type { BuildingSprite } from './sprites';
 import {
   bakeProps,
@@ -413,31 +413,14 @@ export class Renderer {
     if (x < -r - 4 || x > this.bufW + r + 4 || y - r > bottom) return;
     const b = this.bctx;
 
-    /*
-     * The halo goes down `lighter` rather than over the top. A warm ring laid
-     * on at an alpha is darker than a pale evening sky however it is coloured,
-     * which drew a grey washer round the setting sun — light added to the sky
-     * is the only version of this that cannot come out wrong.
-     */
-    b.save();
-    b.globalCompositeOperation = 'lighter';
-    const warm = pos.body === 'sun';
-    for (let i = 3; i >= 1; i--) {
-      const a = (warm ? 0.055 : 0.02) * (4 - i);
-      fillDisc(b, x, y, r + i * 1.7, applyAlpha(warm ? '#ffcf8a' : '#a8bcff', a));
-    }
-    b.restore();
-
-    if (warm) {
-      // Low sun is deep and orange; high sun is almost white. It is the same
-      // shift the ambient tint makes, said by the thing making it.
-      const low = 1 - pos.alt;
-      fillDisc(b, x, y, r, mixHex('#fff6d8', '#ff9a4a', low * 0.85));
+    if (pos.body === 'sun') {
+      drawSun(b, x, y, r, pos.alt);
       // A glimmer laid down the water under a low sun. Only the sea gets it:
       // the ground is blitted after this and covers its own share.
+      const low = 1 - pos.alt;
       if (low > 0.45) this.drawGlimmer(x, hy, (low - 0.45) / 0.55);
     } else {
-      fillMoon(b, x, y, r, celestial(g.dayT, g.day).phase);
+      drawMoon(b, x, y, r, celestial(g.dayT, g.day).phase);
     }
   }
 
@@ -1198,58 +1181,17 @@ function applyAlpha(hex: string, alpha: number): string {
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${clamp(alpha, 0, 1)})`;
 }
 
-function mixHex(a: string, b: string, k: number): string {
-  const x = parseInt(a.slice(1), 16);
-  const y = parseInt(b.slice(1), 16);
-  const t = clamp(k, 0, 1);
-  const ch = (sh: number): number => Math.round(((x >> sh) & 255) + (((y >> sh) & 255) - ((x >> sh) & 255)) * t);
-  return `rgb(${ch(16)},${ch(8)},${ch(0)})`;
-}
-
 /**
- * Discs, moons and shadows are all filled row by row rather than with an arc
- * path, for the same reason the sprites are: the buffer is one canvas pixel per
- * art pixel, and an antialiased edge there upscales into a smear.
+ * Shadows are filled row by row rather than with an arc path, for the same
+ * reason the sprites are: the buffer is one canvas pixel per art pixel, and an
+ * antialiased edge there upscales into a smear.
  */
-function fillDisc(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, color: string): void {
-  ctx.fillStyle = color;
-  const n = Math.ceil(r);
-  for (let dy = -n; dy <= n; dy++) {
-    const w = Math.sqrt(Math.max(0, r * r - dy * dy));
-    if (w < 0.5) continue;
-    ctx.fillRect(Math.round(cx - w), Math.round(cy + dy), Math.max(1, Math.round(w * 2)), 1);
-  }
-}
-
 function fillEllipse(ctx: CanvasRenderingContext2D, cx: number, cy: number, rx: number, ry: number): void {
   const n = Math.ceil(ry);
   for (let dy = -n; dy <= n; dy++) {
     const w = rx * Math.sqrt(Math.max(0, 1 - (dy * dy) / (ry * ry)));
     if (w < 0.5) continue;
     ctx.fillRect(Math.round(cx - w), Math.round(cy + dy), Math.max(1, Math.round(w * 2)), 1);
-  }
-}
-
-/**
- * The moon, lit from one side. The terminator follows each row's own width
- * rather than cutting straight down, which is the difference between a crescent
- * and a disc somebody has taken a bite out of. The unlit limb is still faintly
- * there — earthshine, and the reason the moon never disappears entirely.
- */
-function fillMoon(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, phase: number): void {
-  const n = Math.ceil(r);
-  for (let dy = -n; dy <= n; dy++) {
-    const w = Math.sqrt(Math.max(0, r * r - dy * dy));
-    if (w < 0.5) continue;
-    const y = Math.round(cy + dy);
-    ctx.fillStyle = 'rgba(150,164,200,0.55)';
-    ctx.fillRect(Math.round(cx - w), y, Math.max(1, Math.round(w * 2)), 1);
-    const x0 = cx + w * (1 - 2 * phase);
-    const lit = cx + w - x0;
-    if (lit >= 1) {
-      ctx.fillStyle = '#eef1ff';
-      ctx.fillRect(Math.round(x0), y, Math.round(lit), 1);
-    }
   }
 }
 

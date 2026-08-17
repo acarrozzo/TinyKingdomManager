@@ -45,15 +45,46 @@ export const BAND_META: Record<Band, { name: string; note: string }> = {
   night: { name: 'Night', note: 'Most of the kingdom is asleep.' },
 };
 
-const DAWN_END = 0.14;
-const DAY_END = 0.62;
-const DUSK_END = 0.8;
+/**
+ * Where one section of the day gives way to the next. Exported because the day
+ * strip marks them: those four places never move, and where dusk begins is the
+ * thing the strip is actually read for.
+ */
+export const BAND_EDGES = [SUNRISE, 0.14, 0.62, 0.8];
+
+/**
+ * The moment the sun is highest. Not noon by the clock — the kingdom's day runs
+ * from about half five to a quarter to eleven, so its solar noon is closer to
+ * two — and the difference matters, because it is what the day strip centres
+ * itself on.
+ */
+export const DAY_MIDPOINT = (SUNRISE + SUNSET) / 2;
+
+/**
+ * Day-fraction to position along the day strip, 0 at the left edge and 1 at the
+ * right. Rotated so the sun is at its highest exactly halfway across, which
+ * puts daylight in the middle with dawn and dusk flanking it and night at both
+ * ends — a shape you can read without counting. Centring on twelve by the clock
+ * instead would push the whole arc to the right, because this kingdom's
+ * afternoons are longer than its mornings.
+ *
+ * Everything the strip draws goes through here, so the marks and the body can
+ * never end up telling different stories about where in the day it is.
+ */
+export function stripT(dayT: number): number {
+  return (dayT + 1.5 - DAY_MIDPOINT) % 1;
+}
+
+/** The inverse, for painting the strip's colours across its width. */
+export function stripDayT(t: number): number {
+  return (t + DAY_MIDPOINT + 0.5) % 1;
+}
 
 export function bandOf(dayT: number): Band {
-  if (dayT < SUNRISE) return 'night';
-  if (dayT < DAWN_END) return 'dawn';
-  if (dayT < DAY_END) return 'day';
-  if (dayT < DUSK_END) return 'dusk';
+  if (dayT < BAND_EDGES[0]) return 'night';
+  if (dayT < BAND_EDGES[1]) return 'dawn';
+  if (dayT < BAND_EDGES[2]) return 'day';
+  if (dayT < BAND_EDGES[3]) return 'dusk';
   return 'night';
 }
 
@@ -146,10 +177,24 @@ const SKY_STOPS: SkyStop[] = [
 export interface SkyColors {
   zenith: string;
   horizon: string;
-  /** The horizon colour again, for the haze laid over the sea beneath it. */
+  /**
+   * The same two again as numbers. The haze over the sea needs the horizon at
+   * an alpha, and the day strip shades between the pair across its own height.
+   */
+  zenithRgb: [number, number, number];
   horizonRgb: [number, number, number];
   /** How much of the starfield shows through, 0 to 1. */
   stars: number;
+}
+
+/**
+ * Winter skies run colder, summer's a shade warmer — the same nudge
+ * `ambientTint` gives the light, so the two never disagree.
+ */
+function seasonMul(season: Season): [number, number] {
+  if (season === 'winter') return [0.92, 1.06];
+  if (season === 'summer') return [1.04, 0.98];
+  return [1, 1];
 }
 
 export function skyColors(dayT: number, season: Season): SkyColors {
@@ -163,10 +208,7 @@ export function skyColors(dayT: number, season: Season): SkyColors {
     }
   }
   const k = (dayT - a.t) / (b.t - a.t || 1);
-  // Winter skies run colder, summer's a shade warmer — the same nudge
-  // `ambientTint` gives the light, so the two never disagree.
-  const rMul = season === 'winter' ? 0.92 : season === 'summer' ? 1.04 : 1;
-  const bMul = season === 'winter' ? 1.06 : season === 'summer' ? 0.98 : 1;
+  const [rMul, bMul] = seasonMul(season);
   const at = (from: [number, number, number], to: [number, number, number]): [number, number, number] => [
     (from[0] + (to[0] - from[0]) * k) * rMul,
     from[1] + (to[1] - from[1]) * k,
@@ -180,13 +222,108 @@ export function skyColors(dayT: number, season: Season): SkyColors {
   return {
     zenith: rgb(z),
     horizon: rgb(h),
-    horizonRgb: [Math.round(clamp(h[0], 0, 255)), Math.round(clamp(h[1], 0, 255)), Math.round(clamp(h[2], 0, 255))],
+    zenithRgb: bytes(z),
+    horizonRgb: bytes(h),
     stars: clamp(1 - (bright - 40) / 70, 0, 1),
   };
 }
 
+function bytes(c: [number, number, number]): [number, number, number] {
+  return [Math.round(clamp(c[0], 0, 255)), Math.round(clamp(c[1], 0, 255)), Math.round(clamp(c[2], 0, 255))];
+}
+
 function rgb(c: [number, number, number]): string {
   return `rgb(${Math.round(clamp(c[0], 0, 255))},${Math.round(clamp(c[1], 0, 255))},${Math.round(clamp(c[2], 0, 255))})`;
+}
+
+// ---------------------------------------------------------------------------
+// The bodies themselves
+// ---------------------------------------------------------------------------
+
+type Ctx = CanvasRenderingContext2D;
+
+/**
+ * Drawn here rather than in the renderer, because two places put a sun on a
+ * canvas — the sky over the island, and the day strip along the top of the
+ * screen — and a sun that is a different sun in each of them is two suns.
+ *
+ * `halo` scales the bloom for somewhere with less room than the sky; the disc
+ * itself is unchanged, so it stays the same object at either size.
+ */
+export function drawSun(ctx: Ctx, cx: number, cy: number, r: number, alt: number, halo = 1): void {
+  const low = clamp(1 - alt, 0, 1);
+  bloom(ctx, cx, cy, r, '#ffcf8a', 0.055, halo);
+  // Low sun is deep and orange; high sun is almost white. The same shift the
+  // ambient tint makes, said by the thing making it.
+  fillDisc(ctx, cx, cy, r, mixHex('#fff6d8', '#ff9a4a', low * 0.85));
+}
+
+export function drawMoon(ctx: Ctx, cx: number, cy: number, r: number, phase: number, halo = 1): void {
+  bloom(ctx, cx, cy, r, '#a8bcff', 0.02, halo);
+  fillMoon(ctx, cx, cy, r, phase);
+}
+
+/**
+ * The glow goes down `lighter` rather than over the top. A warm ring laid on at
+ * an alpha is darker than a pale evening sky however it is coloured, which drew
+ * a grey washer round the setting sun.
+ */
+function bloom(ctx: Ctx, cx: number, cy: number, r: number, color: string, step: number, scale: number): void {
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  for (let i = 3; i >= 1; i--) fillDisc(ctx, cx, cy, r + i * 1.7 * scale, withAlpha(color, step * (4 - i)));
+  ctx.restore();
+}
+
+/**
+ * Discs and moons are filled row by row rather than with an arc path, for the
+ * same reason the sprites are: the world buffer is one canvas pixel per art
+ * pixel, and an antialiased edge there upscales into a smear.
+ */
+function fillDisc(ctx: Ctx, cx: number, cy: number, r: number, color: string): void {
+  ctx.fillStyle = color;
+  const n = Math.ceil(r);
+  for (let dy = -n; dy <= n; dy++) {
+    const w = Math.sqrt(Math.max(0, r * r - dy * dy));
+    if (w < 0.5) continue;
+    ctx.fillRect(Math.round(cx - w), Math.round(cy + dy), Math.max(1, Math.round(w * 2)), 1);
+  }
+}
+
+/**
+ * The moon, lit from one side. The terminator follows each row's own width
+ * rather than cutting straight down, which is the difference between a crescent
+ * and a disc somebody has taken a bite out of. The unlit limb is still faintly
+ * there — earthshine, and the reason the moon never disappears entirely.
+ */
+function fillMoon(ctx: Ctx, cx: number, cy: number, r: number, phase: number): void {
+  const n = Math.ceil(r);
+  for (let dy = -n; dy <= n; dy++) {
+    const w = Math.sqrt(Math.max(0, r * r - dy * dy));
+    if (w < 0.5) continue;
+    const y = Math.round(cy + dy);
+    ctx.fillStyle = 'rgba(150,164,200,0.55)';
+    ctx.fillRect(Math.round(cx - w), y, Math.max(1, Math.round(w * 2)), 1);
+    const x0 = cx + w * (1 - 2 * phase);
+    const lit = cx + w - x0;
+    if (lit >= 1) {
+      ctx.fillStyle = '#eef1ff';
+      ctx.fillRect(Math.round(x0), y, Math.round(lit), 1);
+    }
+  }
+}
+
+function withAlpha(hex: string, alpha: number): string {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${clamp(alpha, 0, 1)})`;
+}
+
+function mixHex(a: string, b: string, k: number): string {
+  const x = parseInt(a.slice(1), 16);
+  const y = parseInt(b.slice(1), 16);
+  const t = clamp(k, 0, 1);
+  const ch = (sh: number): number => Math.round(((x >> sh) & 255) + (((y >> sh) & 255) - ((x >> sh) & 255)) * t);
+  return `rgb(${ch(16)},${ch(8)},${ch(0)})`;
 }
 
 // ---------------------------------------------------------------------------
