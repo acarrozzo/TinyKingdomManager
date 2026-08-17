@@ -46,10 +46,37 @@ npm run build        # typecheck + production bundle (~80 kB gzipped)
 
 ---
 
-## Verifying changes — do not skip this
+## Verifying changes — match the check to the change
 
-There are four harnesses, and they exist because this project has four whole
-classes of bug that reading code will not catch.
+There are five harnesses and a screenshot tool, and they exist because this
+project has whole classes of bug that reading code will not catch. They are not
+a checklist to run end to end every time: each one answers a particular kind of
+question, and running the ones your change cannot possibly have affected costs
+minutes and tells you nothing.
+
+Scope the verification to what you actually touched:
+
+| what changed | what to run |
+|---|---|
+| documentation or user-facing copy | nothing automated, unless the copy states a mechanic you also changed |
+| ordinary TypeScript | `npm run typecheck` |
+| anything under `src/sim/`, or `defs.ts` | typecheck, plus one simulation run of 600–1000 game-minutes |
+| visuals, layout, or input | typecheck, plus a screenshot of the viewport(s) the change can affect |
+| saving or loading | typecheck, plus the round-trip check on a dumped save |
+| a broad refactor, or work you are calling finished | `npm run build`, plus whichever harnesses the change touches |
+
+Three rules that keep this cheap:
+
+- **`npm run build` already runs the typechecker.** Do not run `npm run
+  typecheck` separately alongside it.
+- **Do not run unrelated harnesses just in case.** A copy fix in `ui/modals.ts`
+  does not need the world generator exercised over ten thousand seeds, and a
+  palette tweak does not need a twenty-day kingdom simulated.
+- **Batch verification after a coherent set of edits**, not after each one. Get
+  the change into a state you would be willing to show somebody, then check it.
+
+The sections below say what each harness catches, so you can tell whether your
+change is in its territory.
 
 ### Simulation: `npm run sim`
 
@@ -69,7 +96,8 @@ goals, journal, and consistency checks. The arrivals list at the end is the
 quickest read on pacing: the gap between each line should sit inside the window
 printed at the top.
 
-**Run this after any change to `sim/`, and always after touching `defs.ts`.** It
+**This is the check for changes under `sim/` or to `defs.ts`** — one run in the
+600–1000 range is enough, and a second seed only when a number surprises you. It
 is how the economy was balanced and it catches things that look fine in code:
 production chains that silently never run, one resource crowding every other out
 of storage, wildlife arriving far too fast, XP curves that take 40 hours.
@@ -114,7 +142,7 @@ could legally stand — on or against rock, with twenty-five tiles of rock insid
 its reach — a beach that connects to it on foot, sane tiles, and the same seed
 giving the same world twice.
 
-**Run this after any change to `world/terrain.ts`.** Generation leans on random
+**This is the check for `world/terrain.ts`, and only for it.** Generation leans on random
 scatter, and a scatter with a give-up guard is not a guarantee — the failures it
 finds are single seeds in the tens of thousands where the noise came out badly
 and the founder walks up a beach to an island with no firewood on it. It prints
@@ -137,7 +165,7 @@ Drives one relocation the whole way through on a real kingdom — start the move
 check the original is still working and still staffed, save and reload it
 half-finished, then let villagers actually carry the materials and build it.
 
-**Run this after any change to relocation, `completeConstruction`, or
+**This is the check for relocation, `completeConstruction` and
 `removeBuilding`.** Moving a building is the only thing in the game that changes
 a finished building's coordinates, and everything it can get wrong is invisible
 both in the source and on screen: a footprint left claimed by a building that
@@ -157,12 +185,29 @@ game-minutes of the camp's second bed existing, progress *freezing* rather than
 emptying when every bed is full, both halves of a walk surviving a save, and
 Vibes shortening the wait without ever moving it outside the window.
 
-**Run this after any change to `population.ts`, `vibes.ts`, or anything that
-adds or removes beds.** `simcheck` shows that people turn up and roughly how
+**This is the check for `population.ts`, `vibes.ts`, and anything that adds or
+removes beds.** `simcheck` shows that people turn up and roughly how
 fast; it cannot show the edges, and every one of those is invisible in the
 source and on screen alike. A kingdom that loses its accumulated wait the moment
 the beds fill, or hands the next traveller a fresh roll on every reload, looks
 exactly like a kingdom that does not — for hours.
+
+### Saves: `npm run roundtrip`
+
+```bash
+TKM_DUMP=k.json npm run sim -- 600    # a real kingdom to test against
+npm run roundtrip -- k.json           # serialise → deserialise → serialise
+```
+
+Loads a save through the game's own code and writes it back out, reporting what
+survived: villagers, buildings, tiles, blocked tiles, props, farm plots, the
+discovery set and finished goals.
+
+**This is the check for `save/save.ts` and for any new field on `GameState`, a
+`Building` or a `Villager` that is meant to persist.** A field that is never
+written is invisible until somebody reopens a kingdom and finds their focus
+setting, their fixed homes or their wildlife cooldowns quietly back at the
+defaults.
 
 ### Visuals: `scripts/shot.mjs`
 
@@ -179,17 +224,19 @@ Drives headless Chrome over DevTools, runs your JS in the page, captures a PNG,
 and reports console errors. `window.tkm` exposes `{ game, ui }` so a snippet can
 set the season, jump to night, open a panel, or arm a tool before the shot.
 
-**Look at the picture.** Every visual bug in this build — roofs rendering as flat
-plates, an invisible element eating clicks on half the toolbar, lit windows
-bleeding through the building in front — was invisible in the source and obvious
-in a screenshot.
+**When a change is visual, take the shot and look at it.** Every visual bug in
+this build — roofs rendering as flat plates, an invisible element eating clicks
+on half the toolbar, lit windows bleeding through the building in front — was
+invisible in the source and obvious in a screenshot. One or two viewports that
+could actually show the change are the whole of it; there is no standing set to
+recapture, and a change with no visual surface needs none of them.
 
 `PRELOAD` seeds a save and loads it through the game's own code path rather than
 reloading the page, because a reload lets the throwaway kingdom's
 autosave-on-unload clobber the seeded slot.
 
-`DEVICE=<w>x<h>[@dpr]` emulates a phone or tablet with touch input. Use it for
-anything touching layout or input: a 390px screen is where overlapping panels
+`DEVICE=<w>x<h>[@dpr]` emulates a phone or tablet with touch input. Reach for it
+when the change touches layout or input: a 390px screen is where overlapping panels
 and blocked gestures show up, and neither is visible in a desktop window. In the
 page you can dispatch `PointerEvent`s with `pointerType: 'touch'` (two ids for a
 pinch) and assert on `window.tkm.game.camera` — that is how the pan, pinch and
