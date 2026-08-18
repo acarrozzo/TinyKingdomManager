@@ -2,9 +2,10 @@
  * The contextual card: whoever, or whatever, is currently selected on the map.
  *
  * It sits in the right margin on a desktop so the thing it describes stays
- * visible beside it, and rises as a sheet from the bottom of a phone. Buildings
- * are the exception — they get the whole modal, because the point of a building
- * is its roster and a roster needs room.
+ * visible beside it, and rises as a sheet from the bottom of a phone. A
+ * building shares that margin but is built elsewhere: its panel has tabs, a
+ * roster and a footer of actions, so `ui.ts` assembles it out of the same
+ * pieces the phone's sheet uses rather than as a card here.
  */
 
 import type { GameState, JobId, Tile, Villager } from '../types';
@@ -94,7 +95,10 @@ export function villagerCard(game: Game): string {
         work
           ? `<div class="tiny muted" style="margin-top:5px">Working at the
         <button class="link" data-act="select-building" data-id="${work.id}">${esc(buildingName(work.def, work.level).toLowerCase())}</button></div>`
-          : ''
+          : // Nobody else's panel needs its trade explained, because a trade is
+            // the building they stand in. This one has no building, so what a
+            // General Worker actually does all day is said here or nowhere.
+            `<div class="tiny muted" style="margin-top:5px;line-height:1.5">${esc(JOB_META.general.desc)}</div>`
       }
     </div>
 
@@ -127,7 +131,9 @@ export function villagerCard(game: Game): string {
 
 export function jobOptionsFor(game: Game, v: Villager): string {
   const g = game.state;
-  let out = `<option value="0" ${v.workplace === 0 ? 'selected' : ''}>🧺 Helper — general work</option>`;
+  // The other rows read "trade — where"; a General Worker's where is nowhere in
+  // particular, and saying so is shorter than the select is wide.
+  let out = `<option value="0" ${v.workplace === 0 ? 'selected' : ''}>${JOB_META.general.icon} ${JOB_META.general.name} — no post</option>`;
   for (const b of g.buildings) {
     if (b.stage !== 'done') continue;
     const def = BUILDINGS[b.def];

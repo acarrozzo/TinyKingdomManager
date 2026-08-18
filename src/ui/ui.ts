@@ -13,9 +13,15 @@
  * bottom navigation bar, one sheet open at a time above it, and a single line
  * of objective under the top strip. Everything reachable on one is reachable on
  * the other.
+ *
+ * A building is the one panel that changes shape between the two. On a desktop
+ * it is a card in the right margin like everybody else you can point at — the
+ * map stays live beside it, so the next building is one click away — and on a
+ * phone it is a sheet like every other panel. The markup is the same either
+ * way; only the host and the chrome differ.
  */
 
-import type { GameState } from '../types';
+import type { Building, GameState } from '../types';
 import { BUILDINGS, buildingName } from '../sim/defs';
 import { foundingDone } from '../sim/founding';
 import type { Game } from '../game';
@@ -51,6 +57,21 @@ import {
   wildlifeBody,
 } from './modals';
 
+/** The pieces a panel is assembled from, wherever it is about to be drawn. */
+interface PanelParts {
+  title: string;
+  sub: string;
+  body: string;
+  foot: string;
+  pic: string;
+  tabNames: string[];
+}
+
+/** A panel's name and the line under it, which are swapped together. */
+function panelHead(parts: PanelParts): string {
+  return `${esc(parts.title)}${parts.sub ? `<span class="msub">${parts.sub}</span>` : ''}`;
+}
+
 /** Panels that cover the map and take the keyboard with them while they are up. */
 const TRUE_MODALS: ModalKind[] = [
   'journal',
@@ -76,6 +97,8 @@ export class UI {
   private modalTab = 0;
   /** What is currently mounted in the modal host, so a redraw can update in place. */
   private modalMount = '';
+  /** The same, for the building panel when it is drawn in the right margin. */
+  private railMount = '';
   private buildOpen = false;
   private goalsCollapsed = false;
   private introDismissed = false;
@@ -308,8 +331,16 @@ export class UI {
     e.preventDefault();
     const next = tabs[(i + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length];
     this.modalTab = Number(next.dataset.i);
+    this.renderOpenPanel();
+    // Searched from the root rather than the modal host: the same tab strip
+    // appears in the right margin when a building is open on a desktop.
+    (this.root.querySelector(`[role="tab"][data-i="${this.modalTab}"]`) as HTMLElement | null)?.focus();
+  }
+
+  /** Redraws whichever host the open panel is mounted in. */
+  private renderOpenPanel(): void {
     this.renderModal();
-    (this.modalHost.querySelector(`[role="tab"][data-i="${this.modalTab}"]`) as HTMLElement | null)?.focus();
+    this.renderInspector();
   }
 
   // -------------------------------------------------------------------------
@@ -550,10 +581,34 @@ export class UI {
 
   private renderInspector(): void {
     const sel = this.game.selection;
+    /*
+     * A building goes in the margin with everything else you can point at, so
+     * the map beside it stays live and the next building is one click away.
+     * The rail is wider while one is up: a roster wants three columns — who,
+     * what they are doing, and the one control that applies to them — and the
+     * cards that share the margin do not.
+     */
+    const rail = this.modal === 'building' && this.buildingInRail;
+    const b = rail ? this.game.selectedBuilding() : null;
+    this.root.classList.toggle('wide-rail', !!b);
+    if (b) {
+      this.renderBuildingRail(b);
+      return;
+    }
+    if (rail) {
+      // Demolished while its panel was open. Cleared directly rather than
+      // through setModal: this runs inside a render, and nothing else needs
+      // to change.
+      this.modal = null;
+      this.focus.release();
+    }
+    this.railMount = '';
+
     let html = '';
     if (sel.kind === 'villager') html = villagerCard(this.game);
     else if (sel.kind === 'animal') html = animalCard(this.game);
-    // Buildings get the whole modal instead of a card in the margin.
+    // A building is handled above: it is a card here on a desktop and a sheet
+    // on a phone, rather than one of these.
     else if (sel.kind === 'tile') html = tileCard(this.game);
 
     if (!html) {
@@ -572,6 +627,49 @@ export class UI {
       const scroller = this.sideRight.querySelector('.sheet-body') as HTMLElement | null;
       if (scroller) scroller.scrollTop = keep;
     });
+  }
+
+  /**
+   * Where a building's panel goes on this screen. A phone has one surface at a
+   * time and no margin to put a card in, so there it stays a sheet.
+   */
+  private get buildingInRail(): boolean {
+    return !this.env.compact;
+  }
+
+  /**
+   * The building panel, in the right margin. Same pieces as the modal — a
+   * header with the building's own sprite in it, the tabs, the body, the
+   * footer — with no scrim behind it, because the map is what the panel is
+   * about and dimming it would put the kingdom behind glass to read about a
+   * lodge.
+   */
+  private renderBuildingRail(b: Building): void {
+    const parts = this.buildingParts(b);
+    const active = Math.min(this.modalTab, Math.max(0, parts.tabNames.length - 1));
+    const tabs = this.tabStrip(parts.tabNames, active);
+    const head = panelHead(parts);
+    const sig = `building:${b.id}`;
+    const mounted = this.sideRight.querySelector('.rail') as HTMLElement | null;
+
+    if (mounted && this.railMount === sig) {
+      this.updatePanel(this.sideRight, mounted, parts, tabs);
+      paintPortraits(this.game, this.sideRight);
+      return;
+    }
+
+    this.railMount = sig;
+    setHtml(
+      this.sideRight,
+      `<div class="modal rail" role="region" aria-labelledby="modal-title">
+        <header>${parts.pic}<h2 id="modal-title">${head}</h2>
+          <button class="btn small" data-act="close-modal" aria-label="Close">Close</button></header>
+        ${tabs ? `<div class="tabs" role="tablist">${tabs}</div>` : ''}
+        <div class="body" id="modal-body" ${tabs ? `role="tabpanel" aria-labelledby="mtab-${active}"` : ''}>${parts.body}</div>
+        ${parts.foot ? `<div class="foot">${parts.foot}</div>` : ''}
+      </div>`,
+    );
+    paintPortraits(this.game, this.sideRight);
   }
 
   // -------------------------------------------------------------------------
@@ -610,8 +708,13 @@ export class UI {
      * dims the rail behind its scrim, so the list sits there lit up and
      * unreachable, and its ghost under the dimming is most of what reads as the
      * panels fighting each other.
+     *
+     * A building on a desktop is the exception, and for the same reason: it is
+     * a card in the opposite margin with no scrim at all, so the two do not
+     * fight. Clicking a cabin to see who sleeps there should not shut the list
+     * you were laying the next one out from.
      */
-    if (kind) this.buildOpen = false;
+    if (kind && !(kind === 'building' && this.buildingInRail)) this.buildOpen = false;
     if (opening) this.focus.remember();
     this.refresh();
     // After the redraw, not before: closing a panel repaints the bar it was
@@ -641,8 +744,86 @@ export class UI {
     else if (!this.buildOpen) this.focus.release();
   }
 
+  /**
+   * Everything a building's panel is made of. It is put together in one place
+   * because it is drawn in two: a card in the margin on a desktop, a sheet on a
+   * phone. A panel that said different things in the two would be two panels.
+   */
+  private buildingParts(b: Building): PanelParts {
+    const def = BUILDINGS[b.def];
+    const tabNames = buildingTabs(b);
+    const tab = tabNames[Math.min(this.modalTab, tabNames.length - 1)];
+    return {
+      title: buildingName(b.def, b.level),
+      sub:
+        b.stage === 'done'
+          ? def.maxLevel > 1
+            ? `Level ${b.level} of ${def.maxLevel}`
+            : esc(def.desc)
+          : b.upgrading
+            ? 'Being improved'
+            : 'Being built',
+      body: buildingBody(this.game, b, tab),
+      foot:
+        this.game.demolishTarget === b.id
+          ? `<span class="confirm-line">Remove the ${esc(def.name.toLowerCase())}? Half of what it cost comes back.</span>
+             <span class="spacer"></span>
+             <button class="btn small" data-act="cancel-place">Keep it</button>
+             <button class="btn small danger primary" data-act="confirm-demolish">Remove it</button>`
+          : buildingFoot(this.game, b),
+      // Lives outside the h2 that gets swapped, so the picture is mounted once.
+      pic: `<span class="mpic"><canvas data-pic="building" data-id="${b.id}" aria-hidden="true"></canvas></span>`,
+      tabNames,
+    };
+  }
+
+  /** The tab strip a panel wears, whichever host it is mounted in. */
+  private tabStrip(tabNames: string[], active: number): string {
+    return tabNames
+      .map(
+        (t, i) =>
+          `<button role="tab" id="mtab-${i}" aria-selected="${i === active}" aria-controls="modal-body"
+            tabindex="${i === active ? 0 : -1}" data-act="tab" data-i="${i}" class="${i === active ? 'on' : ''}">${esc(t)}</button>`,
+      )
+      .join('');
+  }
+
+  /**
+   * Updates a panel that is already mounted rather than replacing it. A
+   * building panel redraws several times a second; replacing the whole thing
+   * each time restarts the scrim's fade — which reads as a flicker, and was
+   * invisible in the source and obvious in a screenshot — and throws away the
+   * body's scroll position.
+   */
+  private updatePanel(host: HTMLElement, mounted: Element, parts: PanelParts, tabs: string): void {
+    keepFocus(host, () => {
+      const swap = (sel: string, html: string) => {
+        const node = mounted.querySelector(sel) as HTMLElement | null;
+        if (!node) return;
+        const keep = node.scrollTop;
+        // "Here now" is a fixed-height scroller inside the body, so it needs
+        // its own place kept as well — it is replaced along with everything else.
+        const inner = node.querySelector('.bhere')?.scrollTop ?? 0;
+        if (!setHtml(node, html)) return;
+        node.scrollTop = keep;
+        const here = node.querySelector('.bhere');
+        if (here) here.scrollTop = inner;
+      };
+      swap('h2', panelHead(parts));
+      swap('.tabs', tabs);
+      swap('.body', parts.body);
+      swap('.foot', parts.foot);
+    });
+  }
+
   private renderModal(): void {
-    if (!this.modal) {
+    /*
+     * On a desktop a building is a card in the right margin, drawn by the
+     * inspector, so there is nothing for the modal host to mount. On a phone
+     * there is no margin to put a card in and it falls through as a sheet like
+     * every other panel.
+     */
+    if (!this.modal || (this.modal === 'building' && this.buildingInRail)) {
       setHtml(this.modalHost, '');
       this.modalMount = '';
       return;
@@ -668,28 +849,7 @@ export class UI {
           this.focus.release();
           return;
         }
-        const def = BUILDINGS[b.def];
-        tabNames = buildingTabs(b);
-        const tab = tabNames[Math.min(this.modalTab, tabNames.length - 1)];
-        title = buildingName(b.def, b.level);
-        sub =
-          b.stage === 'done'
-            ? def.maxLevel > 1
-              ? `Level ${b.level} of ${def.maxLevel}`
-              : esc(def.desc)
-            : b.upgrading
-              ? 'Being improved'
-              : 'Being built';
-        body = buildingBody(this.game, b, tab);
-        foot =
-          this.game.demolishTarget === b.id
-            ? `<span class="confirm-line">Remove the ${esc(def.name.toLowerCase())}? Half of what it cost comes back.</span>
-               <span class="spacer"></span>
-               <button class="btn small" data-act="cancel-place">Keep it</button>
-               <button class="btn small danger primary" data-act="confirm-demolish">Remove it</button>`
-            : buildingFoot(this.game, b);
-        // Lives outside the h2 that gets swapped, so the picture is mounted once.
-        pic = `<span class="mpic"><canvas data-pic="building" data-id="${b.id}" aria-hidden="true"></canvas></span>`;
+        ({ title, sub, body, foot, pic, tabNames } = this.buildingParts(b));
         break;
       }
       case 'journal':
@@ -729,43 +889,15 @@ export class UI {
         break;
     }
 
+    const parts: PanelParts = { title, sub, body, foot, pic, tabNames };
     const active = Math.min(this.modalTab, Math.max(0, tabNames.length - 1));
-    const tabs = tabNames
-      .map(
-        (t, i) =>
-          `<button role="tab" id="mtab-${i}" aria-selected="${i === active}" aria-controls="modal-body"
-            tabindex="${i === active ? 0 : -1}" data-act="tab" data-i="${i}" class="${i === active ? 'on' : ''}">${esc(t)}</button>`,
-      )
-      .join('');
-    const head = `${esc(title)}${sub ? `<span class="msub">${sub}</span>` : ''}`;
+    const tabs = this.tabStrip(tabNames, active);
+    const head = panelHead(parts);
     const mounted = this.modalHost.querySelector('.modal');
     const sig = `${this.modal}:${this.modal === 'building' ? this.game.selection.id : ''}`;
 
-    /*
-     * A building panel redraws several times a second. Replacing the whole
-     * modal each time restarts the scrim's fade — which reads as a flicker, and
-     * was invisible in the source and obvious in a screenshot — and throws away
-     * the body's scroll position. So the same panel is updated in place.
-     */
     if (mounted && this.modalMount === sig) {
-      keepFocus(this.modalHost, () => {
-        const swap = (sel: string, html: string) => {
-          const node = mounted.querySelector(sel) as HTMLElement | null;
-          if (!node) return;
-          const keep = node.scrollTop;
-          // "Here now" is a fixed-height scroller inside the body, so it needs
-          // its own place kept as well — it is replaced along with everything else.
-          const inner = node.querySelector('.bhere')?.scrollTop ?? 0;
-          if (!setHtml(node, html)) return;
-          node.scrollTop = keep;
-          const here = node.querySelector('.bhere');
-          if (here) here.scrollTop = inner;
-        };
-        swap('h2', head);
-        swap('.tabs', tabs);
-        swap('.body', body);
-        swap('.foot', foot);
-      });
+      this.updatePanel(this.modalHost, mounted, parts, tabs);
       paintPortraits(this.game, this.modalHost);
       return;
     }
@@ -917,7 +1049,7 @@ export class UI {
         break;
       case 'tab':
         this.modalTab = Number(target.dataset.i);
-        this.renderModal();
+        this.renderOpenPanel();
         break;
       case 'clean-on':
         game.setCleanMode(!game.cleanMode);

@@ -1202,7 +1202,7 @@ export class Game {
    * Lays out the new ground and leaves the old building alone.
    *
    * Nothing is torn down and nothing stops: the destination is an ordinary
-   * construction site, so helpers carry materials to it and build it exactly as
+   * construction site, so General Workers carry materials to it and build it exactly as
    * they would anything else, while the quarry goes on producing stone the
    * whole time. The building only steps across when the site is finished, in
    * `completeConstruction`. That ordering is the point of the feature — the
@@ -1505,7 +1505,7 @@ export class Game {
     this.notify();
   }
 
-  /** Puts a villager into a job slot, or back to Helper when buildingId is 0. */
+  /** Puts a villager into a job slot, or back to General Worker when buildingId is 0. */
   assign(villagerId: number, buildingId: number): boolean {
     const v = villagerById(this.state, villagerId);
     if (!v) return false;
@@ -1539,16 +1539,16 @@ export class Game {
     return true;
   }
 
-  /** Fills a building's free slots with the nearest available helpers. */
+  /** Fills a building's free slots with the nearest available General Workers. */
   autoStaff(buildingId: number): void {
     const b = buildingById(this.state, buildingId);
     if (!b) return;
     const free = jobSlots(b) - b.workers.length;
     if (free <= 0) return;
-    const helpers = this.state.villagers
+    const spare = this.state.villagers
       .filter((v) => v.workplace === 0)
       .sort((p, q) => (p.x - b.x) ** 2 + (p.y - b.y) ** 2 - ((q.x - b.x) ** 2 + (q.y - b.y) ** 2));
-    for (let i = 0; i < Math.min(free, helpers.length); i++) this.assign(helpers[i].id, b.id);
+    for (let i = 0; i < Math.min(free, spare.length); i++) this.assign(spare[i].id, b.id);
   }
 
   canUpgrade(b: Building): boolean {

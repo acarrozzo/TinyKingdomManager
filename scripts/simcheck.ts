@@ -35,6 +35,7 @@ import {
   CARRY_CAPACITY,
   DAY_LENGTH,
   GOOD_SPOT,
+  SCHEDULE,
   SPECIES,
   rangeOf,
   relocateCost,
@@ -335,7 +336,23 @@ function autoplay(state: GameState): void {
     if (!availableToBuild(state, def) || atBuildLimit(state, def)) continue;
     const cost = BUILDINGS[def].cost;
     let afford = true;
-    for (const k in cost) if (state.stock[k as 'wood'] < (cost[k as 'wood'] ?? 0)) afford = false;
+    for (const k in cost) {
+      /*
+       * Wood is the one cost a kingdom can always work its way up to, and since
+       * General Workers stop hand-felling at the reserve it is now routinely
+       * short of what a building wants. A site takes its materials a dozen at a
+       * time and the store is topped back up between loads, so a player with
+       * thirty-two wood in store and a fifty-wood windmill in mind places the
+       * windmill — waiting for the whole cost to sit in the barn at once would
+       * be waiting for something that never happens without a lodge.
+       *
+       * Every other material has to be produced before it can be spent, and
+       * waiting is exactly right for those: a site the kingdom cannot pay for
+       * is the standstill this list was rewritten to avoid.
+       */
+      if (k === 'wood') continue;
+      if (state.stock[k as 'wood'] < (cost[k as 'wood'] ?? 0)) afford = false;
+    }
     if (!afford) continue;
     // Woodcutters want trees; the mine wants rocky ground under it, which is a
     // terrain now rather than a prop — the boulders lying on it are scenery.
@@ -377,19 +394,24 @@ function autoplay(state: GameState): void {
 }
 
 /*
- * Staff buildings the way a player would: the mine and the food chain first,
- * and never let a single trade swallow every free pair of hands.
+ * Staff buildings the way a player would: the two raw materials first, then the
+ * food chain, and never let a single trade swallow every free pair of hands.
  *
- * The mine leads, and that is not a preference but the shape of the economy:
- * any helper with nothing better to do will fell a tree, and no helper can cut
- * stone, so an unstaffed lodge costs the kingdom some speed while an unstaffed
- * mine costs it stone altogether — and stone is what every cabin, every commons
- * and half the workshops are waiting on. The forge comes last, because nothing
- * is yet waiting on a bar.
+ * The mine leads because stone has exactly one source and every cabin, every
+ * commons and half the workshops are waiting on it. The lodge is second now
+ * rather than sixth: a General Worker will only ever fell enough to keep
+ * thirty-two wood in store, and at half a woodcutter's pace, so an unstaffed
+ * lodge is no longer a kingdom that builds slightly slower — it is a kingdom
+ * building out of an emergency float. The forge comes last, because nothing is
+ * yet waiting on a bar.
  */
-const PRIORITY: BuildingId[] = ['quarry', 'kitchen', 'fishhut', 'mill', 'farm', 'lodge', 'forge'];
+const PRIORITY: BuildingId[] = ['quarry', 'lodge', 'kitchen', 'fishhut', 'mill', 'farm', 'forge'];
 const SOFT_CAP: Partial<Record<BuildingId, number>> = {
-  lodge: 2,
+  // One woodcutter early rather than two: wood is now the cost every building
+  // shares, so a player puts somebody on the lodge the moment it stands — but
+  // putting two there before anybody is fishing is how the harness ends up with
+  // a fat woodpile and an empty larder.
+  lodge: 1,
   quarry: 2,
   farm: 2,
   mill: 1,
@@ -410,12 +432,12 @@ function staff(state: GameState): void {
       const slots = Math.min(d.slots[Math.min(b.level, d.slots.length) - 1], SOFT_CAP[def] ?? 99);
       while (b.workers.length < slots) {
         // Always keep a third of the kingdom free for hauling and building.
-        const helpers = state.villagers.filter((v) => v.workplace === 0);
-        if (helpers.length <= Math.max(1, Math.floor(state.villagers.length / 3))) {
+        const spare = state.villagers.filter((v) => v.workplace === 0);
+        if (spare.length <= Math.max(1, Math.floor(state.villagers.length / 3))) {
           rebalance(state, PRIORITY);
           return;
         }
-        if (!assignJob(state, helpers[0], b.id)) return;
+        if (!assignJob(state, spare[0], b.id)) return;
       }
     }
   }
@@ -453,6 +475,37 @@ let autoplayTimer = 0;
 const marks: string[] = [];
 let lastPop = g.villagers.length;
 
+/*
+ * What the kingdom is actually doing, hour by hour of its own day.
+ *
+ * The routine is the one part of the simulation that is invisible in every
+ * other line of this report and in the source alike: a schedule that reads
+ * perfectly well as six constants can still put everybody in bed through the
+ * afternoon, or leave the midday break unattended because plans started before
+ * it run straight through. Sampling the whole run and printing it by phase is
+ * how "work is the majority of waking activity" and "the kingdom collects
+ * itself three times a day" become things somebody can check rather than
+ * things somebody intended.
+ */
+const PHASES = [
+  { name: 'night (23:30–05:30)', from: SCHEDULE.bed, to: SCHEDULE.wake },
+  { name: 'morning break (05:30–07:00)', from: SCHEDULE.wake, to: SCHEDULE.workStart },
+  { name: 'morning work (07:00–12:00)', from: SCHEDULE.workStart, to: SCHEDULE.middayBreak },
+  { name: 'midday break (12:00–13:00)', from: SCHEDULE.middayBreak, to: SCHEDULE.workResume },
+  { name: 'afternoon work (13:00–21:00)', from: SCHEDULE.workResume, to: SCHEDULE.workEnd },
+  { name: 'evening break (21:00–23:30)', from: SCHEDULE.workEnd, to: SCHEDULE.bed },
+];
+/** Doing the kingdom's work, as against being somewhere pleasant. */
+const PRODUCTIVE = new Set(['working', 'hauling', 'building', 'gathering', 'planting', 'harvesting', 'cooking', 'fishing']);
+const routine = PHASES.map(() => ({ asleep: 0, productive: 0, eating: 0, about: 0, walking: 0 }));
+/** Which stretch of the day a moment falls in. Night is the wrap-around, so it is the default. */
+const phaseOf = (t: number): number => {
+  for (let i = 1; i < PHASES.length; i++) {
+    if (t >= PHASES[i].from && t < PHASES[i].to) return i;
+  }
+  return 0;
+};
+
 for (let i = 0; i < totalSteps; i++) {
   g.clock += DT;
   g.dayT += DT / DAY_LENGTH;
@@ -478,6 +531,20 @@ for (let i = 0; i < totalSteps; i++) {
   if (g.villagers.length !== lastPop) {
     marks.push(`  t+${((i * DT) / 60).toFixed(0)}m  population ${g.villagers.length}`);
     lastPop = g.villagers.length;
+  }
+
+  // Every five game-seconds is plenty: the shortest thing anybody does is a
+  // seven-second meal, and sampling every tick would be sixty thousand reads a
+  // kingdom-day for a figure quoted to the nearest per cent.
+  if (i % 50 === 0) {
+    const bucket = routine[phaseOf(g.dayT)];
+    for (const v of g.villagers) {
+      if (v.activity === 'sleeping') bucket.asleep++;
+      else if (PRODUCTIVE.has(v.activity)) bucket.productive++;
+      else if (v.activity === 'eating') bucket.eating++;
+      else if (v.activity === 'walking') bucket.walking++;
+      else bucket.about++;
+    }
   }
 }
 
@@ -763,6 +830,32 @@ for (let i = 0; i < g.tiles.length; i++) {
     break;
   }
 }
+/*
+ * The day, as it was actually lived. Read down the work rows for whether people
+ * are working, and across the break rows for whether they are anywhere worth
+ * being while they are not.
+ */
+line('\nThe day as lived (share of villager-time, sampled across the run)');
+for (let i = 0; i < PHASES.length; i++) {
+  const b = routine[i];
+  const n = b.asleep + b.productive + b.eating + b.about + b.walking;
+  if (n === 0) continue;
+  const pc = (x: number) => `${String(Math.round((x / n) * 100)).padStart(3)}%`;
+  line(
+    `  ${PHASES[i].name.padEnd(28)} asleep ${pc(b.asleep)}  working ${pc(b.productive)}` +
+      `  walking ${pc(b.walking)}  eating ${pc(b.eating)}  about ${pc(b.about)}`,
+  );
+}
+{
+  // Underemployment is a state of the planner rather than of the kingdom, so it
+  // is only visible here. A large number with food in the store is the sink
+  // doing its job; a large number with an empty larder is a kingdom that has
+  // run out of things to do *and* things to eat.
+  const spare = g.villagers.filter((v) => v.underworkedDay === g.day).length;
+  const fed = g.villagers.filter((v) => v.extraMealDay === g.day).length;
+  line(`  nothing to do today: ${spare}/${g.villagers.length}   ·   extra meals taken today: ${fed}`);
+}
+
 const idle = g.villagers.filter((v) => v.activity === 'idle').length;
 
 line(`\nIdle right now: ${idle}/${g.villagers.length}`);

@@ -6,8 +6,9 @@
  * simply re-decide what to do the moment the kingdom loads.
  */
 
-import type { GameState, SpeciesId, Villager } from '../types';
+import type { GameState, JobId, SpeciesId, Villager } from '../types';
 import { emptyStock } from '../types';
+import { JOB_META } from '../sim/defs';
 import { buildGoals } from '../sim/goals';
 import { restoreIdCounter } from '../sim/state';
 import { SURVEY_INTERVAL, newWildlifeTimers } from '../sim/wildlife';
@@ -245,6 +246,8 @@ export function serialize(g: GameState): SavePayload {
       sleepOffset: v.sleepOffset,
       energy: v.energy,
       hunger: v.hunger,
+      underworkedDay: v.underworkedDay,
+      extraMealDay: v.extraMealDay,
     })),
     animals: g.animals.map((a) => ({
       id: a.id,
@@ -487,6 +490,34 @@ function reviveWildlife(saved: any): GameState['wildlife'] {
   };
 }
 
+/**
+ * The Helper became the General Worker, and the Keeper — a trade with no
+ * workplace and no behaviour — went entirely. Old kingdoms are moved across
+ * rather than refused: nobody loses a post they were standing in, and a Keeper
+ * who never had anything to keep simply turns up as a General Worker, which is
+ * what they were doing all along.
+ */
+function reviveJob(job: any): JobId {
+  if (job === 'helper' || job === 'keeper' || !job) return 'general';
+  return JOB_META[job as JobId] ? (job as JobId) : 'general';
+}
+
+/** …and the practice they put in under the old name comes with them. */
+function reviveXp(xp: any): Partial<Record<JobId, number>> {
+  if (!xp || typeof xp !== 'object') return {};
+  const out: Partial<Record<JobId, number>> = {};
+  for (const k in xp) {
+    const n = Number(xp[k]);
+    if (!Number.isFinite(n)) continue;
+    const job = reviveJob(k);
+    out[job] = (out[job] ?? 0) + n;
+  }
+  // Two old trades folding into one could in principle push somebody past the
+  // top of the ladder; ranks are read straight off this number.
+  for (const k in out) out[k as JobId] = Math.min(100, out[k as JobId] ?? 0);
+  return out;
+}
+
 function reviveVillager(v: any): Villager {
   return {
     id: v.id,
@@ -494,13 +525,13 @@ function reviveVillager(v: any): Villager {
     x: v.x,
     y: v.y,
     face: v.face ?? 0,
-    job: v.job ?? 'helper',
+    job: reviveJob(v.job),
     workplace: v.workplace ?? 0,
     home: v.home ?? 0,
     // Older saves predate hand-picked beds; everyone in them settled on their own.
     homeFixed: !!v.homeFixed,
     trait: v.trait ?? 'steady',
-    xp: v.xp ?? {},
+    xp: reviveXp(v.xp),
     carrying: v.carrying ?? null,
     appearance: v.appearance,
     favorite: !!v.favorite,
@@ -511,6 +542,10 @@ function reviveVillager(v: any): Villager {
     sleepOffset: v.sleepOffset ?? 0,
     energy: v.energy ?? 1,
     hunger: v.hunger ?? 0.3,
+    // Nought is "not today", whatever day it is: an old kingdom opens with
+    // nobody owed a meal and everybody's standing reckoned afresh.
+    underworkedDay: v.underworkedDay ?? 0,
+    extraMealDay: v.extraMealDay ?? 0,
     activity: 'idle',
     plan: [],
     path: null,

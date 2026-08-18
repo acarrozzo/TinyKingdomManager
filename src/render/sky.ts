@@ -39,9 +39,9 @@ export type Band = 'night' | 'dawn' | 'day' | 'dusk';
  * invented for the picture.
  */
 export const BAND_META: Record<Band, { name: string; note: string }> = {
-  dawn: { name: 'Dawn', note: 'First light. The early risers are already up.' },
-  day: { name: 'Day', note: 'Work hours. Everyone who has a job is at it.' },
-  dusk: { name: 'Dusk', note: 'The light is going. Work winds down.' },
+  dawn: { name: 'Dawn', note: 'First light, and breakfast. The early risers are out before the rest.' },
+  day: { name: 'Day', note: 'Work hours, with an hour off in the middle of them.' },
+  dusk: { name: 'Dusk', note: 'The light is going. Tools down at nine, and the kingdom collects itself.' },
   night: { name: 'Night', note: 'Most of the kingdom is asleep.' },
 };
 

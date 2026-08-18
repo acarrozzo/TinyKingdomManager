@@ -795,6 +795,15 @@ button {
   /* Clears the view controls in the corner below. */
   bottom: 62px;
 }
+/*
+ * Wider while a building is in it. A roster row is three columns — who they
+ * are, what they are doing, and the one control that applies to them — and at
+ * the width the other cards want, the middle one is squeezed to nothing. The
+ * cards themselves have no such row, so they keep the narrower margin.
+ */
+#ui.wide-rail .side.right {
+  width: 330px;
+}
 
 .scroll {
   overflow-y: auto;
@@ -1453,6 +1462,47 @@ button.tag {
   padding: 15px 18px 13px;
   border-bottom: 1px solid var(--edge);
 }
+
+/*
+ * The same panel in the right margin, which is where a building's own is drawn
+ * on a desktop: beside the thing it describes, with the map still live around
+ * it, rather than centred over a kingdom nobody can see. It wears the margin's
+ * chrome instead of the modal's — the translucent panel, the smaller radius,
+ * the tighter padding — so that a lodge and a villager sitting one above the
+ * other read as one family rather than as a dialog that lost its way.
+ */
+#ui .side.right > .modal.rail {
+  width: 100%;
+  max-height: 100%;
+  min-height: 0;
+  background: var(--panel);
+  backdrop-filter: blur(10px);
+  border-color: var(--edge);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.modal.rail header {
+  padding: 11px 13px 10px;
+}
+.modal.rail header h2 {
+  font-size: 14px;
+}
+.modal.rail .mpic {
+  margin-right: 10px;
+}
+.modal.rail .tabs {
+  padding: 0 7px;
+}
+.modal.rail .tabs button {
+  padding: 8px 9px;
+  font-size: 12px;
+}
+.modal.rail .body {
+  padding: 12px 13px 14px;
+}
+.modal.rail .foot {
+  padding: 10px 13px;
+}
 .modal header h2 {
   flex: 1;
   min-width: 0;
@@ -1692,6 +1742,35 @@ button.tag {
 }
 .brow .ctl select {
   max-width: 168px;
+}
+
+/*
+ * Neither a phone sheet nor a card in the margin can hold three columns across
+ * a roster row: something has to give, and squeezed to 340 pixels it is both
+ * the name and the activity, ellipsised to "Poppy L…" beside "Watching the
+ * world g…". So the control keeps the right-hand side and the activity drops
+ * under the name, where both are read in full. The centred modal on a desktop
+ * has the width for all three and keeps them.
+ */
+#ui.compact .brow,
+.modal.rail .brow {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 8px;
+}
+/* Those rows are half again as tall, so the fixed box has to grow to match. */
+#ui.compact .bhere,
+.modal.rail .bhere {
+  height: 146px;
+}
+#ui.compact .brow .what,
+.modal.rail .brow .what {
+  grid-column: 1;
+  grid-row: 2;
+}
+#ui.compact .brow .ctl,
+.modal.rail .brow .ctl {
+  grid-column: 2;
+  grid-row: 1 / span 2;
 }
 
 .badd {
@@ -2313,23 +2392,6 @@ kbd {
 #ui.compact .modal .foot .btn,
 #ui.compact .modal .tabs button {
   min-height: 40px;
-}
-/* At 390px a roster row cannot hold three columns; the control drops under. */
-#ui.compact .brow {
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 4px 8px;
-}
-/* Those rows are half again as tall, so the fixed box has to grow to match. */
-#ui.compact .bhere {
-  height: 146px;
-}
-#ui.compact .brow .what {
-  grid-column: 1;
-  grid-row: 2;
-}
-#ui.compact .brow .ctl {
-  grid-column: 2;
-  grid-row: 1 / span 2;
 }
 #ui.compact .brow .ctl select {
   max-width: 132px;

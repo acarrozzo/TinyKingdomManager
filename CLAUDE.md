@@ -114,15 +114,38 @@ because the failure hides: a larder wildly out of proportion to the population
 fails the run. A kingdom with four hundred loaves looks perfectly healthy in
 every other line of the report.
 
-Two things about the harness are load-bearing and easy to undo by tidying. It
+It also prints **the day as lived**: the run sampled every five game-seconds and
+broken down by which stretch of the day it was — asleep, working, walking,
+eating, or about. That is the only place the routine is visible at all. A
+schedule reads perfectly well as six constants and can still leave the midday
+break unattended or put half the kingdom in bed through the afternoon, and none
+of that shows up in a resource line. Expect ~90% asleep at night, nought asleep
+during either work stretch, and the meals to appear in the break rows.
+
+Three things about the harness are load-bearing and easy to undo by tidying. It
 **staffs before it builds**, and never gates staffing on whether something is
 under construction — it used to do both at the foot of one early return, so a
 site the kingdom could not yet pay for froze the whole run: nobody could be put
 on the mine, so no stone was cut, so the site stayed unpaid, for twenty days.
+It **treats wood as payable over time and every other material as needing to be
+in store**: since General Workers stop hand-felling at the reserve, a kingdom is
+routinely short of a building's full wood cost, and a player in that position
+places the building anyway and lets the site fill a dozen at a time. Requiring
+the whole cost in the barn at once made the run stall at six people with nothing
+to eat — a measurement of the harness rather than of the game. Waiting is still
+right for everything else, because a site the kingdom genuinely cannot pay for
+is the standstill this list was rewritten to avoid.
 And it plays by the interface's own rules, including `needsRock` and
 `nearWater`, so it can no more drop a quarry on a meadow than the player can,
 nor a fishing hut in the middle of a field. It builds *both* branches of the
 food chain, which is the only way the run exercises either of them honestly.
+
+**`SOFT_CAP` is a model of how a player staffs, and it is delicate.** The lodge
+sits second in `PRIORITY` now that wood is gated on a woodcutter, but capped at
+*one*: two woodcutters ahead of anybody fishing left the run with a fat woodpile
+and an empty larder, because the harness keeps a third of the kingdom free and
+the first four pairs of hands were all raw materials. One woodcutter, then food,
+is both what a player does and what produces a kingdom worth reading.
 
 A run of ~600–1000 game-minutes is the useful range. Under ~300 you will not see
 the kitchen come online, and under ~450 you will not see a forge; over ~1200 the
@@ -334,11 +357,45 @@ of concrete steps — `move`, `act`, `take`, `give`, `labour`, `sleep`, `effect`
 Every economic action is therefore something you can watch happen on the map.
 
 Priority order: put down anything carried → sleep if it is their bedtime → eat if
-hungry and there is a cooked meal of either kind → the founding sequence if one
-is running → job work if
-it is work hours → leisure. Helpers fall through a task ladder: supply
-construction sites, then build them, then restock workshops, then clear finished
-goods, then hand-gather whatever is scarcest.
+they are properly hungry, or merely hungry and on a break → the founding sequence
+if one is running → job work if it is work hours → leisure. Everybody falls
+through the **General Worker** ladder when their own work has nothing in it:
+supply construction sites, then build them, then restock workshops, then clear
+finished goods, then fell a tree — and that last one only below the reserve.
+
+**The day has three breaks in it, and they are the shape of the kingdom.**
+`SCHEDULE` in `defs.ts` owns the six boundaries — up at half five, out at seven,
+an hour off at noon, finished at nine, bed at half eleven — and `isWorkTime`,
+`isBreak` and `shouldSleep` are the whole of what reads them. Thirteen hours of
+work, five of breaks, six of sleep. The point of the middle break is that the
+place visibly collects itself three times a day rather than running flat from
+waking to bed, and `planLeisure`'s `gathering` argument is what makes that true:
+on a break the roll is bent toward the commons and the comforts.
+
+**A trait moves the outer ends of somebody's day and never the middle.**
+`dayShift` is trait plus a little of their own, applied to waking, the morning
+start, the evening finish and bedtime alike — so an early riser is out on the
+job while the rest are still at breakfast, an owl is still at it after they have
+gone in, and *both ends move together* so everyone still sleeps six hours and
+energy needs no special case. The midday hour is deliberately exempt: it is only
+an hour long, and a shifted one would leave the risers and the owls sharing none
+of it. Do not give a trait its own work *length*; that is how the old schedule
+had night owls working an hour later than everybody for nothing.
+
+**Ordinary hunger waits for a break; severe hunger does not.** Eating used to
+interrupt whatever was happening the moment somebody passed 0.7. Now that there
+is a break along shortly whatever the hour, only `SEVERE_HUNGER` cuts into work.
+
+**Having nothing to do earns a meal, once a day.** A villager is *underemployed*
+only when the planner, during work hours, finds them no specialty work and no
+General Worker task — `think()` marks `underworkedDay` at exactly that point, so
+breaks, sleep, the walk between two jobs and the moment spent deciding are all
+somebody perfectly well occupied. They then take one extra meal at a break, and
+`extraMealDay` is set by the `eat` effect rather than when the plan is made, so
+a plan dropped halfway does not cost them their one chance. Both fields are
+saved. This is the food sink that keeps a finished kingdom's larder worth
+filling — a kitchen with nothing left to feed is a building the player stops
+looking at — and the one-a-day cap is what stops it becoming a drain.
 
 **Plans are transient and never serialised.** They can hold closures and derived
 data freely. After a load everyone simply re-decides. Do not try to save them.
@@ -468,7 +525,7 @@ thing.** `sim/vibes.ts` is the only place that reckons them, out of three parts:
 The one thing they do is decide where in its window the next arrival lands.
 They are not a currency, they gate nothing, and no building's output depends on
 them. **Employment must never touch them**: an open job slot, a closed
-workplace and a kingdom of helpers all score the same, because being quietly
+workplace and a kingdom of General Workers all score the same, because being quietly
 marked down for not filling a post is the sort of hidden pressure this game does
 not do.
 
@@ -531,9 +588,10 @@ responsible for unlocking** — that is why cooked food gates the Village Common
 rather than the Settled Camp, and why the food chain (Farm, Fishing Hut,
 Windmill, Kitchen) is unlocked by *goals* instead. The Settled Camp asking for a quarry is fine
 precisely because the Base Camp is what opened the quarry. And **every cost must
-fit inside the storage the previous level left behind, and under what
-`gatherTarget` will actually fetch**: a cost above that line is one nobody can
-ever pay. The requirements are written to be things that cannot un-happen,
+fit inside the storage the previous level left behind**: a cost above that line
+is one nobody can ever pay. Hand-gathering no longer sets a second ceiling — the
+wood reserve caps fetching rather than spending, so a cost above it is slow
+rather than impossible — but storage still does. The requirements are written to be things that cannot un-happen,
 because a kingdom is never told it has gone backwards.
 
 **Every step of every building shows its whole price before you commit.**
@@ -573,7 +631,7 @@ kingdom's second real decision and the spine of the early game:
 
 > **wood → Quarry → stone → the commons grows**
 
-Nothing else may ever produce stone. Not a helper with bare hands, not a goal
+Nothing else may ever produce stone. Not a General Worker with bare hands, not a goal
 reward, not starting stock, and not clearing a boulder to build on — `place()`
 and `relocate()` both check `hasQuarry()` before a cleared boulder gives anything
 back, so building on top of the rock is not a way round the rule. The Quarry's
@@ -692,7 +750,7 @@ refuses, and it says what to do instead.
 
 **Moving a building never takes it out of service.** `relocate()` puts an
 ordinary construction site on the new ground carrying `relocOf`, and marks the
-original `movingTo`. Helpers then supply and build that site exactly as they
+original `movingTo`. General Workers then supply and build that site exactly as they
 would any other — no planner needed a word changing, because `siteCost` and
 `labourNeeded` simply have a third case. The original goes on working the whole
 time, and only steps across in `finishRelocation` when the site is done.
@@ -768,23 +826,32 @@ long time without showing: a mill with wheat coming in and no kitchen built yet
 ground every last sheaf into flour, filled the store with it, and left the
 miners who would have cut the stone the kitchen was waiting on with nowhere to
 put anything down. `chooseRecipe` checks the glut before a workshop starts
-anything, and `planHelper`'s restock step goes through the same function, so it
-will not carry wheat to a mill that has stopped or coal to a forge that has. Clearing the output shelf is deliberately *not* gated —
+anything, and `planGeneralWork`'s restock step goes through the same function, so
+it will not carry wheat to a mill that has stopped or coal to a forge that has. Clearing the output shelf is deliberately *not* gated —
 a workshop that has already made the stuff still gets it carried off.
 
-Hand-gathering has the same idea in `gatherTarget()`: the flat target (120 wood)
-is additionally capped at half of what the kingdom can actually hold. With a
-storehouse up this never binds. It exists for the Base Camp, which holds sixty:
-without it helpers cheerfully fill that and leave the kingdom unable to afford
-the improvement that would fix it — a stall with no way out, which is worse than
-a slow kingdom. It is also the ceiling every commons upgrade cost has to sit
-under. This is the same trap `DESIGN.md`-style per-resource shelf limits keep
-falling into, and the reason any future version of them has to clear the early
-costs.
+**Hand-felling is an emergency float, not a supply.** `WOOD_RESERVE` is 32, and
+it is the whole of what a General Worker will fetch by hand — below it they fell
+a tree, above it they do not, whatever the kingdom is saving for. They also swing
+at **half a woodcutter's pace** (`HAND_FELL_MUL`), so replacing them with a lodge
+is worth doing rather than a rounding error. That gives the woodcutter the one
+thing they lacked, which is a reason to exist: wood is the cost every building
+shares, and the lodge is the only way to have it faster than a trickle.
 
-**Wood is the only thing hands alone can fetch.** `GATHER_TARGET` and
-`NODE_WORK` list trees and nothing else, so there is no path through
-`planGatherNode` that produces stone and no way for a helper to find one.
+It is emphatically **not a gate**, and the difference matters. The reserve caps
+*fetching*, never storing or spending: a site takes its materials a dozen at a
+time and the store is topped back up between loads, so a ninety-wood commons is
+paid for in seven trips rather than not at all. A kingdom that never staffs a
+lodge still grows — measured, with the lodge taken out of the harness's staffing
+list entirely: on seed 12345 it reaches ten people in twenty-three days, fed,
+housed and at 90 Vibes, against twenty with one woodcutter on the job. Slower,
+never stuck, and nothing anywhere *requires* the building. Do not turn this into a
+requirement, and do not raise the reserve to make hand-felling viable again;
+both undo the point.
+
+**Wood is the only thing hands alone can fetch.** `NODE_WORK` lists trees and
+nothing else, so there is no path through `planGatherNode` that produces stone
+and no way for a General Worker to find one.
 See "Stone comes from a quarry" below.
 
 **A workshop may know several recipes, and the forge does.** `recipesOf` answers
@@ -1136,25 +1203,41 @@ carries the building's id for the same reason, and it lets go of itself the
 moment the ground is chosen: unlike laying out a row of houses there is exactly
 one of these to place.
 
-**Villagers, animals and tiles get a card in the right margin; a building gets
-the whole modal.** Clicking a building on the map fires `game.onBuildingClicked`
-— deliberately not fired by `place()`, so laying out a row of houses is not
+**Everything you can point at on the map gets a card in the right margin, and
+that includes a building.** Clicking one fires `game.onBuildingClicked` —
+deliberately not fired by `place()`, so laying out a row of houses is not
 interrupted by a panel — and the UI opens a **People · Work · About** panel
-(**Site · About** while it is still being built). The margin has no building
-card at all any more. Closing the panel clears the selection, so nothing is left
-outlined on the map with nothing to explain it. On a phone that margin card
-becomes a bottom sheet with a Close button of its own, and the roster in the
-People panel becomes stacked cards — name, what they are doing, one job
-dropdown — because four columns in 340 pixels makes all four illegible rather
-than one of them.
+(**Site · About** while it is still being built). Closing it clears the
+selection, so nothing is left outlined on the map with nothing to explain it.
+
+It is a *card*, not a modal wearing a margin: no scrim, no focus trap, and the
+map stays live all round it, so the next building is one click away and the
+build rail on the opposite side may stay open beside it. `setModal` therefore
+exempts it from the one-surface-at-a-time rule that every other panel keeps —
+the reason for that rule is the scrim dimming what is behind it, and there
+isn't one. The other panels are about the whole kingdom and still take the
+screen; a building is about one place on it and does not.
+
+The margin is 274 pixels for the cards and **330 while a building is in it**
+(`#ui.wide-rail`), because a roster row is three things and the cards have no
+such row. Even at 330 it is not three *columns*: a name, an activity and a
+control squeezed across that width ellipsise to "Poppy L…" beside "Watching
+the world g…", so the rail borrows the phone's row instead — control on the
+right, activity under the name. The centred modal has the width for all three
+and keeps them.
+
+On a phone there is no margin to put a card in, so a building is a bottom sheet
+like every other panel, focus trap and all — `buildingInRail` in `ui.ts` is the
+whole of that fork, and `buildingParts` builds the same pieces for both, since
+a panel that said different things in the two places would be two panels.
 
 That panel is a *live* view: `refreshPanels()` redraws it a few times a second so
 "Here now", batch progress and site materials keep up. Two consequences worth
 knowing. It skips the redraw while a `<select>` inside it has focus, or opening a
-dropdown would slam shut under the player. And it updates the existing nodes in
-place rather than rewriting `modalHost.innerHTML` — replacing the whole modal
-restarts the scrim's fade animation, which reads as a flicker (invisible in the
-source, obvious in a screenshot) and throws away the body's scroll position.
+dropdown would slam shut under the player. And `updatePanel` swaps the existing
+nodes in place rather than rewriting the host's `innerHTML` — replacing the whole
+panel restarts the scrim's fade animation, which reads as a flicker (invisible in
+the source, obvious in a screenshot) and throws away the body's scroll position.
 
 **`ui/portraits.ts` paints the map's own art into the interface** — the figure
 beside a name in a roster is `drawVillager` at 2× on a still, empty-handed pose,
@@ -1169,8 +1252,9 @@ the sails are not baked into the sprite, so the panel has to draw them too.
 **"Here now" is a fixed height, not a minimum.** People wander in and out of it
 constantly; a box that grows and shrinks drags everything below it up and down
 the whole time. It holds two rows and scrolls, and its scroll position is one of
-the things the in-place update has to preserve. Mobile rows are half again as
-tall, so that height is set per breakpoint.
+the things the in-place update has to preserve. Two-line rows are half again as
+tall, so wherever they are used — a phone sheet, or the margin card — that
+height goes up to match.
 
 **"Here now" means within one tile of the footprint**, which is exactly where
 `footprintApproach()` puts people, so it is the honest definition of being at a
@@ -1215,10 +1299,14 @@ iconed, and show which section is open.
 **A modal closes the build rail on every screen, not only a phone.** A desktop
 has the room for both, but nothing to gain by it: the scrim dims the rail and
 takes its clicks, so what is left is a list sitting there lit up and
-unreachable. `setModal` does it unconditionally. Esc then steps back out one
-layer per press — modal, then the placement being considered, then the tool
-holding it, then the list the tool came from, then clean view, then the
-selection — which is the ladder in `bindKeys` and the order they were opened in.
+unreachable. `setModal` does it for everything **except a building on a
+desktop**, which is a card in the opposite margin with no scrim at all — the
+reason for the rule does not apply, and clicking a cabin to see who sleeps
+there should not shut the list you were laying the next one out from. Esc then
+steps back out one layer per press — modal, then the placement being
+considered, then the tool holding it, then the list the tool came from, then
+clean view, then the selection — which is the ladder in `bindKeys` and the
+order they were opened in.
 
 **Build is a primary control and the only one up there.** Everything else in
 the toolbar and along the phone's bottom edge is somewhere to go and look at
@@ -1364,8 +1452,10 @@ keys, per-building job slots, the goal list, the coin resource. Adding one of
 these is mostly new data in `defs.ts` plus a system module, not surgery.
 
 Also unbuilt and worth knowing: there is currently no Carpenter, Scholar,
-Merchant or Animal Keeper profession (the `keeper` job id exists but nothing
-uses it), and `coin` has no sink beyond a single goal reward. **Iron and steel
+Merchant or Animal Keeper profession — the `keeper` job id used to exist with
+nothing using it and has been removed, so adding animal care means adding the
+trade *and* the building it stands in — and `coin` has no sink beyond a single
+goal reward. **Iron and steel
 bars have no sink either** — the chain is the content for now, exactly as the
 coin is. Mithril is a step further out: the resources, the Mithril Mine and the
 forge's mithril recipe are all written down and none of them is reachable, and
@@ -1383,7 +1473,7 @@ depletes, leaves a stump and grows back like every other tree. Do not reintroduc
 a special opening-only resource; if the first minute needs to be gentler, tune
 the chop, not the world.
 
-**Hand-mining is gone, and is not coming back.** Helpers and the founder used to
+**Hand-mining is gone, and is not coming back.** General Workers and the founder used to
 break boulders for stone the way they fell trees for wood. They cannot any more:
 stone is the Quarry's alone, and the whole early game is shaped by that one
 dependency. `NODE_WORK` lists trees and nothing else, so there is no code path
@@ -1441,7 +1531,13 @@ Map 40×40 · a day is 30 real minutes at 1× (20 day / 10 night) · the sun is 
 from day-fraction 0.02 to 0.74 and the moon has the rest, on an eight-day phase
 cycle · shadows run from about two-thirds of a caster's height at midday out to
 the 3.2× cap near either rim · 6 days a season,
-24 a year · **population is capped by beds and by nothing else** — 2 at the
+24 a year · the working day is up at 05:30, out at 07:00, an hour off at noon,
+finished at 21:00 and asleep from 23:30 — thirteen hours of work, five of
+breaks, six of sleep, which restores about 50 energy against the 32 an
+eighteen-hour day drains · a trait or a villager's own habit shifts the day's
+outer ends by up to about three quarters of an hour either way and never the
+midday hour · General Workers hand-fell only below 32 wood and at half a
+woodcutter's pace · **population is capped by beds and by nothing else** — 2 at the
 commons plus 2 / 4 / 6 a Cabin, so 20 at a Village Commons and 26 at a Kingdom
 Commons · with a bed free somebody always arrives, in 6–9 game-minutes at one
 villager, 18–26 at two or three, 25–35 to seven, 35–50 to fifteen and 50–75
@@ -1481,6 +1577,6 @@ hundred has one that meets the sea and becomes a bay.
 Per-resource shelf limits — one good never taking more than a share of the
 store — have been discussed and deliberately deferred. Any such limit has to
 clear the early costs (a Storehouse is 25 wood against an opening capacity of
-50) or it recreates the deadlock it was meant to prevent. `gatherTarget()` is
-the nearest thing to one that survived, and only because it caps *fetching*
-rather than storing.
+50) or it recreates the deadlock it was meant to prevent. `WOOD_RESERVE` is the
+nearest thing to one that survived, and only because it caps *fetching* rather
+than storing.

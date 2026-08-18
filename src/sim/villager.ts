@@ -21,10 +21,16 @@ import {
   FISH_YIELD,
   FOOD_CHAIN_HEADROOM,
   FOOD_CHAIN_VALUE,
+  HAND_FELL_MUL,
+  JOB_META,
   MINE_SECONDS,
   MINE_YIELD,
+  PERSONAL_DAY_SHIFT,
+  SCHEDULE,
   SEVERE_HUNGER,
   TERRAIN_SPEED,
+  TRAIT_DAY_SHIFT,
+  WOOD_RESERVE,
   buildingName,
   extractsOf,
   liveRecipesOf,
@@ -93,28 +99,6 @@ const PLANT_SECONDS = 3.5;
 const HARVEST_SECONDS = 3.5;
 const HARVEST_YIELD = 3;
 const PLOT_GROW_SECONDS = 200;
-
-/**
- * Hand-gathering stops once the kingdom has comfortably enough of something.
- *
- * Wood is the only entry, and that is the whole of the early economy: stone
- * cannot be gathered by hand at all, so a kingdom's stone is exactly what its
- * quarry has produced. See `planHelper`.
- */
-const GATHER_TARGET: Record<string, number> = { wood: 120 };
-/**
- * …and no more than this share of whatever the kingdom can actually hold. With
- * a storehouse up this never binds, but a Base Camp holds sixty, and without a
- * ceiling helpers would fill it with timber and leave the kingdom unable to
- * afford the very improvement that would fix it.
- */
-const GATHER_SHARE: Record<string, number> = { wood: 0.5 };
-
-function gatherTarget(g: GameState, res: ResourceId): number {
-  const cap = storageCapacity(g);
-  if (cap <= 0) return GATHER_TARGET[res];
-  return Math.min(GATHER_TARGET[res], Math.max(12, cap * GATHER_SHARE[res]));
-}
 
 /** Seasons change how fast wheat comes on. Winter is slow, never fatal. */
 const SEASON_GROWTH: Record<string, number> = { spring: 1.1, summer: 1.3, autumn: 0.9, winter: 0.35 };
@@ -412,9 +396,11 @@ function checkMastery(g: GameState, v: Villager, job?: JobId): void {
   const key = `master:${v.id}:${job}`;
   if (g.unlocked.has(key)) return;
   g.unlocked.add(key);
-  const label = job.charAt(0).toUpperCase() + job.slice(1);
+  // The trade's own name rather than its id, which is the difference between
+  // "Master General Worker" and "Master General".
+  const label = JOB_META[job].name;
   journal(g, `${v.name} became a Master ${label}.`, '★');
-  note(g, v.id, `Mastered the ${job}'s trade.`);
+  note(g, v.id, `Mastered the ${label.toLowerCase()}'s trade.`);
   toast(g, `${v.name} — Master ${label}`, '★', 'good');
 }
 
@@ -489,6 +475,9 @@ function doEffect(g: GameState, v: Villager, step: Extract<Step, { t: 'effect' }
         if (held.qty <= 0) v.carrying = null;
         v.hunger = 0;
         v.energy = Math.min(1, v.energy + 0.08);
+        // The day is spent here rather than when the walk began, so a plan
+        // dropped halfway does not cost somebody their one extra meal.
+        if (step.extra) v.extraMealDay = g.day;
       }
       break;
     }
@@ -623,9 +612,9 @@ function doLabour(g: GameState, v: Villager, step: Extract<Step, { t: 'labour' }
   }
   v.activity = 'building';
   const need = labourNeeded(b);
-  const rate = (v.trait === 'crafty' ? 1.2 : 1) * (0.85 + xpOf(v, 'helper') * 0.004);
+  const rate = (v.trait === 'crafty' ? 1.2 : 1) * (0.85 + xpOf(v, 'general') * 0.004);
   b.labour += dt * rate;
-  addXp(v, 'helper', xpGain(xpOf(v, 'helper'), dt));
+  addXp(v, 'general', xpGain(xpOf(v, 'general'), dt));
 
   if (b.labour >= need) {
     completeConstruction(g, b);
@@ -815,24 +804,54 @@ function unstick(g: GameState, v: Villager): void {
 // Schedules
 // ---------------------------------------------------------------------------
 
+/**
+ * How far this person's day sits from everybody else's. Trait plus a little of
+ * their own, and it moves the *outer* ends of the day only: waking, going out
+ * in the morning, finishing in the evening, turning in. Both ends move
+ * together, so an early riser and an owl sleep exactly as long as each other
+ * and energy needs no special case.
+ *
+ * The point of it is the overlap at the edges. An early riser is out cutting
+ * stone while the rest of the kingdom is still at breakfast, an owl is still at
+ * the forge after they have gone in, and a player who notices can staff around
+ * it. What it must never do is take somebody out of a break the rest of the
+ * kingdom is having, which is why the midday hour is exempt below.
+ */
+function dayShift(v: Villager): number {
+  const trait = v.trait === 'earlyRiser' ? -TRAIT_DAY_SHIFT : v.trait === 'nightOwl' ? TRAIT_DAY_SHIFT : 0;
+  return trait + clamp(v.wakeOffset, -PERSONAL_DAY_SHIFT, PERSONAL_DAY_SHIFT);
+}
+
+/**
+ * Never earlier than the first minutes of `dayT`, because the day's own zero is
+ * five in the morning and a wake time that fell off the front of it would wrap
+ * round to the small hours and leave somebody asleep for a day and a half.
+ */
 function wakeTime(v: Villager): number {
-  let t = 0.035 + v.wakeOffset;
-  if (v.trait === 'earlyRiser') t -= 0.03;
-  if (v.trait === 'nightOwl') t += 0.05;
-  return clamp(t, 0, 0.2);
+  return clamp(SCHEDULE.wake + dayShift(v), 0.002, 0.2);
 }
 
+/** Bedtime carries a little extra wobble of its own, so a household does not turn in as one. */
 function bedTime(v: Villager): number {
-  let t = 0.72 + v.sleepOffset;
-  if (v.trait === 'nightOwl') t += 0.14;
-  if (v.trait === 'earlyRiser') t -= 0.04;
-  return clamp(t, 0.62, 0.95);
+  return clamp(SCHEDULE.bed + dayShift(v) + clamp(v.sleepOffset, -0.01, 0.01), 0.7, 0.86);
 }
 
+/**
+ * Two stretches of work with an hour between them. The morning's start and the
+ * evening's end move with the person; the midday break does not move for
+ * anybody, because it is only an hour long and a shifted one would leave the
+ * early risers and the owls sharing none of it.
+ */
 function isWorkTime(g: GameState, v: Villager): boolean {
-  const start = wakeTime(v) + 0.02;
-  const end = v.trait === 'nightOwl' ? 0.68 : 0.62;
-  return g.dayT >= start && g.dayT < end;
+  const s = dayShift(v);
+  const t = g.dayT;
+  if (t >= SCHEDULE.workStart + s && t < SCHEDULE.middayBreak) return true;
+  return t >= SCHEDULE.workResume && t < SCHEDULE.workEnd + s;
+}
+
+/** Awake, and not at work: one of the three times a day the kingdom collects itself. */
+function isBreak(g: GameState, v: Villager): boolean {
+  return !shouldSleep(g, v) && !isWorkTime(g, v);
 }
 
 function shouldSleep(g: GameState, v: Villager): boolean {
@@ -867,15 +886,36 @@ function think(g: GameState, v: Villager): void {
   if (shouldSleep(g, v) && v.energy < 0.92) {
     if (planSleep(g, v)) return;
   }
-  if (v.hunger > 0.7 && preparedFood(g) >= 1) {
-    if (planEat(g, v)) return;
+
+  const working = isWorkTime(g, v);
+  const onBreak = isBreak(g, v);
+  if (preparedFood(g) >= 1) {
+    // Ordinary hunger waits for the next break — there is one along shortly
+    // whatever the hour — and going properly hungry does not wait for anything.
+    if (v.hunger >= SEVERE_HUNGER || (onBreak && v.hunger > 0.7)) {
+      if (planEat(g, v, false)) return;
+    }
+    // …and the one extra meal that having had nothing to do earns, taken on a
+    // break and once a day. A kingdom with everything built still eats. There
+    // is no surplus to protect — if there is a supper in the store they have
+    // it — but somebody who ate ten minutes ago is not owed a second one.
+    if (onBreak && v.underworkedDay === g.day && v.extraMealDay !== g.day && v.hunger > 0.3) {
+      if (planEat(g, v, true)) return;
+    }
   }
+
   // Founding comes ahead of ordinary work and is not held to work hours: the
   // walk up the beach is the first thing that happens, whatever the clock says.
   if (foundingActive(g) && planFounding(g, v)) return;
-  if (isWorkTime(g, v) && planWork(g, v)) return;
+  if (working) {
+    if (planWork(g, v)) return;
+    // Nothing anywhere for them: no post to work, no site to supply, no
+    // workshop to restock, nothing to fetch. Remembered for the day, so that
+    // instead of only wandering they get a meal out of it at the next break.
+    v.underworkedDay = g.day;
+  }
 
-  planLeisure(g, v);
+  planLeisure(g, v, onBreak);
 }
 
 /** The one person the founding rules apply to, and only while they apply. */
@@ -952,7 +992,7 @@ function planCamp(g: GameState, v: Villager): boolean {
   // the game and it should feel deliberate, not like a punishment for not
   // owning an axe yet.
   const want = Math.min(CARRY_CAPACITY, foundingWoodNeeded(g));
-  if (held < want && planGatherNode(g, v, 'tree', 24, 'helper', false, false)) return true;
+  if (held < want && planGatherNode(g, v, 'tree', 24, 'general', false, false)) return true;
 
   if (site) {
     // Materials, then hands: the same two jobs any other site needs, minus the
@@ -1035,7 +1075,7 @@ function mealFor(g: GameState, v: Villager): ResourceId | null {
   return null;
 }
 
-function planEat(g: GameState, v: Villager): boolean {
+function planEat(g: GameState, v: Villager, extra: boolean): boolean {
   const store = nearestStore(g, v.x, v.y);
   if (!store) return false;
   const meal = mealFor(g, v);
@@ -1043,7 +1083,7 @@ function planEat(g: GameState, v: Villager): boolean {
   planWalkTo(g, v, store, [
     { t: 'take', res: meal, qty: 1, from: 'store' },
     { t: 'act', dur: 7, kind: 'eating' },
-    { t: 'effect', kind: 'eat' },
+    { t: 'effect', kind: 'eat', extra },
   ]);
   return true;
 }
@@ -1072,7 +1112,7 @@ function planWork(g: GameState, v: Villager): boolean {
         break;
     }
   }
-  return planHelper(g, v);
+  return planGeneralWork(g, v);
 }
 
 function storeLeg(g: GameState, store: Building): Step[] {
@@ -1097,16 +1137,16 @@ function planHarvestTrees(g: GameState, v: Villager, workplace: Building): boole
     return planLeisureFallback(g, v, 'Nowhere to put it.');
   }
   // Plenty of this already: lend a hand elsewhere rather than filling the barn.
-  if (glutOf(g, 'wood')) return planHelper(g, v);
+  if (glutOf(g, 'wood')) return planGeneralWork(g, v);
 
   // The reach drawn on the map when this was placed is the reach used here.
   const reach = rangeOf(workplace.def, workplace.level);
   const c = buildingCentre(workplace);
   const node = findNode(g, c.x, c.y, 'tree', reach) ?? findNode(g, v.x, v.y, 'tree', reach + 7);
-  if (!node) return planHelper(g, v);
+  if (!node) return planGeneralWork(g, v);
 
   const goals = neighbours(g, node.x, node.y);
-  if (goals.length === 0) return planHelper(g, v);
+  if (goals.length === 0) return planGeneralWork(g, v);
   claim(g, v, 'node', node.y * g.w + node.x, node.x, node.y);
 
   const trips = clamp(Math.floor(CARRY_CAPACITY / CHOP_YIELD), 1, 4);
@@ -1144,17 +1184,17 @@ function planFish(g: GameState, v: Villager, hut: Building): boolean {
     return planLeisureFallback(g, v, 'Nowhere to put it.');
   }
   // Enough fish about already, or enough supper: go and be useful elsewhere.
-  if (glutOf(g, 'fish')) return planHelper(g, v);
+  if (glutOf(g, 'fish')) return planGeneralWork(g, v);
 
   const reach = rangeOf(hut.def, hut.level);
   const c = buildingCentre(hut);
   const spot = findFishingSpot(g, c.x, c.y, reach);
   // No water in reach that anybody can stand beside. The hut is in the wrong
   // place, which is a slow disappointment rather than a broken kingdom.
-  if (!spot) return planHelper(g, v);
+  if (!spot) return planGeneralWork(g, v);
 
   const bank = bankBeside(g, spot.x, spot.y);
-  if (!bank) return planHelper(g, v);
+  if (!bank) return planGeneralWork(g, v);
   claim(g, v, 'node', spot.y * g.w + spot.x, spot.x, spot.y);
 
   // Three casts is about an armful at a good spot, and a short enough stint
@@ -1288,7 +1328,7 @@ function planExtract(g: GameState, v: Villager, mine: Building): boolean {
     return planLeisureFallback(g, v, 'Nowhere to put it.');
   }
   // Everything this mine can reach is already piled high. Go and be useful.
-  if (!res) return planHelper(g, v);
+  if (!res) return planGeneralWork(g, v);
 
   const c = buildingCentre(mine);
   const rock = rockInRange(g, c.x, c.y, rangeOf(mine.def, mine.level));
@@ -1304,7 +1344,7 @@ function planExtract(g: GameState, v: Villager, mine: Building): boolean {
  *
  * Trees, and only trees. A boulder is not on this list on purpose: breaking one
  * is quarry work, so there is no path through `planGatherNode` that produces
- * stone and no way for a helper to find one. Stoneworkers go through
+ * stone and no way for a General Worker to find one. Stoneworkers go through
  * `planHarvestNode` instead, which is reached only from a staffed quarry.
  */
 const NODE_WORK: Partial<Record<PropId, { res: ResourceId; per: number; seconds: number }>> = {
@@ -1313,11 +1353,12 @@ const NODE_WORK: Partial<Record<PropId, { res: ResourceId; per: number; seconds:
 
 /**
  * Hand-gathering: walk to the nearest node of a kind, work it until an armful
- * is up, and haul that to the nearest store. `slow` is the untrained penalty,
- * which the founding deliberately does not apply: the opening is one tree and
- * one load, and it wants to read as deliberate rather than laborious. `haul` is
- * off only during founding, where there is no store to walk to and the load
- * stays in the founder's arms.
+ * is up, and haul that to the nearest store. `slow` is the untrained penalty —
+ * twice as long as a woodcutter takes over the same tree — which the founding
+ * deliberately does not apply: the opening is one tree and one load, and it
+ * wants to read as deliberate rather than laborious. `haul` is off only during
+ * founding, where there is no store to walk to and the load stays in the
+ * founder's arms.
  */
 function planGatherNode(
   g: GameState,
@@ -1345,7 +1386,7 @@ function planGatherNode(
   const trips = clamp(Math.min(Math.floor(room / work.per), Math.ceil(left / work.per)), 1, 4);
   const steps: Step[] = [{ t: 'move', x: node.x, y: node.y, goals }];
   for (let i = 0; i < trips; i++) {
-    steps.push({ t: 'act', dur: work.seconds * (slow ? 1.25 : 1), kind: 'gathering', xp });
+    steps.push({ t: 'act', dur: work.seconds * (slow ? HAND_FELL_MUL : 1), kind: 'gathering', xp });
     steps.push({ t: 'take', res: work.res, qty: work.per, from: 'tile', x: node.x, y: node.y });
   }
   if (store) steps.push(...storeLeg(g, store));
@@ -1425,7 +1466,7 @@ function planFarm(g: GameState, v: Villager, farm: Building): boolean {
     return true;
   }
 
-  return planHelper(g, v);
+  return planGeneralWork(g, v);
 }
 
 // ---------------------------------------------------------------------------
@@ -1504,7 +1545,7 @@ function missingInput(g: GameState, b: Building, r: Recipe): { res: ResourceId; 
 /** Millers, bakers and smiths: run a batch, clear the shelf, or fetch what they lack. */
 function planProduce(g: GameState, v: Villager, b: Building): boolean {
   const def = BUILDINGS[b.def];
-  if (liveRecipesOf(b.def).length === 0) return planHelper(g, v);
+  if (liveRecipesOf(b.def).length === 0) return planGeneralWork(g, v);
 
   const store = nearestStore(g, b.x, b.y);
   // A workshop is as capable of burying the kingdom as a woodcutter is, and for
@@ -1534,7 +1575,7 @@ function planProduce(g: GameState, v: Villager, b: Building): boolean {
     return true;
   }
 
-  if (!recipe) return planHelper(g, v);
+  if (!recipe) return planGeneralWork(g, v);
 
   if (hasInputs(b, recipe) && shelf < OUTPUT_CAP) {
     planWalkTo(g, v, b, [
@@ -1544,7 +1585,7 @@ function planProduce(g: GameState, v: Villager, b: Building): boolean {
     return true;
   }
 
-  // Fetch raw materials personally rather than waiting for a helper to notice.
+  // Fetch raw materials personally rather than waiting for somebody else to notice.
   const want = store ? missingInput(g, b, recipe) : null;
   if (store && want) {
     const sdef = BUILDINGS[store.def];
@@ -1557,11 +1598,18 @@ function planProduce(g: GameState, v: Villager, b: Building): boolean {
     return true;
   }
 
-  return planHelper(g, v);
+  return planGeneralWork(g, v);
 }
 
-/** Everything nobody else is doing, in rough order of urgency. */
-function planHelper(g: GameState, v: Villager): boolean {
+/**
+ * Everything nobody else is doing, in rough order of urgency: supply the sites,
+ * build them, restock the workshops, clear the finished goods, and only then —
+ * and only below the reserve — go and fell a tree.
+ *
+ * This is the General Worker's whole trade, and every specialist falls through
+ * to it the moment their own work has nothing in it.
+ */
+function planGeneralWork(g: GameState, v: Villager): boolean {
   // 1. Construction sites short of materials.
   for (const b of g.buildings) {
     if (b.stage !== 'building') continue;
@@ -1638,11 +1686,14 @@ function planHelper(g: GameState, v: Villager): boolean {
     return true;
   }
 
-  // 5. Fell a tree. Wood is the only thing hands alone can fetch: stone comes
-  //    out of a quarry or it does not come at all, which is what makes the
-  //    quarry the kingdom's second real decision rather than a convenience.
+  // 5. Fell a tree, and only to keep the reserve up. Wood is the only thing
+  //    hands alone can fetch — stone comes out of a quarry or it does not come
+  //    at all — and this is emergency stock rather than a supply: enough that a
+  //    kingdom with no lodge, or a lodge nobody is standing in, can always dig
+  //    itself out, and never enough to build an economy on. That is the
+  //    woodcutter's job, and it is the reason to have one.
   if (storageFree(g) < 6) noticeStoreFull(g);
-  else if (g.stock.wood < gatherTarget(g, 'wood') && planGatherWood(g, v, 'helper')) return true;
+  else if (g.stock.wood < WOOD_RESERVE && planGatherWood(g, v, 'general')) return true;
 
   return false;
 }
@@ -1650,8 +1701,8 @@ function planHelper(g: GameState, v: Villager): boolean {
 /**
  * What a site is being paid: its own cost, the cost of the improvement under
  * way, or — for the empty ground a building is moving onto — the cost of the
- * move. Three cases, one function, so helpers supplying a relocation are simply
- * helpers supplying a site and no planner needed a word changing.
+ * move. Three cases, one function, so somebody supplying a relocation is simply
+ * somebody supplying a site and no planner needed a word changing.
  */
 export function siteCost(b: Building): Partial<Record<ResourceId, number>> {
   if (b.relocOf) return relocateCost(b.def);
@@ -1716,14 +1767,25 @@ function planLeisureFallback(g: GameState, v: Villager, line: string): boolean {
   return true;
 }
 
-function planLeisure(g: GameState, v: Villager): void {
+/**
+ * `gathering` is a scheduled break rather than an odd half hour with nothing to
+ * do, and it bends the roll toward the commons and the comforts. That is the
+ * whole of what makes the three breaks readable: at seven, at noon and at nine
+ * the kingdom visibly collects itself instead of sixteen people each wandering
+ * off in their own direction. Everything else is still on the table — the pond,
+ * the animals, somebody to talk to — just less often.
+ */
+function planLeisure(g: GameState, v: Villager, gathering = false): void {
   const r = rng;
   const roll = r.next();
 
-  if (roll < 0.34) {
+  if (roll < (gathering ? 0.62 : 0.34)) {
     const spots = g.buildings.filter((b) => b.stage === 'done' && LEISURE_BUILDINGS.has(b.def));
     if (spots.length > 0) {
-      const b = pickNear(r, spots, v.x, v.y);
+      // On a break the fire wins most of the time even when it is not the
+      // nearest spot, which is what turns a break into a gathering.
+      const camp = commonsOf(g);
+      const b = gathering && camp && camp.stage === 'done' && r.chance(0.55) ? camp : pickNear(r, spots, v.x, v.y);
       const def = BUILDINGS[b.def];
       const goals = footprintApproach(g, b.x, b.y, def.w, def.h);
       if (goals.length) {

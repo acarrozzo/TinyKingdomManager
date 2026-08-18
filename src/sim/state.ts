@@ -51,7 +51,7 @@ export function makeVillager(g: GameState, r: RNG, x: number, y: number, name?: 
     x,
     y,
     face: 0,
-    job: 'helper',
+    job: 'general',
     workplace: 0,
     home: 0,
     homeFixed: false,
@@ -65,10 +65,15 @@ export function makeVillager(g: GameState, r: RNG, x: number, y: number, name?: 
     favoriteFood: r.pick(PREPARED_FOODS),
     arrived: g.day,
     history: [],
-    wakeOffset: r.range(-0.02, 0.035),
-    sleepOffset: r.range(-0.025, 0.04),
+    // Their own small shift on the day's outer ends, and a little extra wobble
+    // on bedtime. Both are clamped where they are read, so an old kingdom whose
+    // people were rolled against a looser schedule still keeps its breaks.
+    wakeOffset: r.range(-0.015, 0.015),
+    sleepOffset: r.range(-0.01, 0.01),
     energy: 1,
     hunger: r.range(0.2, 0.5),
+    underworkedDay: 0,
+    extraMealDay: 0,
     activity: 'idle',
     plan: [],
     path: null,
@@ -435,14 +440,14 @@ export function jobSlots(b: Building): number {
   return def.slots[Math.min(b.level, def.slots.length) - 1];
 }
 
-/** Assigns a villager to a workplace, clearing any previous post. Pass 0 to make them a Helper. */
+/** Assigns a villager to a workplace, clearing any previous post. Pass 0 to make them a General Worker. */
 export function assignJob(g: GameState, v: Villager, buildingId: number): boolean {
   const prev = buildingById(g, v.workplace);
   if (prev) prev.workers = prev.workers.filter((id) => id !== v.id);
 
   if (!buildingId) {
     v.workplace = 0;
-    v.job = 'helper';
+    v.job = 'general';
     abandonPlan(g, v);
     return true;
   }

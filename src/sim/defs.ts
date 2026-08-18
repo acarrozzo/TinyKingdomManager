@@ -27,6 +27,68 @@ export const DAYS_PER_SEASON = 6;
 export const GAME_MINUTE = 60;
 
 /**
+ * The kingdom's day, in day-fractions. `dayT` 0 is five in the morning, so the
+ * clock is `dayT × 24 + 5` — the comments are what those fractions read as.
+ *
+ * Three breaks, and they are the point of the shape: work stops in the middle
+ * of the morning stretch and again in the evening, so the place visibly
+ * collects itself three times a day rather than running flat from waking to
+ * bed. Sleep is six hours, which is short for a person and right for something
+ * you leave running on a second monitor — the interesting half of the
+ * simulation is the half with people in it.
+ */
+export const SCHEDULE = {
+  /** 05:30 — up. */
+  wake: 0.0208,
+  /** 07:00 — out to work, after an hour and a half of breakfast and standing about. */
+  workStart: 0.0833,
+  /** 12:00 — tools down for the hour. */
+  middayBreak: 0.2917,
+  /** 13:00 — back to it, for the long stretch. */
+  workResume: 0.3333,
+  /** 21:00 — finished for the day. */
+  workEnd: 0.6667,
+  /** 23:30 — bed. */
+  bed: 0.7708,
+};
+
+/**
+ * How far a trait moves somebody's day, and how far the personal jitter can.
+ * Both ends of the day move together — waking, starting, finishing, turning in
+ * — so an early riser is out on the job while the rest are still at breakfast
+ * and an owl is still at it after they have gone in, and *nobody's* six hours
+ * of sleep gets shorter for it.
+ *
+ * The midday break deliberately does not move (see `isWorkTime`): it is one
+ * hour long, and a shifted one would leave the risers and the owls with no
+ * overlap at all — the one break in the day nobody would share.
+ */
+export const TRAIT_DAY_SHIFT = 0.03;
+export const PERSONAL_DAY_SHIFT = 0.015;
+
+/**
+ * The wood a kingdom keeps in hand without a lodge. General Workers fell trees
+ * by hand only below this, and at half a woodcutter's pace — enough that a
+ * kingdom which has lost its lodge, or never built one, can always dig itself
+ * out, and far too slow to expand on. Woodcutters are held by the ordinary glut
+ * rule instead and are the only scalable source of timber.
+ *
+ * It is a floor on *fetching*, never on storing or spending, so nothing is ever
+ * unaffordable because of it: a site takes its materials a dozen at a time and
+ * the store is topped back up between loads, so a ninety-wood commons is paid
+ * for in seven trips rather than not at all.
+ */
+export const WOOD_RESERVE = 32;
+
+/**
+ * …and how much longer that tree takes when the person swinging at it is not a
+ * woodcutter. Exactly twice, which is the other half of the same rule: the
+ * reserve says how much they will fetch and this says how slowly, and together
+ * they are the whole reason to build a lodge.
+ */
+export const HAND_FELL_MUL = 2;
+
+/**
  * How long a newcomer takes to arrive once there is a bed for them, in
  * game-minutes, by how many people are already here.
  *
@@ -102,7 +164,7 @@ export const RESOURCE_META: Record<string, { name: string; icon: string; color: 
 /** Where each resource comes from and where it goes, for the top-bar hover. */
 export const RESOURCE_INFO: Record<string, { from: string; used: string }> = {
   wood: {
-    from: 'Woodcutters at the lodge, and helpers felling any tree by hand. The first twelve came off a single tree, swung at by somebody who had only just arrived.',
+    from: 'Woodcutters at the lodge, who are the only ones who can keep up with a growing kingdom. General Workers will fell a tree by hand when the store drops below thirty-two, at half the pace and no faster. The first twelve came off a single tree, swung at by somebody who had only just arrived.',
     used: 'Nearly every building, from a cabin at 20 up to a windmill at 50, and every step the commons takes.',
   },
   stone: {
@@ -160,10 +222,10 @@ export const RESOURCE_INFO: Record<string, { from: string; used: string }> = {
 };
 
 export const JOB_META: Record<JobId, { name: string; icon: string; desc: string }> = {
-  helper: {
-    name: 'Helper',
+  general: {
+    name: 'General Worker',
     icon: '🧺',
-    desc: 'Fells trees by hand, hauls goods between buildings, and helps raise new construction. Anything out of the ground is beyond bare hands; that wants a mine.',
+    desc: 'Supplies construction sites, builds structures, restocks workshops, collects finished goods, and gathers emergency wood.',
   },
   woodcutter: { name: 'Woodcutter', icon: '🪓', desc: 'Fells trees near the lodge and carries wood to storage.' },
   miner: {
@@ -184,7 +246,6 @@ export const JOB_META: Record<JobId, { name: string; icon: string; desc: string 
     desc: 'Works the water within reach of the hut, and carries the catch back. Nothing eats it until a cook has had it.',
   },
   smith: { name: 'Smith', icon: '🔥', desc: 'Smelts ore into iron bars at the forge, and iron bars into steel.' },
-  keeper: { name: 'Keeper', icon: '🐾', desc: 'Looks after the kingdom’s animals.' },
 };
 
 export const TRAIT_META: Record<TraitId, { name: string; icon: string; desc: string }> = {
@@ -315,9 +376,10 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     labour: 16,
     maxLevel: 4,
     // Every step has to be payable out of the storage the step before it left
-    // behind — and out of what hand-gathering will actually fetch, since
-    // `gatherTarget` holds helpers to half the store in wood and a third in
-    // stone. A cost above that line is a cost nobody can ever meet.
+    // behind. Hand-gathering no longer sets a second ceiling — a General Worker
+    // tops the store back up to `WOOD_RESERVE` between loads, so a cost above
+    // that is slow rather than impossible — but a cost above *storage* is one
+    // nobody can ever meet.
     upgradeCosts: [
       { wood: 25, stone: 10 },
       { wood: 90, stone: 55 },
@@ -392,7 +454,7 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     upgradeCostMul: 2.2,
     order: 20,
     desc: 'The kingdom’s one lodge. Woodcutters work the trees nearby, so place it in or beside a wood.',
-    how: 'Woodcutters work whatever trees stand within thirteen tiles of the lodge — seventeen once it is improved — and range further only when the near ones are gone. The reach is drawn on the map while you are placing or moving it, along with every tree inside it. Each felled tree becomes a stump and grows back in time. They chop three trips\' worth, haul it to the nearest store, and set off again. When wood climbs past about a third of the whole store they stop and go help elsewhere, so the barn never fills with timber while the supper runs out. There is only ever one lodge; if the wood around it thins out, move it rather than building a second.',
+    how: 'Woodcutters work whatever trees stand within thirteen tiles of the lodge — seventeen once it is improved — and range further only when the near ones are gone. The reach is drawn on the map while you are placing or moving it, along with every tree inside it. Each felled tree becomes a stump and grows back in time. They chop three trips\' worth, haul it to the nearest store, and set off again. When wood climbs past about a third of the whole store they stop and go help elsewhere, so the barn never fills with timber while the supper runs out. Nothing in the kingdom insists on a lodge — General Workers will always fell enough by hand to keep thirty-two in store — but they do it at half a woodcutter\'s pace and they stop there, so this is what a kingdom that means to keep building runs on. There is only ever one lodge; if the wood around it thins out, move it rather than building a second.',
     slots: [2, 3],
     job: 'woodcutter',
     harvests: 'tree',

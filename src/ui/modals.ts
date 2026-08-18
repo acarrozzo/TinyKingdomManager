@@ -4,9 +4,12 @@
  * on a phone they are near-full-height sheets. Either way they are the third
  * level of the interface — things you open, read, and close again.
  *
- * A building panel is a *live* view. It redraws several times a second while it
- * is open, which is why everything here is a plain string builder and why the
- * shell updates the existing nodes rather than replacing the panel.
+ * A building is the exception on both counts. It is about one place on the map
+ * rather than about the kingdom, so on a desktop it goes in the right margin
+ * beside the thing it describes and the map stays live around it. And it is a
+ * *live* view: it redraws several times a second while it is open, which is why
+ * everything here is a plain string builder and why the shell updates the
+ * existing nodes rather than replacing the panel.
  */
 
 import type { Building, Recipe, ResourceId, SpeciesId, Villager } from '../types';
@@ -228,7 +231,7 @@ function workerOptions(game: Game, b: Building): string {
     const rank = post ? rankOf(xpOf(v, v.job)) : null;
     const where = post
       ? `${JOB_META[v.job].name.toLowerCase()} at the ${BUILDINGS[post.def].name.toLowerCase()}`
-      : 'helper, unattached';
+      : 'general worker, unattached';
     const warn = rank === 'Expert' || rank === 'Master' ? ` ⚠ ${rank}` : '';
     out += `<option value="${v.id}">${esc(v.name)} — ${esc(where)}${warn}</option>`;
   }
@@ -498,7 +501,7 @@ function siteBody(game: Game, b: Building): string {
         : needs.some((n) => n.have < n.need)
           ? haulers.length
             ? `${haulers.length} on the way with materials.`
-            : 'Waiting for materials to be carried over. Helpers pick this up before anything else.'
+            : 'Waiting for materials to be carried over. General Workers pick this up before anything else.'
           : 'Everything it needs is here. Waiting for somebody free to come and build it.'
     }</div></div>
     ${
@@ -800,12 +803,12 @@ export function peopleBody(game: Game, env: UIEnv): string {
   const people = g.villagers.slice().sort((a, b) => a.arrived - b.arrived || a.id - b.id);
 
   const summary = () => {
-    const unemployed = g.villagers.filter((v) => v.workplace === 0).length;
+    const unposted = g.villagers.filter((v) => v.workplace === 0).length;
     const openSlots = g.buildings
       .filter((b) => b.stage === 'done')
       .reduce((n, b) => n + Math.max(0, jobSlots(b) - b.workers.length), 0);
     return `<div class="row tiny muted" style="margin-bottom:11px;gap:14px">
-        <span>${g.villagers.length} villagers</span><span>${unemployed} helpers</span><span>${openSlots} open job${openSlots === 1 ? '' : 's'}</span>
+        <span>${g.villagers.length} villagers</span><span>${unposted} general worker${unposted === 1 ? '' : 's'}</span><span>${openSlots} open job${openSlots === 1 ? '' : 's'}</span>
       </div>`;
   };
 

@@ -115,7 +115,9 @@ export type Season = 'spring' | 'summer' | 'autumn' | 'winter';
 export const SEASONS: Season[] = ['spring', 'summer', 'autumn', 'winter'];
 
 export type JobId =
-  | 'helper'
+  // Everybody starts here and nobody is stuck here: the trade of somebody with
+  // no post, which is most of the kingdom for most of its first hour.
+  | 'general'
   | 'woodcutter'
   // One trade works the mine, whatever the mine has reached. A Deep Mine
   // producing three materials does not want three kinds of worker; the building
@@ -127,8 +129,7 @@ export type JobId =
   // works the whole mine. Bread and fish are two recipes, not two professions.
   | 'cook'
   | 'fisher'
-  | 'smith'
-  | 'keeper';
+  | 'smith';
 
 export type TraitId =
   | 'greenThumb'
@@ -418,6 +419,12 @@ export type Step =
       /** The water a `catch` was pulled out of, so the spot knows it was worked. */
       x?: number;
       y?: number;
+      /**
+       * Set on an `eat` that is the underemployed extra rather than an ordinary
+       * supper. Carried on the step so the day is only spent when the meal is
+       * actually eaten — a plan abandoned halfway costs nobody their one chance.
+       */
+      extra?: boolean;
     };
 
 export interface Villager {
@@ -453,6 +460,14 @@ export interface Villager {
   sleepOffset: number;
   energy: number;
   hunger: number;
+  /**
+   * The last day the planner had nothing at all for them during work hours.
+   * Underemployment is that and only that: breaks, sleep, the walk between two
+   * jobs and the moment spent deciding are all somebody perfectly well occupied.
+   */
+  underworkedDay: number;
+  /** The last day they took the extra meal that being underemployed earns. */
+  extraMealDay: number;
   activity: ActivityKind;
   /** Transient: current plan and path. */
   plan: Step[];
