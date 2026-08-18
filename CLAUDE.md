@@ -1014,6 +1014,11 @@ others cannot:
 | the day strip | what the hour is, and how much light is left | always |
 | the shadows | roughly when it is, without looking away from the work | every tile, every zoom |
 
+The strip alone carries a fourth thing, and it is not about the light at all:
+the kingdom's three breaks, ruled underneath the day. That is deliberate — the
+strip is the one of the three that is always on screen, and "is anybody working
+right now" is a question about the hour that the sky cannot answer.
+
 The sky came first and is the most beautiful of the three; it is also the one
 you cannot see with the camera down among the buildings, which is what the other
 two are for. **`drawSun` and `drawMoon` live in `sky.ts`** rather than in the
@@ -1046,6 +1051,27 @@ The four marks are drawn at *full* strength either side of the ribbon rather
 than through its alpha, where they came out invisible — and each is a dark line
 with a light one beside it, because a dark tick disappears against a night
 kingdom and a light one disappears against a meadow.
+
+**The kingdom's three breaks are ruled underneath the day, and that is a
+separate layer from the sky.** Everything above the rule — the ribbon's
+colours, the four landmarks, the body — answers *what is the light doing*;
+`BREAKS` in `defs.ts` answers *is anybody working*, and the two must not be
+allowed to say each other's lines. They were briefly both saying "tools down at
+nine" and the hover tip read it twice in three lines. `BAND_META`'s notes are
+about the light and nothing else now; `dayDoing` names the stretch.
+
+They are drawn as **stretches rather than ticks**, because the useful part is
+the length: the midday hour being a third of the evening's is why somebody
+looking for everybody knows to look at nine and not at noon. The one in
+progress is thicker *and* brighter — at two pixels a difference in brightness
+alone is one nobody can see.
+
+The rule is drawn **after the body and below the disc**, which is not
+tidiness. The strip is the day and the body is the hour, so the stretch in
+progress is always the one directly under the sun: the mark that most wants
+reading is by construction the one the bloom would wash out. `BREAKS` is
+derived from `SCHEDULE` rather than written out again, so retuning the day
+moves the marks with it.
 
 **The strip takes no pointer events at all.** Most of its height is transparent,
 and a full-width see-through box that swallows drags on the map is the exact bug

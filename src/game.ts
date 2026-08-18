@@ -23,6 +23,7 @@ import {
   GOOD_SPOT,
   JOB_META,
   buildingName,
+  dayDoing,
   focusOptions,
   rangeOf,
   relocateCost,
@@ -1660,16 +1661,22 @@ export class Game {
    * in this game that cannot be hurried, so the panel says what is happening
    * rather than offering anything to do about it.
    */
-  skyLabel(): { title: string; time: string; band: string; note: string; until: string } {
+  skyLabel(): { title: string; time: string; band: string; note: string; doing: string; doingNote: string; until: string } {
     const g = this.state;
     const c = celestial(g.dayT, g.day);
     const band = bandOf(g.dayT);
     const sun = c.body === 'sun';
+    // Two different questions, and the tip answers both: what the sky is doing,
+    // and what the kingdom is doing under it. The second is what the rule along
+    // the bottom of the strip is drawing, named.
+    const doing = dayDoing(g.dayT);
     return {
       title: sun ? 'The sun' : 'The moon',
       time: clockFor(g.dayT),
       band: BAND_META[band].name,
       note: BAND_META[band].note,
+      doing: doing.name,
+      doingNote: doing.note,
       until: sun ? `Sets at ${clockFor(SUNSET)}.` : `Sets at ${clockFor(MOONSET % 1)}.`,
     };
   }

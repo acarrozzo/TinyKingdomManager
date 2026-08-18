@@ -533,6 +533,10 @@ export class UI {
       this.skyTip,
       `<div class="tip-head">${esc(s.title)}<b>${esc(s.time)}</b></div>` +
         `<div class="tip-line"><b>${esc(s.band)}</b> — ${esc(s.note)}</div>` +
+        // What the rule along the bottom of the strip is drawing, in words. The
+        // sky line above it answers a different question and neither replaces
+        // the other: it can be broad daylight and nobody working.
+        `<div class="tip-line"><b>${esc(s.doing)}</b> — ${esc(s.doingNote)}</div>` +
         `<div class="tip-line">${esc(s.until)}</div>`,
     );
     this.skyTip.classList.add('on');

@@ -53,6 +53,52 @@ export const SCHEDULE = {
 };
 
 /**
+ * The three stretches the kingdom is not at work, in the order it meets them.
+ *
+ * Derived from `SCHEDULE` rather than written out a second time, because the
+ * day strip draws these and the hover tip names them: a picture of the day that
+ * disagreed with the day would be worse than no picture at all. Retuning the
+ * schedule moves the marks on screen with it and nothing has to be remembered.
+ *
+ * These are the *shared* boundaries. A trait shifts the outer two a little for
+ * the person who has it (`dayShift`), and the midday hour not at all — so the
+ * strip is honest about the kingdom without claiming to be anybody's own diary.
+ */
+export const BREAKS: { name: string; note: string; from: number; to: number }[] = [
+  {
+    name: 'Morning break',
+    note: 'Awake, fed, and in no particular hurry to start.',
+    from: SCHEDULE.wake,
+    to: SCHEDULE.workStart,
+  },
+  {
+    name: 'Midday break',
+    note: 'Tools down for the hour. The one break nobody’s habits move.',
+    from: SCHEDULE.middayBreak,
+    to: SCHEDULE.workResume,
+  },
+  {
+    name: 'Evening break',
+    note: 'Finished for the day, and not yet in bed.',
+    from: SCHEDULE.workEnd,
+    to: SCHEDULE.bed,
+  },
+];
+
+/**
+ * What the kingdom is doing at a given moment, for the hover tip. Deliberately
+ * describes rather than instructs: the time of day is the one thing here nobody
+ * can hurry, so it says what is happening and offers nothing to do about it.
+ */
+export function dayDoing(dayT: number): { name: string; note: string } {
+  for (const b of BREAKS) if (dayT >= b.from && dayT < b.to) return b;
+  if (dayT >= SCHEDULE.bed || dayT < SCHEDULE.wake) {
+    return { name: 'Asleep', note: 'Six hours of it. The early risers are up first.' };
+  }
+  return { name: 'At work', note: 'Everyone with a post is at it, and the rest are lending a hand.' };
+}
+
+/**
  * How far a trait moves somebody's day, and how far the personal jitter can.
  * Both ends of the day move together — waking, starting, finishing, turning in
  * — so an early riser is out on the job while the rest are still at breakfast

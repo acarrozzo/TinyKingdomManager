@@ -35,6 +35,7 @@
 import { clamp } from '../core/util';
 import type { GameState } from '../types';
 import { BAND_EDGES, celestial, drawMoon, drawSun, skyColors, stripDayT, stripT } from '../render/sky';
+import { BREAKS } from '../sim/defs';
 import { el } from './context';
 
 /**
@@ -206,7 +207,64 @@ export class DayStrip {
     // off a seven-pixel ribbon and reads as a smudge.
     if (sky.body === 'sun') drawSun(c, x, mid, r, sky.alt, 0.8);
     else drawMoon(c, x, mid, r - 0.5, sky.phase, 1.1);
+
+    /*
+     * The three breaks, ruled *underneath* the day rather than on it.
+     *
+     * Everything above is the sky — the ribbon's colours, the four landmarks,
+     * the body riding along it — and a break is not a fact about the sky at
+     * all. It is what the kingdom is doing, so it gets a quiet layer of its
+     * own below, clear of the ribbon, and the two never argue: the strip says
+     * the hour, the rule underneath says whether anybody is working through it.
+     *
+     * A stretch rather than a tick, because the useful part is the *length*.
+     * The midday hour being a third of the evening's is the whole reason
+     * somebody looking for everybody knows to look at nine rather than at
+     * noon, and a pair of ticks would say when it starts while hiding that.
+     *
+     * **Drawn after the body, and below the disc**, which is not tidiness. The
+     * strip is the day and the body is the hour, so the stretch in progress is
+     * always the one directly beneath the sun — the mark that most wants
+     * reading is by construction the one the bloom would wash out. Sitting it
+     * under `mid + r` costs nothing and keeps it legible at every hour.
+     */
+    for (const b of BREAKS) {
+      const live = g.dayT >= b.from && g.dayT < b.to;
+      for (const [x0, x1] of spans(b.from, b.to, w)) {
+        // The same trick as the landmarks, on its side: a dark line with a
+        // light one against it survives both a night kingdom and a meadow, and
+        // either alone disappears against one of them. The one in progress is
+        // thicker as well as brighter, because at two pixels a difference in
+        // brightness alone is a difference nobody can see.
+        const y = mid + r + 1;
+        c.fillStyle = `rgba(10,8,6,${live ? 0.45 : 0.24})`;
+        c.fillRect(x0, live ? y - 1 : y, x1 - x0, 1);
+        c.fillStyle = `rgba(255,198,132,${live ? 1 : 0.38})`;
+        c.fillRect(x0, y + 1, x1 - x0, 1);
+        if (live) c.fillRect(x0, y, x1 - x0, 1);
+      }
+    }
   }
+}
+
+/**
+ * A stretch of the day as pixel ranges along the strip — two of them when it
+ * runs off one end and back on at the other.
+ *
+ * None of the three breaks wraps as the day is currently tuned, and that is
+ * exactly why the wrap is handled here rather than assumed away: `stripT`
+ * rotates the day so that night sits at both ends, and a schedule tweak that
+ * pushed the evening an hour later would silently draw a stretch the whole
+ * width of the screen the wrong way round.
+ */
+function spans(from: number, to: number, w: number): [number, number][] {
+  const a = stripT(from) * w;
+  const b = stripT(to) * w;
+  if (b > a) return [[Math.round(a), Math.round(b)]];
+  return [
+    [Math.round(a), w],
+    [0, Math.round(b)],
+  ];
 }
 
 function blend(a: [number, number, number], b: [number, number, number], k: number): string {

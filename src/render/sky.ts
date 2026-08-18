@@ -33,16 +33,19 @@ export const MOONSET = SUNRISE + 1;
 export type Band = 'night' | 'dawn' | 'day' | 'dusk';
 
 /**
- * The four sections of the day, named the way the game would say them. The
- * boundaries are the ones the simulation already behaves to — people are at
- * work through `day`, and asleep for most of `night` — rather than a fresh set
- * invented for the picture.
+ * The four sections of the day, named the way the game would say them.
+ *
+ * These describe the **light and nothing else**. What the kingdom is doing
+ * under it is a separate question with a separate answer — `dayDoing` in
+ * `defs.ts`, drawn as the rule along the bottom of the day strip and named on
+ * the line below this one in the same tip. They were briefly allowed to
+ * overlap, and the tip read "tools down at nine" twice in three lines.
  */
 export const BAND_META: Record<Band, { name: string; note: string }> = {
-  dawn: { name: 'Dawn', note: 'First light, and breakfast. The early risers are out before the rest.' },
-  day: { name: 'Day', note: 'Work hours, with an hour off in the middle of them.' },
-  dusk: { name: 'Dusk', note: 'The light is going. Tools down at nine, and the kingdom collects itself.' },
-  night: { name: 'Night', note: 'Most of the kingdom is asleep.' },
+  dawn: { name: 'Dawn', note: 'First light, with the shadows still at their longest.' },
+  day: { name: 'Day', note: 'Full light. Shadows shorten towards noon and stretch out after it.' },
+  dusk: { name: 'Dusk', note: 'The light is going, and everything on the ground casts long.' },
+  night: { name: 'Night', note: 'The moon has the sky to itself, and the windows are lit.' },
 };
 
 /**
