@@ -629,8 +629,14 @@ function shapeFor(def: BuildingId, level: number): { wall: number; roof: number;
       return { wall: 16, roof: 9, ov: 2, extra: 0 };
     case 'mill':
       return { wall: up ? 40 : 34, roof: 9, ov: 1, extra: 14 };
-    case 'bakery':
+    case 'kitchen':
       return { wall: up ? 25 : 21, roof: up ? 12 : 11, ov: 4, extra: 13 };
+    // A shack on the bank, and it has to read as one. At a cabin's seventeen
+    // pixels of wall it came out looking like a barn with a jetty, which is
+    // wrong twice over: this is the cheapest building in the kingdom and the
+    // one that only ever holds one or two people.
+    case 'fishhut':
+      return { wall: up ? 14 : 12, roof: 7, ov: 3, extra: up ? 14 : 11 };
     case 'well':
       return { wall: 7, roof: 7, ov: 2, extra: 16 };
     case 'statue':
@@ -993,7 +999,7 @@ function drawFinished(
       anchor.push(hub);
       break;
     }
-    case 'bakery': {
+    case 'kitchen': {
       isoWalls(ctx, ox, baseY, w, h, 4, { left: M.stoneL, right: M.stoneR }, 1);
       isoWalls(ctx, ox, baseY - 4, w, h, s.wall - 4, { left: '#ecdcbb', right: '#cbb894' }, 2);
       const roof = gableRoof(ctx, ox, baseY, w, h, s.wall, s.roof, s.ov, tile);
@@ -1001,7 +1007,7 @@ function drawFinished(
       addWindow(ctx, bx, baseY, front - 11, s.wall, 4, windows, M.window);
       addWindow(ctx, bx, baseY, bx + 12, s.wall, 4, windows, M.window);
       chimney(ctx, roof.ridgeA.x - 1, roof.ridgeA.y - 2, 12, snow);
-      // A serving counter beside the door, awning above it, loaves out on the
+      // A serving counter beside the door, awning above it, supper out on the
       // shelf — all of it running with the wall rather than square to the
       // screen, and clear of the doorway so you can still read it as a door.
       for (let dx = 6; dx <= 15; dx++) {
@@ -1011,8 +1017,67 @@ function drawFinished(
         px(ctx, ax, ay + 2, '#8e4630', 1, 1);
         px(ctx, ax, wallFootY(bx, baseY, ax) - 6, '#8a6b41', 1, 2);
       }
+      // Loaves at one end of the counter and a fish laid out at the other: the
+      // building does two things, and the silhouette is the only place a player
+      // ever finds that out without opening a panel.
       px(ctx, front + 7, wallFootY(bx, baseY, front + 7) - 8, '#d09a5c', 4, 2);
-      px(ctx, front + 12, wallFootY(bx, baseY, front + 12) - 8, '#c98a4b', 4, 2);
+      px(ctx, front + 12, wallFootY(bx, baseY, front + 12) - 7, '#8fb6c8', 4, 1);
+      px(ctx, front + 15, wallFootY(bx, baseY, front + 15) - 7, '#5c7f92', 1, 1);
+      // The open range on the near-left face, glowing after dark like the
+      // forge's mouth rather than a window: this is where the fire actually is.
+      const ovenX = front - 9;
+      const ovenRef = wallFootY(bx, baseY, ovenX);
+      const ovenDy: number[] = [];
+      for (let i = 0; i < 6; i++) {
+        const ax = ovenX + i;
+        const off = wallFootY(bx, baseY, ax) - ovenRef;
+        px(ctx, ax, ovenRef + off - 4, '#ff9a4c', 1, 3);
+        px(ctx, ax, ovenRef + off - 2, '#ffd490', 1, 1);
+        ovenDy.push(off);
+      }
+      windows.push({ x: ovenX, y: ovenRef - 4, w: 6, h: 4, dy: ovenDy });
+      break;
+    }
+    case 'fishhut': {
+      // A shack rather than a house: low plank walls, a deep thatch that comes
+      // most of the way down, and a wide dark opening facing the front. What
+      // says it is a *fishing* hut is all outside it, at the front, on the
+      // ground — a rack, creels and floats. The first attempt hung the rack off
+      // the building's east corner, where it came out as sticks floating in the
+      // grass beside a barn.
+      isoWalls(ctx, ox, baseY, w, h, s.wall, { left: M.plankL, right: M.plankR }, 2);
+      gableRoof(ctx, ox, baseY, w, h, s.wall, s.roof, s.ov, thatch);
+      addDoor(ctx, bx, baseY, front, 9, s.wall - 2, '#3f2f22');
+
+      // Drying rack across the front: two posts, a rail between them, and the
+      // day's catch hanging off it. Positioned off the near corner and the
+      // ground line, which is the one place in the sprite that is always where
+      // it looks like it is.
+      const rackX = bx - 13;
+      const rackY = baseY - 2;
+      px(ctx, rackX, rackY - 13, '#7d5c33', 1, 13);
+      px(ctx, rackX + 11, rackY - 11, '#7d5c33', 1, 11);
+      px(ctx, rackX, rackY - 13, '#a5824f', 12, 1);
+      for (let i = 0; i < (level >= 2 ? 4 : 3); i++) {
+        const fx = rackX + 2 + i * 3;
+        px(ctx, fx, rackY - 12, '#c8dfe8', 1, 1);
+        px(ctx, fx, rackY - 11, '#9fc4d2', 2, 3);
+        px(ctx, fx, rackY - 8, '#6d92a4', 2, 1);
+      }
+      // Creels stacked at the other side of the door, and a float line laid
+      // along the ground in front of them.
+      px(ctx, bx + 4, baseY - 6, '#b08a52', 7, 4);
+      px(ctx, bx + 5, baseY - 7, '#c9a06a', 5, 1);
+      px(ctx, bx + 6, baseY - 10, '#96763f', 5, 3);
+      px(ctx, bx + 7, baseY - 11, '#b08a52', 3, 1);
+      px(ctx, bx - 2, baseY - 1, '#7d8f6a', 9, 1);
+      for (const fx of [-1, 2, 5]) px(ctx, bx + fx, baseY - 2, '#c96b4a', 1, 1);
+      // An improved hut has a second person at it, so it grows a second rack
+      // and a couple of rods leaning by the door.
+      if (level >= 2) {
+        px(ctx, bx + 12, baseY - 16, '#8a6b41', 1, 15);
+        px(ctx, bx + 14, baseY - 14, '#a5824f', 1, 13);
+      }
       break;
     }
     case 'well': {

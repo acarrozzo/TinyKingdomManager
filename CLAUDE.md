@@ -89,7 +89,7 @@ npm run roundtrip -- k.json           # check a save survives serialisation
 
 Runs the whole kingdom headless with no rendering, playing it roughly the way a
 player would — placing buildings, staffing jobs, reacting to shortages,
-decorating once the bread is coming — then prints population against beds, the
+decorating once the food is coming — then prints population against beds, the
 Vibes broken into their three parts, the arrival window and what is on its way,
 storage, every villager's experience, when each species was first noticed,
 goals, journal, and consistency checks. The arrivals list at the end is the
@@ -103,21 +103,29 @@ production chains that silently never run, one resource crowding every other out
 of storage, wildlife arriving far too fast, XP curves that take 40 hours.
 
 It also asserts the things that must never be true whatever the balance: stone
-in a kingdom with no quarry, ore before an Iron Mine, coal before a Deep Mine,
-bars with no forge, any mithril at all, and rubble counting down to become a
-boulder again. Those are the rules of the world rather than tuning, so they fail
-the run rather than showing up in a number somebody has to notice.
+in a kingdom with no quarry, fish with no fishing hut, cooked food with no
+kitchen, ore before an Iron Mine, coal before a Deep Mine, bars with no forge,
+any mithril at all, water rested past nought or one, and rubble counting down to
+become a boulder again. Those are the rules of the world rather than tuning, so
+they fail the run rather than showing up in a number somebody has to notice.
+
+One assertion is a *balance* rule rather than a world rule, and it is there
+because the failure hides: a larder wildly out of proportion to the population
+fails the run. A kingdom with four hundred loaves looks perfectly healthy in
+every other line of the report.
 
 Two things about the harness are load-bearing and easy to undo by tidying. It
 **staffs before it builds**, and never gates staffing on whether something is
 under construction — it used to do both at the foot of one early return, so a
 site the kingdom could not yet pay for froze the whole run: nobody could be put
 on the mine, so no stone was cut, so the site stayed unpaid, for twenty days.
-And it plays by the interface's own rules, including `needsRock`, so it can no
-more drop a quarry on a meadow than the player can.
+And it plays by the interface's own rules, including `needsRock` and
+`nearWater`, so it can no more drop a quarry on a meadow than the player can,
+nor a fishing hut in the middle of a field. It builds *both* branches of the
+food chain, which is the only way the run exercises either of them honestly.
 
 A run of ~600–1000 game-minutes is the useful range. Under ~300 you will not see
-the bakery come online, and under ~450 you will not see a forge; over ~1200 the
+the kitchen come online, and under ~450 you will not see a forge; over ~1200 the
 kingdom has plateaued and tells you little.
 
 **The run is reproducible.** The gameplay RNG starts from the world's seed
@@ -139,8 +147,8 @@ start on: the wood and stone the first hour needs, a choice of at least six
 three-by-three campsites the game's own rule would accept, at least four trees
 the founder can walk to from where they start, at least three places a Quarry
 could legally stand — on or against rock, with twenty-five tiles of rock inside
-its reach — a beach that connects to it on foot, sane tiles, and the same seed
-giving the same world twice.
+its reach — at least three a Fishing Hut could, a beach that connects to it on
+foot, sane tiles, and the same seed giving the same world twice.
 
 **This is the check for `world/terrain.ts`, and only for it.** Generation leans on random
 scatter, and a scatter with a give-up guard is not a guarantee — the failures it
@@ -154,6 +162,16 @@ is not a hard start, it is a kingdom that cannot pass its second commons. It
 measures *rocky ground* rather than boulders, because that is what the mine
 works — boulders are finite scenery, and a site with none of them left beside it
 is still a perfectly good mine.
+
+The hut check is the same argument one step gentler. Fishing is optional, so an
+island with poor water is not unplayable the way an island with no rock is —
+what it *is* is an island where half of what the storehouse unlocked turns out
+to be a row that cannot be used, and the player has no way of knowing that is
+the island's fault. It asks for three sites with four good spots each, which
+every seed in ten thousand clears comfortably (21–132 sites). It also reports
+the size of the inland lake and how often one meets the sea and stops being a
+lake at all — a bay is perfectly good fishing, but a generation change that
+quietly turns half the islands into bays is one worth seeing.
 
 ### Moving buildings: `npm run reloccheck`
 
@@ -316,7 +334,8 @@ of concrete steps — `move`, `act`, `take`, `give`, `labour`, `sleep`, `effect`
 Every economic action is therefore something you can watch happen on the map.
 
 Priority order: put down anything carried → sleep if it is their bedtime → eat if
-hungry and bread exists → the founding sequence if one is running → job work if
+hungry and there is a cooked meal of either kind → the founding sequence if one
+is running → job work if
 it is work hours → leisure. Helpers fall through a task ladder: supply
 construction sites, then build them, then restock workshops, then clear finished
 goods, then hand-gather whatever is scarcest.
@@ -443,7 +462,7 @@ thing.** `sim/vibes.ts` is the only place that reckons them, out of three parts:
 | source | max | what moves it |
 |---|---:|---|
 | Decorations | 60 | one of every comfort, at its own flat limit |
-| Food security | 30 | loaves per villager, a ramp through `FOOD_VIBES` |
+| Food security | 30 | **meals** per villager — bread and cooked fish together, a ramp through `FOOD_VIBES` |
 | Resident wellbeing | 10 | whether anybody is past `SEVERE_HUNGER` |
 
 The one thing they do is decide where in its window the next arrival lands.
@@ -488,8 +507,14 @@ called from `completeConstruction`:
 |---|---|---|---|
 | 1 Base Camp | the founding | Cabin, Storehouse, Lodge, Quarry | 1 / 1 |
 | 2 Settled Camp | a cabin, a quarry, three people | Well | 2 / 2 |
-| 3 Village Commons | bread of your own, six people, somebody in a trade | Standing Stone | 3 / 3 |
+| 3 Village Commons | food cooked in a kitchen of your own, six people, somebody in a trade | Standing Stone | 3 / 3 |
 | 4 Kingdom Commons | *a way of building nobody knows yet* | — | 4 / 4 |
+
+The food chain is not on that table, because it hangs off **goals** instead —
+40 stone opens the Windmill, a Storehouse opens the Wheat Farm *and* the Fishing
+Hut together, and the first flour or the first fish opens the Kitchen. That is
+the same rule as everywhere else: no level may require something it is itself
+responsible for unlocking, and the Village Commons asks for a cooked meal.
 
 The Base Camp hands over all four foundations at once, on purpose: the first
 hour is about deciding where those four go, and a kingdom that can fell trees
@@ -502,9 +527,9 @@ Deep Mine asks for a forge rather than the Iron Mine doing so: the Iron Mine is
 what opens the forge.
 
 Two rules that are easy to break. **No level may require something it is itself
-responsible for unlocking** — that is why bread gates the Village Commons rather
-than the Settled Camp, and why the food chain (Farm, Windmill, Bakery) is
-unlocked by *goals* instead. The Settled Camp asking for a quarry is fine
+responsible for unlocking** — that is why cooked food gates the Village Commons
+rather than the Settled Camp, and why the food chain (Farm, Fishing Hut,
+Windmill, Kitchen) is unlocked by *goals* instead. The Settled Camp asking for a quarry is fine
 precisely because the Base Camp is what opened the quarry. And **every cost must
 fit inside the storage the previous level left behind, and under what
 `gatherTarget` will actually fetch**: a cost above that line is one nobody can
@@ -589,11 +614,64 @@ pickaxes, no durability and no per-material workers. If that ever seems wanted,
 it is not: the whole point of the building is that it is one place with one job
 at it.
 
+**There are two ways to feed a kingdom and neither is the real one.** The
+storehouse hands over the **Wheat Farm** and the **Fishing Hut** together, and
+the **Kitchen** opens on the first thing worth cooking out of either — one
+flour, or one fish. So a kingdom that never sows and a kingdom that never casts
+arrive at the same building by different roads, and nothing downstream asks
+which road it was:
+
+> **wheat → flour → bread** ↘ **Kitchen** ↙ **water → fish → cooked fish**
+
+A loaf and a cooked fish fill somebody up identically, are worth identically
+much to Vibes, and count identically toward `stats.cooked`, which is what the
+Village Commons asks for. Villagers have a `favoriteFood` and it is personality
+and nothing else: `mealFor` reaches for theirs if it is in store and takes the
+other quite happily if it is not. **Do not let a preference become a
+requirement** — no building's output, no Vibe and no arrival may ever read it.
+
+The two branches differ in *shape* rather than in quality. Fishing is one cheap
+building (25 wood, no stone) and one pair of hands, so it feeds a young kingdom
+long before a farm could; it is capped at two fishers and limited by water that
+needs to rest, so it does not scale. Bread is three buildings and four or five
+people and arrives much later; then it keeps up with any population. In a
+700-minute run the kingdom lives almost entirely on fish through day 14 and the
+two are level by day 24, which is the intended shape.
+
+**The hut works the water it can reach, and the water is never used up.**
+`fishes` on the def is the counterpart of `needsRock`: `nearWater` refuses any
+spot more than `WATER_NEAR` tiles from anything wet, and after that `rangeOf`
+decides how much water is in play. There are no nodes. `fishQuality` scores each
+wet tile out of one from three things — cover (reeds and lily pads), how far the
+shore turns back on itself, and whether the drop-off is here — and `t.fish` is
+how *rested* that tile is, dropping by `FISH_TIRE` per cast and recovering in
+`updateTerrain` alongside the tree stumps. `spotYield` multiplies the two, with
+`FISH_FLOOR` under it, so a spot fished flat is slow and a hut on thin water is
+slow, and **neither is ever idle** — the same promise the mine makes about thin
+rock, and the placement bar says it in those words.
+
+Both halves of that are load-bearing. Water that could be exhausted would make
+the lake a finite resource somebody has to ration, which is the sort of pressure
+this game does not do; and quality that did not vary would make where the hut
+goes a non-decision. Reeds and lily pads are what carry it, which is why they
+are scattered at roughly a quarter density along the open coast: without that
+rule the sea scored exactly as well as the lake over two hundred islands and
+nine tenths of all water counted as a good spot, so the ring's marks were a
+wash and the lake was not the better fishing the brief asked for. It now runs
+about 70% good on the lake against 9% on the coast.
+
+**Fishing is not hunting, and the two systems never touch.** No fisher catches
+an animal, no animal is consumed, and `fishQuality` reads reeds and lily pads
+because of what reeds and lily pads *are* rather than through the habitat model.
+Ducks like the same water for the same reason and that is the whole of the
+connection. Do not wire the wildlife survey into the catch.
+
 **Buildings come in four kinds, and the kind is a `BuildingDef` flag.**
 
 - **The commons** — `once`, never in the menu, never removable, never movable.
   It stands where the kingdom began.
-- **`unique: true`** — Lodge, Quarry, Farm, Windmill, Bakery, Forge. One at a
+- **`unique: true`** — Lodge, Quarry, Farm, Fishing Hut, Windmill, Kitchen,
+  Forge. One at a
   time.
   They grow through improvement rather than duplication, and rather than
   building a second you **move** the one you have.
@@ -666,10 +744,29 @@ exceeds 35% of storage capacity. Without it, woodcutters fill the barn and the
 food chain starves. This is the mechanism that makes "the kingdom stalls but
 never collapses" actually true.
 
+**Food is glutted against the people who eat it, not against the barn**, and
+that is a different question. `FOOD_CHAIN_VALUE` in `defs.ts` says what each
+link is worth on a plate — a wheat is a meal, a flour is one and a half, a fish
+is one — and `foodComfort` is what the kingdom is content to hold: five meals a
+head plus a small pantry. Two rules come out of that, and they must stay
+separate:
+
+- **cooked food** (`PREPARED_FOODS`) is judged on `preparedFood(g)` alone;
+- **ingredients** are judged on `foodPotential(g)` against `foodComfort ×
+  FOOD_CHAIN_HEADROOM`, so the farmers, the millers and the fishers all ease off
+  together and the cooks stopping does not just move the pile upstream.
+
+Crossing those two wires is a real bug and it has been made once: measuring the
+*cooks* against the whole pipeline stops them for having too much to cook, which
+is the one job that would have fixed it. Seed 12345 came out of a twenty-three
+day run with seventy raw fish, eighty wheat, no supper at all and nineteen
+people hungry in front of it. `simcheck` now fails a run whose larder is wildly
+out of proportion to its population, in either direction.
+
 It applies to **workshops as well as gatherers**, and that was missing for a
-long time without showing: a mill with wheat coming in and no bakery built yet
+long time without showing: a mill with wheat coming in and no kitchen built yet
 ground every last sheaf into flour, filled the store with it, and left the
-miners who would have cut the stone the bakery was waiting on with nowhere to
+miners who would have cut the stone the kitchen was waiting on with nowhere to
 put anything down. `chooseRecipe` checks the glut before a workshop starts
 anything, and `planHelper`'s restock step goes through the same function, so it
 will not carry wheat to a mill that has stopped or coal to a forge that has. Clearing the output shelf is deliberately *not* gated —
@@ -807,6 +904,23 @@ they read as flat plates. Sprites carry `padX` (roof overhang) and `rise`
 radial sources composited `lighter`, then the whole thing multiplied over the
 world. Anything that should glow at night must contribute to the light buffer;
 drawing it bright in the world buffer alone will just get darkened.
+
+**Fish breaking the surface live on `GameState` and are never saved.**
+`g.splashes` is a short transient list — the sim pushes to it because the sim is
+what knows a fish was landed, the renderer walks it inside the *sorted* pass so
+a ring on the far side of the lake goes behind the reeds in front of it, and
+`updateSplashes` expires them whether or not anything is watching, so the
+headless run behaves. A jump accompanies a catch **45% of the time and not
+always**: one every time makes it a progress bar for the catch rather than
+something that happens in a lake, and the ones that come to nothing are what
+stop the player reading it as an indicator. Ambient jumps fire about once a
+game-minute somewhere plausible.
+
+`ripple()` walks the ellipse along **both** axes and puts the pixels through a
+set. Even steps of *angle* bunch up at the ends of a 2:1 ellipse and spread out
+along its sides, so a new ring three pixels across came out as five dots; and
+because the rings are drawn at part alpha, a pixel plotted twice is visibly
+brighter than its neighbours, which put a bead at each end of every ripple.
 
 **Activity badges are the one exception to the sorted pass.** The little glyph
 over each villager's head (`drawActivityIcon` in `actors.ts`, glyphs defined as
@@ -1206,6 +1320,17 @@ be replaced.
   guarantee, make sure the *counting* rule and the *placing* rule agree on the
   band: rounding a dart at radius 13.9 to a tile puts it at 14.2, and a fill
   that counts what it cannot measure reports success one node short.
+- **The lake grows along the shore, never out through it.** Its lobes are aimed
+  perpendicular to the bearing from the island's middle, and that is load-bearing
+  rather than tidy: the lake sits eleven tiles out on an island whose coast is
+  about eighteen out, so a lobe pushed outward walks through the beach and the
+  lake stops being a lake. Measured over five hundred seeds, the first version
+  turned half of them into bays. Any change to `makeLake` wants that measurement
+  taken again — `worldcheck` reports the lake size and the bay count for exactly
+  this reason. Watch the other direction too: the first attempt put the lobes
+  *closer* to the centre than the main body's own radius, so they were entirely
+  inside it and the "bigger" lake came out 7% smaller than the plain circle it
+  replaced.
 - **Bumping `SAVE_VERSION` makes every existing kingdom unopenable.** That is the
   deliberate policy — files are refused rather than guessed at — but it means the
   bump is the whole decision, not a detail of one. The message the player gets
@@ -1280,7 +1405,7 @@ durability, no replacing anything. If a material ever needs to feel harder to
 get, that is a number on the building, not a new class of person or a thing to
 carry.
 
-**A second Lodge, Quarry, Farm, Windmill, Bakery or Forge is gone, and is not
+**A second Lodge, Quarry, Farm, Fishing Hut, Windmill, Kitchen or Forge is gone, and is not
 coming back.** These are institutions rather than production units. If one is in a bad
 spot the answer is to move it, which keeps its level, its name, its workers and
 its history; a duplicate would weaken all of that and quietly become the
@@ -1332,13 +1457,26 @@ Kingdom Commons, and exactly one of each principal production building · a lodg
 or quarry reaches 13 tiles, and the mine's seam 13 / 15 / 17 / 19 as it is sunk
 deeper · a mine works at full pace on 70 rocky tiles inside that reach and at
 0.55× on none, never at nothing · the forge is 1 ore → 1 iron bar with no coal
-at all, and 1 iron bar + 2 coal → 1 steel bar · founding itself is about a minute
-and a half at 1×, twenty seconds of it the walk up the beach and twenty the tree
+at all, and 1 iron bar + 2 coal → 1 steel bar · the kitchen is 2 flour → 3 bread
+in 22 seconds and 2 fish → 2 cooked fish in 16, and a loaf and a fish are worth
+the same to everything · a fishing hut reaches 10 tiles, 13 improved, holds 1
+fisher and then 2, and one cast is 11 seconds for about 3 fish at the best water
+and 1 at the thinnest · a spot loses a third of its rest per cast and takes about
+4 game-minutes to settle fully, never falling below 0.3× · seasons move the catch
+between 1.1× in summer and 0.8× in winter and never stop it · the kingdom is
+comfortable holding 5 meals a head plus 10, and eases off above that · founding
+itself is about a minute and a half at 1×, twenty seconds of it the walk up the
+beach and twenty the tree
 · a generated island carries at least 55 trees and 26 boulders within 14 tiles of
 the middle, a choice of at least 6 legal campsites, at least 4 trees within 9
-tiles of where the kingdom begins — the nearest about 3 — and at least 3 places a
+tiles of where the kingdom begins — the nearest about 3 — at least 3 places a
 quarry could legally stand with 25 tiles of rock inside its reach (in practice
-fifty or more such sites, the best of them reaching 127 to 187 tiles of rock).
+fifty or more such sites, the best of them reaching 127 to 189 tiles of rock),
+and at least 3 places a fishing hut could with 4 good spots inside its reach (in
+practice 21 to 132 sites, the best of them seeing 10 to 122 spots) · the lake is
+about 100 tiles of water and shallows, a main body with one or two lobes pushed
+out along the shore rather than out through it, and about one island in two
+hundred has one that meets the sea and becomes a bay.
 
 Per-resource shelf limits — one good never taking more than a share of the
 store — have been discussed and deliberately deferred. Any such limit has to

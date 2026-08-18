@@ -12,8 +12,16 @@ import type {
   Villager,
   VillagerAppearance,
 } from '../types';
-import { STORED_RESOURCES, emptyStock } from '../types';
-import { BUILDINGS, DAYS_PER_SEASON, TRAIT_IDS, buildingName } from './defs';
+import { PREPARED_FOODS, STORED_RESOURCES, emptyStock } from '../types';
+import {
+  BUILDINGS,
+  DAYS_PER_SEASON,
+  FOOD_CHAIN_VALUE,
+  FOOD_COMFORT_FLOOR,
+  FOOD_COMFORT_PER_HEAD,
+  TRAIT_IDS,
+  buildingName,
+} from './defs';
 import { generateMap, tileAt } from '../world/terrain';
 import { makeName } from './names';
 import { buildGoals } from './goals';
@@ -52,6 +60,9 @@ export function makeVillager(g: GameState, r: RNG, x: number, y: number, name?: 
     carrying: null,
     appearance: makeAppearance(r),
     favorite: false,
+    // Everybody turns up with an opinion about supper and no say in the matter
+    // when their own is not in store. It is worth nothing to anyone.
+    favoriteFood: r.pick(PREPARED_FOODS),
     arrived: g.day,
     history: [],
     wakeOffset: r.range(-0.02, 0.035),
@@ -137,7 +148,8 @@ export function newGame(seed = Math.floor(Math.random() * 1e9)): GameState {
     wildlife: newWildlifeTimers(),
     founderId: 0,
     founding: { stage: 'arriving', x: map.start.x, y: map.start.y },
-    stats: { built: 0, harvested: 0, baked: 0, arrivals: 1, mined: 0, smelted: 0 },
+    splashes: [],
+    stats: { built: 0, harvested: 0, baked: 0, cooked: 0, caught: 0, arrivals: 1, mined: 0, smelted: 0 },
     nameSeq: 0,
   };
   g.goals = buildGoals();
@@ -191,6 +203,47 @@ export function storageUsed(g: GameState): number {
 
 export function storageFree(g: GameState): number {
   return Math.max(0, storageCapacity(g) - storageUsed(g));
+}
+
+/**
+ * Everything in store that somebody could sit down and eat — loaves and cooked
+ * fish together, never one of the two. Every question about whether the kingdom
+ * is fed goes through here, which is what keeps the two branches of the food
+ * chain genuinely interchangeable rather than one of them being the real one
+ * and the other a garnish.
+ */
+export function preparedFood(g: GameState): number {
+  let n = 0;
+  for (const res of PREPARED_FOODS) n += g.stock[res];
+  return n;
+}
+
+/**
+ * How much cooked food the kingdom is comfortable holding. Past this the cooks
+ * ease off — the same idea as a woodcutter downing tools in front of a full
+ * barn, measured against the mouths there are to feed rather than against the
+ * size of the barn, because those are different questions.
+ */
+export function foodComfort(g: GameState): number {
+  return g.villagers.length * FOOD_COMFORT_PER_HEAD + FOOD_COMFORT_FLOOR;
+}
+
+/**
+ * Every meal the kingdom has or is one or two steps away from having — cooked
+ * food, raw fish, flour and standing wheat, each counted for what it will end
+ * up being worth on a plate.
+ *
+ * The whole chain looks at this rather than at its own shelf, so easing off
+ * happens all the way up it at once. A kingdom that stops cooking and carries
+ * on milling has only moved the pile.
+ */
+export function foodPotential(g: GameState): number {
+  let n = 0;
+  for (const k in FOOD_CHAIN_VALUE) {
+    const res = k as ResourceId;
+    n += g.stock[res] * (FOOD_CHAIN_VALUE[res] ?? 0);
+  }
+  return n;
 }
 
 /** Adds to the shared store, clipped by capacity. Returns the amount actually accepted. */

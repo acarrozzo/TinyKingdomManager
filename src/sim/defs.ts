@@ -58,17 +58,23 @@ export const VIBE_BANDS: { from: number; name: string }[] = [
 ];
 
 /**
- * Food security by loaves per villager: none, one each, two each, and so on up
+ * Food security by *meals* per villager: none, one each, two each, and so on up
  * to four. Per head rather than per kingdom, so a larder that was reassuring at
  * four people stops being reassuring at twelve without anything being rewritten.
  * Read as a ramp between the points rather than as five steps.
+ *
+ * A meal is a loaf or a cooked fish, counted together and worth exactly the
+ * same. A kingdom that lives on fish is as well fed as one that lives on bread,
+ * and there is no bonus for keeping both — variety is a thing the villagers
+ * have opinions about, not a thing the kingdom is scored on.
  */
 export const FOOD_VIBES = [0, 8, 16, 24, 30];
 
 /**
- * What food is worth before the kingdom has ever baked. Neutral on purpose:
- * there is no bread because there is no bakery, and marking a kingdom down for
- * a system it has not been handed yet is a punishment for playing in order.
+ * What food is worth before the kingdom has ever cooked anything. Neutral on
+ * purpose: there is no food because there is no kitchen, and marking a kingdom
+ * down for a system it has not been handed yet is a punishment for playing in
+ * order.
  */
 export const FOOD_VIBES_NEUTRAL = 15;
 
@@ -81,6 +87,8 @@ export const RESOURCE_META: Record<string, { name: string; icon: string; color: 
   wheat: { name: 'Wheat', icon: '🌾', color: '#e0b95c' },
   flour: { name: 'Flour', icon: '🥣', color: '#e8dcc4' },
   bread: { name: 'Bread', icon: '🍞', color: '#c98a4b' },
+  fish: { name: 'Fish', icon: '🐟', color: '#7fb0c8' },
+  cookedFish: { name: 'Cooked Fish', icon: '🍽️', color: '#d8a86a' },
   // Processed metal is a Bar. Not an ingot, anywhere, ever.
   ironOre: { name: 'Iron Ore', icon: '🟤', color: '#8d6a52' },
   coal: { name: 'Coal', icon: '⚫', color: '#4a4a4e' },
@@ -107,11 +115,19 @@ export const RESOURCE_INFO: Record<string, { from: string; used: string }> = {
   },
   flour: {
     from: 'The windmill, two flour for every three wheat carried in.',
-    used: 'Baked into bread, two flour to a batch of three loaves.',
+    used: 'Baked into bread at the kitchen, two flour to a batch of three loaves.',
   },
   bread: {
-    from: 'The bakery, three loaves a batch.',
-    used: 'Eaten. It is the only thing anybody eats, so keep some in store.',
+    from: 'The kitchen, three loaves a batch. Slower to set up than fish and far easier to keep going once it is.',
+    used: 'Eaten. One loaf is a whole meal, and some people would rather have it than fish.',
+  },
+  fish: {
+    from: 'Fishers working the water within reach of their hut, a few at a time. A spot worked hard goes quiet for a while and then comes back.',
+    used: 'Nothing eats it raw. Two fish cook down to two meals at the kitchen.',
+  },
+  cookedFish: {
+    from: 'The kitchen, out of raw fish. The same cooks make the bread.',
+    used: 'Eaten, and it fills somebody up exactly as well as a loaf does.',
   },
   ironOre: {
     from: 'The mine, once it has been sunk deep enough to be an Iron Mine. The same miners bring it up as bring up the stone.',
@@ -157,7 +173,16 @@ export const JOB_META: Record<JobId, { name: string; icon: string; desc: string 
   },
   farmer: { name: 'Farmer', icon: '🌱', desc: 'Sows and harvests the wheat plots around the farm.' },
   miller: { name: 'Miller', icon: '🌬️', desc: 'Grinds wheat into flour at the windmill.' },
-  baker: { name: 'Baker', icon: '👩‍🍳', desc: 'Turns flour into bread the whole kingdom eats.' },
+  cook: {
+    name: 'Cook',
+    icon: '👩‍🍳',
+    desc: 'Bakes bread and cooks fish at the kitchen. One trade for both, and practice at one is practice at the other.',
+  },
+  fisher: {
+    name: 'Fisher',
+    icon: '🎣',
+    desc: 'Works the water within reach of the hut, and carries the catch back. Nothing eats it until a cook has had it.',
+  },
   smith: { name: 'Smith', icon: '🔥', desc: 'Smelts ore into iron bars at the forge, and iron bars into steel.' },
   keeper: { name: 'Keeper', icon: '🐾', desc: 'Looks after the kingdom’s animals.' },
 };
@@ -233,7 +258,10 @@ const COMMONS_REQS: UpgradeReq[][] = [
     { label: 'Three people about the place', met: (g) => g.villagers.length >= 3 },
   ],
   [
-    { label: 'Bread out of an oven of your own', met: (g) => g.stats.baked >= 6 },
+    // Cooked food of any kind, deliberately: a kingdom that lives on fish has
+    // fed itself just as thoroughly as one that lives on bread, and asking for
+    // loaves specifically would make one of the two branches the real one.
+    { label: 'Food cooked in a kitchen of your own', met: (g) => g.stats.cooked >= 6 },
     { label: 'Six people about the place', met: (g) => g.villagers.length >= 6 },
     {
       label: 'Somebody settled into a trade',
@@ -364,7 +392,7 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     upgradeCostMul: 2.2,
     order: 20,
     desc: 'The kingdom’s one lodge. Woodcutters work the trees nearby, so place it in or beside a wood.',
-    how: 'Woodcutters work whatever trees stand within thirteen tiles of the lodge — seventeen once it is improved — and range further only when the near ones are gone. The reach is drawn on the map while you are placing or moving it, along with every tree inside it. Each felled tree becomes a stump and grows back in time. They chop three trips\' worth, haul it to the nearest store, and set off again. When wood climbs past about a third of the whole store they stop and go help elsewhere, so the barn never fills with timber while the bread runs out. There is only ever one lodge; if the wood around it thins out, move it rather than building a second.',
+    how: 'Woodcutters work whatever trees stand within thirteen tiles of the lodge — seventeen once it is improved — and range further only when the near ones are gone. The reach is drawn on the map while you are placing or moving it, along with every tree inside it. Each felled tree becomes a stump and grows back in time. They chop three trips\' worth, haul it to the nearest store, and set off again. When wood climbs past about a third of the whole store they stop and go help elsewhere, so the barn never fills with timber while the supper runs out. There is only ever one lodge; if the wood around it thins out, move it rather than building a second.',
     slots: [2, 3],
     job: 'woodcutter',
     harvests: 'tree',
@@ -411,6 +439,8 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
       ['stone', 'ironOre', 'coal'],
       ['stone', 'ironOre', 'coal', 'mithrilOre'],
     ],
+    focusNote:
+      'Balanced follows whatever the kingdom is shortest of rather than keeping equal piles. Name one material and they will favour it — and if there is nowhere left to put that one, they quietly work on something else instead of stopping.',
     needsRock: true,
     range: [13, 15, 17, 19],
     unique: true,
@@ -427,7 +457,7 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     labour: 130,
     maxLevel: 2,
     upgradeCostMul: 2.0,
-    order: 25,
+    order: 26,
     desc: 'Ore becomes iron, and iron becomes steel. Wants an Iron Mine behind it.',
     how: 'One iron ore makes one iron bar, and that part wants no coal at all — the coal is for the next step, where one iron bar and two coal make one steel bar. There is a third recipe written on the wall, for mithril, and nobody here has ever seen any. The smith fetches their own materials from the store and carries the bars back. Which of the two it is working on is set by the Making box on this panel; left Balanced it smelts ore into iron and only reaches for the coal once there are bars to spare. Short of something, it simply waits — nothing here is spoiled or lost by a shelf running empty. There is one forge, and it can be moved.',
     slots: [1, 2],
@@ -439,6 +469,8 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
       { inputs: { ironBar: 1, coal: 2 }, outputs: { steelBar: 1 }, seconds: 26 },
       { inputs: { mithrilOre: 1, coal: 4 }, outputs: { mithrilBar: 1 }, seconds: 40, locked: true },
     ],
+    focusNote:
+      'Balanced smelts ore into iron and only reaches for the coal once there are bars to spare. Name one and it will favour that instead. Changing your mind costs nothing, and nothing in progress is lost.',
     unique: true,
     unlock: 'forge',
     light: [{ x: 1.0, y: 1.3, radius: 46, color: '#ff8a3c' }],
@@ -454,7 +486,7 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     labour: 80,
     maxLevel: 2,
     upgradeCostMul: 2.0,
-    order: 22,
+    order: 23,
     desc: 'A small barn and eight plots. Farmers sow, wait, and harvest wheat.',
     how: 'Eight plots around a small barn. A farmer sows a bare plot, leaves it, and comes back when it is ripe — a little over three minutes of growing at normal speed, quickest in summer and about a third of that pace in winter. A farm with nobody assigned still creeps along at about a third the pace. Harvested wheat goes to the nearest store, not into the barn. There is one farm in the kingdom; moving it lays out fresh plots on the new ground, so whatever was in the old ones is lost with them — worth waiting for a harvest first.',
     slots: [2, 3],
@@ -474,7 +506,7 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     labour: 110,
     maxLevel: 2,
     upgradeCostMul: 2.0,
-    order: 23,
+    order: 24,
     desc: 'Grinds wheat into flour. The sails turn whenever the miller is working.',
     how: 'Three wheat in, two flour out, about eighteen seconds a batch and quicker as the miller learns the work. The miller fetches wheat from the store personally rather than waiting to be supplied, and carries the flour back once the shelf is worth a trip. Nothing here is automatic: if nobody is walking, nothing is moving. There is one windmill, and it can be moved — a shorter walk between the farm, the mill and the ovens is most of what makes bread arrive.',
     slots: [1, 2],
@@ -484,9 +516,9 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     unlock: 'mill',
     solid: true,
   },
-  bakery: {
-    id: 'bakery',
-    name: 'Bakery',
+  kitchen: {
+    id: 'kitchen',
+    name: 'Kitchen',
     category: 'production',
     w: 2,
     h: 2,
@@ -494,15 +526,46 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     labour: 120,
     maxLevel: 2,
     upgradeCostMul: 2.0,
-    order: 24,
-    desc: 'Flour becomes bread. The smell reaches most of the kingdom.',
-    how: 'Two flour in, three loaves out, about twenty-two seconds a batch and quicker with practice. Bread is the only thing anyone eats, so this is the one chain worth keeping staffed. Bakers fetch their own flour and haul the loaves to the store. The smell draws people over even when they have no business here, which is a reason in itself to have the one bakery somewhere people pass. It can be moved if you decide wrong.',
+    order: 25,
+    desc: 'Where both chains end: flour becomes bread, and the morning’s fish becomes supper.',
+    how: 'Two flour make three loaves in about twenty-two seconds; two fish come off the fire as two meals in about sixteen. A loaf and a cooked fish fill somebody up exactly as well as each other, so which of the two the kingdom lives on is a question about the land rather than about the food. The cooks decide between the recipes themselves — whichever the kingdom is shorter of, with whatever is actually in store — so there is no queue to keep and nothing to switch by hand, though you can name a preference if you want one. They fetch their own flour and fish and carry the meals back. Once there is comfortably enough food for everybody they ease off and go and help elsewhere, rather than cooking a hundred suppers nobody has room for. The oven draws people over even when they have no business here, which is a reason in itself to put it somewhere people pass. There is one kitchen, and it can be moved.',
     slots: [2, 3],
-    job: 'baker',
-    recipe: { inputs: { flour: 2 }, outputs: { bread: 3 }, seconds: 22 },
+    job: 'cook',
+    // Bread first: it is the recipe most kingdoms meet first, and the panel
+    // reads top-down. Neither is better than the other and the copy says so.
+    recipes: [
+      { inputs: { flour: 2 }, outputs: { bread: 3 }, seconds: 22 },
+      { inputs: { fish: 2 }, outputs: { cookedFish: 2 }, seconds: 16 },
+    ],
+    focusNote:
+      'Balanced cooks whichever meal the kingdom is shorter of, out of whatever is actually in store — which is usually the right answer. Name one and the cooks will favour it, and quietly make the other anyway rather than standing idle if the ingredients run out.',
     unique: true,
-    unlock: 'bakery',
+    unlock: 'kitchen',
     light: [{ x: 1.0, y: 1.3, radius: 42, color: '#ffa14a' }],
+    solid: true,
+  },
+  fishhut: {
+    id: 'fishhut',
+    name: 'Fishing Hut',
+    category: 'production',
+    w: 2,
+    h: 2,
+    // Wood alone, and cheap: this is the food chain a young kingdom can afford
+    // before it has broken any stone at all, which is the whole of its place in
+    // the game. Anything dearer than a lodge would take that away.
+    cost: { wood: 25 },
+    labour: 45,
+    maxLevel: 2,
+    upgradeCostMul: 2.2,
+    order: 22,
+    desc: 'Stands on dry land beside fishable water. Fishers work the spots nearby, lake or coast.',
+    how: 'It has to stand on dry land with water inside its reach — the lake or the sea, both work, though a lake shore is usually the richer of the two. The ring drawn while you are placing it marks every promising spot in reach: reed beds, lily pads, the lip where the shallows drop away, and the crooks of an inlet. Fishers walk out to one, cast, wait, and bring back what they get. A spot worked over and over goes quiet for a while and then comes back on its own, so nothing here can ever be fished out — a hut on thin water is slower, never idle. One fisher to begin with and two once it is improved, which is as far as it goes: this is the food chain that feeds a small settlement quickly, not the one that feeds a large one forever. There is one hut, and it can be moved when the good water is somewhere else.',
+    slots: [1, 2],
+    job: 'fisher',
+    fishes: true,
+    range: [10, 13],
+    unique: true,
+    unlock: 'fishhut',
     solid: true,
   },
   well: {
@@ -762,6 +825,93 @@ export function richnessMul(rockTiles: number): number {
   return RICH_MIN + (1 - RICH_MIN) * t;
 }
 
+// ---------------------------------------------------------------------------
+// Fishing
+// ---------------------------------------------------------------------------
+
+/**
+ * Seconds of casting and waiting for one go at a spot, before skill and season.
+ * Longer than a swing at a tree on purpose: fishing is watching somebody stand
+ * still, and hurrying it would lose the only thing it is really for.
+ */
+export const FISH_SECONDS = 11;
+/** Fish landed by one go at an undisturbed spot of the best sort. */
+export const FISH_YIELD = 3;
+/**
+ * How much of a spot's rest one go uses up, and how long a spent one takes to
+ * come back — about four game-minutes from nothing to full. A spot is never
+ * *emptied*: `FISH_FLOOR` is what the tiredest water still gives, so a hut with
+ * one pool in reach is slow and never idle, exactly like a mine on thin rock.
+ */
+export const FISH_TIRE = 0.34;
+export const FISH_REST = 1 / (60 * 4);
+export const FISH_FLOOR = 0.3;
+/**
+ * What a spot has to be worth before the hut's ring marks it and the placement
+ * bar counts it. Ordinary open water below this is still perfectly fishable.
+ */
+export const GOOD_SPOT = 0.62;
+/**
+ * How close a hut has to be to the water to count as beside it. The mine's
+ * `touchesRock` is the same rule one tile tighter; a hut wants a little more
+ * slack, because the last dry tile on a reedy shore is often a tile nobody can
+ * build a two-by-two on.
+ */
+export const WATER_NEAR = 3;
+/**
+ * The seasons, gently. Never a stop and barely a swing: cold water is slower,
+ * and that is the whole of the weather in this game.
+ */
+export const FISH_SEASON: Record<string, number> = {
+  spring: 1.05,
+  summer: 1.1,
+  autumn: 1.0,
+  winter: 0.8,
+};
+
+// ---------------------------------------------------------------------------
+// Food
+// ---------------------------------------------------------------------------
+
+/**
+ * Meals per head the kingdom is comfortable holding, and a small pantry on top
+ * so that a settlement of two is not held to five suppers. Past this the cooks
+ * bank the fire and go and help elsewhere — the same rule the woodcutters
+ * follow with a full barn, and the reason a kitchen cannot bury the kingdom
+ * under four hundred loaves while the stone it wants has nowhere to go.
+ *
+ * Comfortably above the four a head that Vibes stop counting at, so easing off
+ * never costs the kingdom a point of food security.
+ */
+export const FOOD_COMFORT_PER_HEAD = 5;
+export const FOOD_COMFORT_FLOOR = 10;
+
+/**
+ * What each thing in the food chain is worth in meals, once everything
+ * downstream of it has had a turn: three wheat make two flour make three
+ * loaves, so a wheat is a meal and a flour is one and a half; two fish come off
+ * the fire as two suppers, so a fish is one.
+ *
+ * This is how far the *whole* chain looks ahead before easing off. Without it
+ * the kingdom stops cooking at a comfortable larder and then goes on farming,
+ * milling and fishing into a barn full of ingredients for meals nobody wants —
+ * which is the same complaint one step upstream.
+ */
+export const FOOD_CHAIN_VALUE: Partial<Record<ResourceId, number>> = {
+  bread: 1,
+  cookedFish: 1,
+  fish: 1,
+  flour: 1.5,
+  wheat: 1,
+};
+
+/**
+ * How far past comfortable the *ingredients* may run. Some slack on purpose:
+ * a kitchen with nothing on its shelves the moment the cooks come back would
+ * make easing off look like a stall.
+ */
+export const FOOD_CHAIN_HEADROOM = 1.5;
+
 /**
  * How far this building's workers will go for their nodes. One number, used by
  * the planner, by the panel's count of what is left, and by the ring drawn on
@@ -815,13 +965,13 @@ export const TERRAIN_SPEED: Record<string, number> = {
 export const TERRAIN_META: Record<TerrainId, { name: string; desc: string; like: string; feel: string }> = {
   water: {
     name: 'Open water',
-    desc: 'Too deep to cross and too deep to build on. It stays as it is.',
+    desc: 'Too deep to cross and too deep to build on. It stays as it is — but a fisher can work it from the bank, and the lip where it meets the shallows is where they would rather stand.',
     like: 'open water like this',
     feel: 'Whatever lives out here comes and goes on its own terms.',
   },
   shallow: {
     name: 'Shallows',
-    desc: 'Wadeable, slowly. Nothing can be built standing in it.',
+    desc: 'Wadeable, slowly. Nothing can be built standing in it, though a fishing hut on the bank beside it does very well — especially where the reeds are.',
     like: 'shallows like this',
     feel: 'The edge of the water is where most things stop to drink.',
   },
@@ -883,8 +1033,14 @@ export const PROP_META: Record<
   },
   bush: { name: 'Bush', desc: 'Scrub. Slows a walk slightly and gives small animals somewhere to hide.' },
   flowers: { name: 'Wildflowers', desc: 'No use whatsoever. Some things are fonder of a tile for having them.' },
-  reeds: { name: 'Reeds', desc: 'Waterside growth. Good cover at the edge of the shallows.' },
-  lilypad: { name: 'Lily pads', desc: 'Floating on the water, going nowhere.' },
+  reeds: {
+    name: 'Reeds',
+    desc: 'Waterside growth, and the surest sign of water worth fishing. They want it still, so there are far more of them round the lake than along the coast.',
+  },
+  lilypad: {
+    name: 'Lily pads',
+    desc: 'Floating on the water, going nowhere. Fish sit under them, which fishers know and frogs knew first.',
+  },
 };
 
 export const SPECIES: Record<SpeciesId, SpeciesDef> = {

@@ -7,11 +7,12 @@
  * is its roster and a roster needs room.
  */
 
-import type { JobId, Villager } from '../types';
+import type { GameState, JobId, Tile, Villager } from '../types';
 import {
   BUILDINGS,
   JOB_META,
   PROP_META,
+  GOOD_SPOT,
   RANK_COLOR,
   RESOURCE_META,
   SPECIES,
@@ -23,6 +24,7 @@ import {
   rankOf,
 } from '../sim/defs';
 import { buildingById, jobSlots, xpOf } from '../sim/state';
+import { fishQuality } from '../world/terrain';
 import { fmtDuration } from '../core/util';
 import type { Game } from '../game';
 import { activityLabel, animalStateLabel, esc, listWords } from './context';
@@ -73,6 +75,16 @@ export function villagerCard(game: Game): string {
         ${daysHere > 0 ? `<span class="tag">${daysHere} day${daysHere === 1 ? '' : 's'} here</span>` : ''}
       </div>
       <div class="tiny muted" style="margin-top:7px;line-height:1.5">${esc(trait.desc)}</div>
+      ${
+        // Personality and nothing else. Said as an observation rather than as a
+        // requirement, because it is not one: they will eat the other quite
+        // happily, and no part of the kingdom is measured on humouring them.
+        g.stats.cooked > 0
+          ? `<div class="tiny muted" style="margin-top:5px;line-height:1.5">Would rather have
+              ${v.favoriteFood === 'bread' ? 'bread than fish' : 'fish than bread'}, and will eat
+              whichever is in the store.</div>`
+          : ''
+      }
     </div>
 
     <div class="section">
@@ -232,6 +244,7 @@ export function tileCard(game: Game): string {
     <div class="section">
       <div class="kv"><span class="k">Going</span><span class="v">${going}</span></div>
       <div class="kv"><span class="k">Building here</span><span class="v">${buildable ? 'Allowed' : 'Not on water'}</span></div>
+      ${fishingRows(g, tile, x, y)}
     </div>
 
     <div class="section">
@@ -243,6 +256,28 @@ export function tileCard(game: Game): string {
       <button class="btn small" data-act="goto" data-x="${x}" data-y="${y}">Centre</button>
     </div>
   </div>`;
+}
+
+/**
+ * What a stretch of water is worth to a fisher, on the tile's own card.
+ *
+ * Shown only once the kingdom has a hut, because before that it is a number
+ * about a job nobody does. This is economy rather than ecology, so it is said
+ * plainly and in the same words the placement bar uses — unlike the wildlife
+ * line below it, which stays an observation and never a figure.
+ */
+function fishingRows(g: GameState, tile: Tile, x: number, y: number): string {
+  if (tile.terrain !== 'water' && tile.terrain !== 'shallow') return '';
+  if (!g.buildings.some((b) => b.def === 'fishhut')) return '';
+  const q = fishQuality(g, x, y);
+  const how = q >= GOOD_SPOT ? 'Worth casting into' : q >= 0.45 ? 'Fishable, quietly' : 'Thin water';
+  const settled = Math.round(tile.fish * 100);
+  return `<div class="kv"><span class="k">Fishing</span><span class="v">${how}</span></div>
+    ${
+      settled < 96
+        ? `<div class="kv"><span class="k">Settled again</span><span class="v">${settled}%</span></div>`
+        : ''
+    }`;
 }
 
 /**

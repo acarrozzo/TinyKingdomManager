@@ -10,10 +10,17 @@
 
 import { RNG, clamp, dist, rng } from '../core/util';
 import type { Building, GameState, JobId, PropId, Recipe, ResourceId, Step, Villager } from '../types';
+import { PREPARED_FOODS } from '../types';
 import {
   BALANCE_TARGET,
   BUILDINGS,
   CARRY_CAPACITY,
+  FISH_SEASON,
+  FISH_SECONDS,
+  FISH_TIRE,
+  FISH_YIELD,
+  FOOD_CHAIN_HEADROOM,
+  FOOD_CHAIN_VALUE,
   MINE_SECONDS,
   MINE_YIELD,
   SEVERE_HUNGER,
@@ -39,16 +46,28 @@ import {
   buildingCentre,
   claim,
   deliver,
+  foodComfort,
+  foodPotential,
   homeCapacity,
   isClaimed,
   nearestStore,
+  preparedFood,
   releaseClaim,
   storageCapacity,
   storageFree,
   withdraw,
   xpOf,
 } from './state';
-import { TREE_REGROW, findNode, isWalkable, rockInRange, tileAt } from '../world/terrain';
+import {
+  TREE_REGROW,
+  findFishingSpot,
+  findNode,
+  isWalkable,
+  rockInRange,
+  spotYield,
+  tileAt,
+  workSpot,
+} from '../world/terrain';
 import { findPath, footprintApproach } from '../world/path';
 import { CHATTER } from './names';
 import { unlockCommonsTier, unlockMineTier } from './goals';
@@ -101,11 +120,36 @@ function gatherTarget(g: GameState, res: ResourceId): number {
 const SEASON_GROWTH: Record<string, number> = { spring: 1.1, summer: 1.3, autumn: 0.9, winter: 0.35 };
 
 /**
- * True when one good has taken over the stores. Specialists then go and do
+ * True when there is plenty of this already. Specialists then go and do
  * something else instead of burying the kingdom under the same material —
  * production slows rather than jamming, which is the whole idea.
+ *
+ * Two rules, because there are two different questions. Anything that is only
+ * ever *stored* is measured against the barn: past a third of it, stop. Food is
+ * measured against the people who eat it, which is a different question and the
+ * only one worth asking about supper — a kingdom of four with two hundred
+ * meals put by has not achieved anything a kingdom of four with forty has not,
+ * and the barn had nothing to do with it. The whole chain looks at the same
+ * figure, so the cooks easing off does not simply move the pile upstream to the
+ * millers.
  */
 function glutOf(g: GameState, res: ResourceId): boolean {
+  if (FOOD_CHAIN_VALUE[res] !== undefined) {
+    const comfort = foodComfort(g);
+    if (PREPARED_FOODS.includes(res)) {
+      // Cooked food is judged on its own, and *only* on its own. Measuring it
+      // against the whole pipeline instead stops the cooks for having too much
+      // to cook, which is the one job that would have fixed it: seed 12345 came
+      // out of a twenty-three-day run with seventy raw fish, eighty wheat, no
+      // supper at all and nineteen people going hungry in front of it.
+      if (preparedFood(g) >= comfort) return true;
+    } else if (foodPotential(g) >= comfort * FOOD_CHAIN_HEADROOM) {
+      // Ingredients look at the whole chain, counting what each will be worth
+      // on a plate, so the farmers and the fishers ease off together and the
+      // cooks easing off does not simply move the pile one step upstream.
+      return true;
+    }
+  }
   const cap = storageCapacity(g);
   if (cap <= 0) return false;
   return g.stock[res] > cap * 0.35;
@@ -127,6 +171,58 @@ export function updateVillagers(g: GameState, dt: number): void {
   for (const v of g.villagers) updateVillager(g, v, dt);
   growCrops(g, dt);
   sweepDepletedNodes(g);
+  updateSplashes(g, dt);
+}
+
+// ---------------------------------------------------------------------------
+// Fish breaking the surface
+// ---------------------------------------------------------------------------
+
+/** How long a ring on the water lasts, in game seconds. */
+const SPLASH_LIFE = 1.7;
+/** Ambient jumps, somewhere on the water, roughly once a game-minute. */
+const AMBIENT_JUMP = 1 / 60;
+/**
+ * How often a fish landed is a fish *seen*. Deliberately not always: a jump
+ * every time would make it a progress bar for the catch rather than a thing
+ * that happens in a lake, and the ones that come to nothing are what stop the
+ * player reading it as an indicator.
+ */
+const JUMP_ON_CATCH = 0.45;
+
+/**
+ * Something happening on the water. Cosmetic from end to end — nothing reads
+ * these back, they are never saved, and the headless run lets them expire with
+ * nobody watching.
+ */
+export function splash(g: GameState, x: number, y: number, jump: boolean): void {
+  // A hard ceiling rather than a queue: past a dozen at once nobody could tell
+  // them apart anyway, and this is the one list the renderer walks every frame.
+  if (g.splashes.length >= 16) return;
+  g.splashes.push({ x, y, t: 0, jump });
+}
+
+function updateSplashes(g: GameState, dt: number): void {
+  let expired = false;
+  for (const s of g.splashes) {
+    s.t += dt;
+    if (s.t >= SPLASH_LIFE) expired = true;
+  }
+  if (expired) g.splashes = g.splashes.filter((s) => s.t < SPLASH_LIFE);
+
+  // …and once in a while, a fish nobody was fishing for. The lake goes on
+  // without the kingdom, which is the whole reason to put one in.
+  if (!rng.chance(Math.min(0.5, dt * AMBIENT_JUMP))) return;
+  for (let i = 0; i < 8; i++) {
+    const x = rng.int(0, g.w - 1);
+    const y = rng.int(0, g.h - 1);
+    const t = tileAt(g, x, y);
+    if (!t || (t.terrain !== 'water' && t.terrain !== 'shallow')) continue;
+    // Somewhere a fish would plausibly be, rather than the middle of the ocean.
+    if (spotYield(g, x, y) < 0.45) continue;
+    splash(g, x, y, true);
+    return;
+  }
 }
 
 function updateVillager(g: GameState, v: Villager, dt: number): void {
@@ -299,7 +395,7 @@ function doAct(g: GameState, v: Villager, step: Extract<Step, { t: 'act' }>, dt:
 function traitWorkMul(v: Villager, job: JobId): number {
   let m = 1;
   if (v.trait === 'greenThumb' && job === 'farmer') m *= 1.2;
-  if (v.trait === 'crafty' && (job === 'baker' || job === 'miller')) m *= 1.2;
+  if (v.trait === 'crafty' && (job === 'cook' || job === 'miller')) m *= 1.2;
   if (v.trait === 'steady') m *= 1.06;
   // The same threshold the kingdom's wellbeing is judged on, so "going properly
   // hungry" means one thing whether you read it in the panel or watch it in the
@@ -385,9 +481,12 @@ function doEffect(g: GameState, v: Villager, step: Extract<Step, { t: 'effect' }
       markSettled(g);
       break;
     case 'eat': {
-      if (v.carrying?.res === 'bread' && v.carrying.qty > 0) {
-        v.carrying.qty -= 1;
-        if (v.carrying.qty <= 0) v.carrying = null;
+      // Either meal, and they do exactly the same thing. There is no better
+      // supper here and nothing anywhere reads which one it was.
+      const held = v.carrying;
+      if (held && held.qty > 0 && PREPARED_FOODS.includes(held.res)) {
+        held.qty -= 1;
+        if (held.qty <= 0) v.carrying = null;
         v.hunger = 0;
         v.energy = Math.min(1, v.energy + 0.08);
       }
@@ -416,6 +515,26 @@ function doEffect(g: GameState, v: Villager, step: Extract<Step, { t: 'effect' }
         g.stats.harvested += yieldQty;
       } else if (p) {
         p.claimed = 0;
+      }
+      break;
+    }
+    case 'catch': {
+      const x = step.x ?? Math.round(v.x);
+      const y = step.y ?? Math.round(v.y);
+      // What the water gives is how good it is times how rested it is, and it
+      // is never nothing: a spot fished flat is slow, and a fisher who came
+      // back with an empty net every time would be a punishment for siting a
+      // hut badly an hour ago.
+      const got = Math.max(1, Math.round(FISH_YIELD * spotYield(g, x, y)));
+      workSpot(g, x, y, FISH_TIRE);
+      if (v.carrying && v.carrying.res === 'fish') v.carrying.qty += got;
+      else if (!v.carrying) v.carrying = { res: 'fish', qty: got };
+      g.stats.caught += got;
+      splash(g, x, y, rng.chance(JUMP_ON_CATCH));
+      if (!g.unlocked.has('seen:fish')) {
+        g.unlocked.add('seen:fish');
+        journal(g, `${v.name} landed the first fish the kingdom had ever seen.`, '🐟');
+        note(g, v.id, 'Landed the kingdom’s first fish.');
       }
       break;
     }
@@ -467,6 +586,17 @@ function doEffect(g: GameState, v: Villager, step: Extract<Step, { t: 'effect' }
           }
           g.stats.baked += made;
         }
+        if (res === 'cookedFish') {
+          if (!g.unlocked.has('seen:cookedFish')) {
+            g.unlocked.add('seen:cookedFish');
+            journal(g, `${v.name} cooked the first of the catch over the kitchen fire.`, '🍽️');
+            note(g, v.id, 'Cooked the kingdom’s first fish.');
+          }
+        }
+        // Meals of either kind, together. This is what the commons asks for and
+        // what Vibes wait on, so that a kingdom which lives on fish has got
+        // exactly as far as one which lives on bread.
+        if (PREPARED_FOODS.includes(res)) g.stats.cooked += made;
         if (res === 'ironBar' || res === 'steelBar') {
           if (g.stats.smelted === 0) {
             journal(g, `${v.name} drew the first bar out of the forge.`, '🔥');
@@ -737,7 +867,7 @@ function think(g: GameState, v: Villager): void {
   if (shouldSleep(g, v) && v.energy < 0.92) {
     if (planSleep(g, v)) return;
   }
-  if (v.hunger > 0.7 && g.stock.bread >= 1) {
+  if (v.hunger > 0.7 && preparedFood(g) >= 1) {
     if (planEat(g, v)) return;
   }
   // Founding comes ahead of ordinary work and is not held to work hours: the
@@ -894,11 +1024,24 @@ function planSleep(g: GameState, v: Villager): boolean {
   return true;
 }
 
+/**
+ * Supper. They walk to the store, take the one they like if it is there, and
+ * take the other one perfectly happily if it is not — a preference is a thing
+ * to notice about somebody, not a demand the kitchen has to meet.
+ */
+function mealFor(g: GameState, v: Villager): ResourceId | null {
+  if (g.stock[v.favoriteFood] >= 1) return v.favoriteFood;
+  for (const res of PREPARED_FOODS) if (g.stock[res] >= 1) return res;
+  return null;
+}
+
 function planEat(g: GameState, v: Villager): boolean {
   const store = nearestStore(g, v.x, v.y);
   if (!store) return false;
+  const meal = mealFor(g, v);
+  if (!meal) return false;
   planWalkTo(g, v, store, [
-    { t: 'take', res: 'bread', qty: 1, from: 'store' },
+    { t: 'take', res: meal, qty: 1, from: 'store' },
     { t: 'act', dur: 7, kind: 'eating' },
     { t: 'effect', kind: 'eat' },
   ]);
@@ -919,8 +1062,10 @@ function planWork(g: GameState, v: Villager): boolean {
         return planExtract(g, v, workplace);
       case 'farmer':
         return planFarm(g, v, workplace);
+      case 'fisher':
+        return planFish(g, v, workplace);
       case 'miller':
-      case 'baker':
+      case 'cook':
       case 'smith':
         return planProduce(g, v, workplace);
       default:
@@ -974,6 +1119,90 @@ function planHarvestTrees(g: GameState, v: Villager, workplace: Building): boole
   if (store) steps.push(...storeLeg(g, store));
   v.plan = steps;
   return true;
+}
+
+// ---------------------------------------------------------------------------
+// Fishing
+// ---------------------------------------------------------------------------
+
+/**
+ * Fishers: out to a spot, cast, wait, and carry the catch back.
+ *
+ * The same shape as felling a tree, and deliberately so — walk out, work a
+ * thing that is somewhere on the map, haul the result to a store — but the
+ * thing being worked is water rather than a node. Nothing is consumed and
+ * nothing runs out: the spot is simply quieter for a while afterwards and
+ * recovers on its own, which is why a hut can never fish its lake empty and why
+ * two fishers on a small pond are slower rather than idle.
+ *
+ * The spot is claimed for the whole trip, so the other fisher goes somewhere
+ * else instead of standing in the same reeds.
+ */
+function planFish(g: GameState, v: Villager, hut: Building): boolean {
+  if (storageFree(g) < 4) {
+    noticeStoreFull(g);
+    return planLeisureFallback(g, v, 'Nowhere to put it.');
+  }
+  // Enough fish about already, or enough supper: go and be useful elsewhere.
+  if (glutOf(g, 'fish')) return planHelper(g, v);
+
+  const reach = rangeOf(hut.def, hut.level);
+  const c = buildingCentre(hut);
+  const spot = findFishingSpot(g, c.x, c.y, reach);
+  // No water in reach that anybody can stand beside. The hut is in the wrong
+  // place, which is a slow disappointment rather than a broken kingdom.
+  if (!spot) return planHelper(g, v);
+
+  const bank = bankBeside(g, spot.x, spot.y);
+  if (!bank) return planHelper(g, v);
+  claim(g, v, 'node', spot.y * g.w + spot.x, spot.x, spot.y);
+
+  // Three casts is about an armful at a good spot, and a short enough stint
+  // that somebody can be pulled off to more urgent work between trips.
+  const casts = 3;
+  const steps: Step[] = [{ t: 'move', x: bank.x, y: bank.y, goals: [bank] }];
+  for (let i = 0; i < casts; i++) {
+    steps.push({
+      t: 'act',
+      dur: FISH_SECONDS / (FISH_SEASON[g.season] ?? 1),
+      kind: 'fishing',
+      xp: 'fisher',
+      face: faceToward(bank, spot),
+    });
+    steps.push({ t: 'effect', kind: 'catch', x: spot.x, y: spot.y });
+  }
+  const store = nearestStore(g, spot.x, spot.y);
+  if (store) steps.push(...storeLeg(g, store));
+  v.plan = steps;
+  return true;
+}
+
+/** Dry land next to a stretch of water, nearest to whoever is going there. */
+function bankBeside(g: GameState, x: number, y: number): { x: number; y: number } | null {
+  let best: { x: number; y: number } | null = null;
+  let bestD = Infinity;
+  for (let dy = -1; dy <= 1; dy++)
+    for (let dx = -1; dx <= 1; dx++) {
+      if (!dx && !dy) continue;
+      const t = tileAt(g, x + dx, y + dy);
+      if (!t || t.terrain === 'water' || t.terrain === 'shallow') continue;
+      if (!isWalkable(g, x + dx, y + dy)) continue;
+      // Straight on beats a corner, so people stand square to the water.
+      const d = Math.abs(dx) + Math.abs(dy);
+      if (d < bestD) {
+        bestD = d;
+        best = { x: x + dx, y: y + dy };
+      }
+    }
+  return best;
+}
+
+/** Which way somebody standing on the bank is looking. 0=SE 1=SW 2=NW 3=NE. */
+function faceToward(from: { x: number; y: number }, to: { x: number; y: number }): number {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  if (Math.abs(dx) > Math.abs(dy)) return dx > 0 ? 0 : 2;
+  return dy > 0 ? 1 : 3;
 }
 
 // ---------------------------------------------------------------------------
@@ -1309,7 +1538,7 @@ function planProduce(g: GameState, v: Villager, b: Building): boolean {
 
   if (hasInputs(b, recipe) && shelf < OUTPUT_CAP) {
     planWalkTo(g, v, b, [
-      { t: 'act', dur: recipe.seconds, kind: 'working', xp: def.job },
+      { t: 'act', dur: recipe.seconds, kind: def.job === 'cook' ? 'cooking' : 'working', xp: def.job },
       { t: 'effect', kind: 'batch', id: b.id, res: recipeOutput(recipe) },
     ]);
     return true;
@@ -1459,7 +1688,7 @@ export function labourNeeded(b: Building): number {
 // Leisure — the half of the simulation with no numbers attached
 // ---------------------------------------------------------------------------
 
-const LEISURE_BUILDINGS = new Set(['bench', 'well', 'statue', 'flowerbed', 'commons', 'bakery']);
+const LEISURE_BUILDINGS = new Set(['bench', 'well', 'statue', 'flowerbed', 'commons', 'kitchen']);
 /** Places people sit down at rather than stand and look at. */
 const SITTING_PLACES = new Set(['bench', 'commons']);
 

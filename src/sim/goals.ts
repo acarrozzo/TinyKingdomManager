@@ -5,8 +5,14 @@
  * as one. The **commons** is the structural gate: each level of it is a step the
  * whole settlement takes, and it hands over a tier of buildings when it lands.
  * The **goals** teach the mechanics in between and unlock the food chain, which
- * has to come before the commons can ask for bread. Nothing unlocks something
- * that is a prerequisite of itself; see `COMMONS_REQS` in `defs.ts`.
+ * has to come before the commons can ask for a cooked meal. Nothing unlocks
+ * something that is a prerequisite of itself; see `COMMONS_REQS` in `defs.ts`.
+ *
+ * Food is deliberately two branches from one gate. A storehouse opens the Wheat
+ * Farm *and* the Fishing Hut, and the Kitchen opens on the first thing worth
+ * cooking from either of them — so a kingdom that never sows and a kingdom that
+ * never casts both arrive at the same building, and neither branch is a
+ * prerequisite of the other.
  */
 
 import type { BuildingId, GameState, Goal } from '../types';
@@ -187,7 +193,10 @@ export function buildGoals(): Goal[] {
       desc: 'The camp only holds sixty, and it is at the middle of everything. A storehouse raises the ceiling and shortens the walk — put it near where the work is.',
       done: false,
       check: (g) => has(g, 'storehouse'),
-      unlocks: 'farm',
+      // Both ways of feeding the place, handed over together. A hut is cheap
+      // and quick and wants water; a farm is dearer and slower and wants room.
+      // Either will do, both is fine, and neither is the right answer.
+      unlocks: ['farm', 'fishhut'],
     },
     {
       id: 'lodge',
@@ -215,10 +224,32 @@ export function buildGoals(): Goal[] {
     {
       id: 'farm',
       title: 'Sow a Wheat Farm',
-      desc: 'A farm needs open ground and a farmer. Wheat takes time to ripen.',
+      desc: 'A farm needs open ground and a farmer. Wheat takes time to ripen. The long way to feed the kingdom, and the one that keeps up once there are a lot of you.',
       done: false,
       check: (g) => g.stock.wheat >= 10,
-      unlocks: 'bakery',
+    },
+    {
+      id: 'fishhut',
+      title: 'Raise a Fishing Hut',
+      desc: 'The short way to feed the kingdom. It wants dry land beside water — the lake or the coast, both work — and one person on it. The ring drawn while you place it marks the spots worth casting into.',
+      done: false,
+      check: (g) => has(g, 'fishhut'),
+      reward: { wood: 10 },
+    },
+    {
+      id: 'catch',
+      title: 'Land the first fish',
+      desc: 'Put somebody on the hut and watch them work. A spot fished over goes quiet for a while and comes back on its own, so there is no wrong number of trips.',
+      done: false,
+      check: (g) => g.stats.caught >= 1,
+    },
+    {
+      id: 'cookable',
+      title: 'Bring home something worth cooking',
+      desc: 'Flour or raw fish, whichever the kingdom finds first. Either one opens the Kitchen, where both of them turn into supper.',
+      done: false,
+      check: (g) => g.stock.flour >= 1 || g.stats.caught >= 1,
+      unlocks: 'kitchen',
     },
     {
       id: 'flour',
@@ -230,9 +261,17 @@ export function buildGoals(): Goal[] {
     {
       id: 'bread',
       title: 'Bake the first bread',
-      desc: 'A Bakery turns flour into bread. Villagers will eat it when they are hungry.',
+      desc: 'The Kitchen turns two flour into three loaves. Villagers eat it when they are hungry, and some of them prefer it to fish.',
       done: false,
       check: (g) => g.stats.baked >= 1,
+      reward: { coin: 25 },
+    },
+    {
+      id: 'cookfish',
+      title: 'Cook the first of the catch',
+      desc: 'The same Kitchen, the same cooks, the other recipe. A cooked fish fills somebody up exactly as well as a loaf does.',
+      done: false,
+      check: (g) => g.stock.cookedFish >= 1 || g.unlocked.has('seen:cookedFish'),
       reward: { coin: 25 },
     },
     {
@@ -245,7 +284,7 @@ export function buildGoals(): Goal[] {
     {
       id: 'village',
       title: 'Make it a Village Commons',
-      desc: 'A permanent hearth, tables people eat at, a notice board nobody reads. The camp asks for bread of your own baking, six people about, and somebody settled into a trade.',
+      desc: 'A permanent hearth, tables people eat at, a notice board nobody reads. The camp asks for food out of a kitchen of your own — bread or fish, it does not mind which — six people about, and somebody settled into a trade.',
       done: false,
       check: (g) => has(g, 'commons', 3),
     },
@@ -289,7 +328,7 @@ export function buildGoals(): Goal[] {
     {
       id: 'pop12',
       title: 'Grow to twelve villagers',
-      desc: 'A proper little place, at this point. Bread in store and somewhere pleasant to arrive at are what shorten the walk.',
+      desc: 'A proper little place, at this point. Food in store — bread, fish, either — and somewhere pleasant to arrive at are what shorten the walk.',
       done: false,
       check: (g) => g.villagers.length >= 12,
     },

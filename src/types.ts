@@ -12,6 +12,8 @@ export type ResourceId =
   | 'wheat'
   | 'flour'
   | 'bread'
+  | 'fish'
+  | 'cookedFish'
   | 'ironOre'
   | 'coal'
   | 'ironBar'
@@ -27,6 +29,8 @@ export const RESOURCE_ORDER: ResourceId[] = [
   'wheat',
   'flour',
   'bread',
+  'fish',
+  'cookedFish',
   'ironOre',
   'coal',
   'ironBar',
@@ -39,6 +43,14 @@ export const RESOURCE_ORDER: ResourceId[] = [
 /** Coins live outside the physical storage pool — they are carried, not stacked in a barn. */
 export const STORED_RESOURCES: ResourceId[] = RESOURCE_ORDER.filter((r) => r !== 'coin');
 
+/**
+ * What a hungry villager will actually eat. Both come out of the same kitchen
+ * and both fill the same person up completely; there is no better one. Anything
+ * that reads "how much food has the kingdom got" sums these rather than naming
+ * bread, which is what stops one of the two branches quietly being the real one.
+ */
+export const PREPARED_FOODS: ResourceId[] = ['bread', 'cookedFish'];
+
 export type Stock = Record<ResourceId, number>;
 
 export function emptyStock(): Stock {
@@ -48,6 +60,8 @@ export function emptyStock(): Stock {
     wheat: 0,
     flour: 0,
     bread: 0,
+    fish: 0,
+    cookedFish: 0,
     ironOre: 0,
     coal: 0,
     ironBar: 0,
@@ -86,6 +100,13 @@ export interface Tile {
   blocked: boolean;
   /** Id of the farm plot occupying this tile, or 0 (plots are walkable). */
   plot: number;
+  /**
+   * How rested a fishing spot is, 0..1, on water tiles — 1 is undisturbed and 0
+   * is a spot that has just been worked hard. It recovers on its own and never
+   * reaches zero permanently: the water is not a node that runs out, it is one
+   * that would rather be left alone for a bit. Meaningless on dry land.
+   */
+  fish: number;
   /** True when a villager has reserved this tile's node so others don't pile on. */
   claimed: number;
 }
@@ -102,7 +123,10 @@ export type JobId =
   | 'miner'
   | 'farmer'
   | 'miller'
-  | 'baker'
+  // One trade cooks whatever the kitchen is working on, exactly as one trade
+  // works the whole mine. Bread and fish are two recipes, not two professions.
+  | 'cook'
+  | 'fisher'
   | 'smith'
   | 'keeper';
 
@@ -126,7 +150,10 @@ export type BuildingId =
   | 'quarry'
   | 'farm'
   | 'mill'
-  | 'bakery'
+  // Where both chains end: flour becomes bread here, and raw fish becomes
+  // something worth eating. One warm building rather than two half-used ones.
+  | 'kitchen'
+  | 'fishhut'
   | 'forge'
   | 'well'
   | 'bench'
@@ -226,6 +253,18 @@ export interface BuildingDef {
    * of what makes where you sink it a decision.
    */
   needsRock?: boolean;
+  /**
+   * Has to stand on dry land with fishable water inside its reach — the Fishing
+   * Hut, and only that. The counterpart of `needsRock`, and the reason a hut is
+   * a decision about a shoreline rather than a box you drop anywhere.
+   */
+  fishes?: boolean;
+  /**
+   * What the focus picker says about leaving this building on Balanced. Per
+   * building, because the forge's answer ("iron first, coal only when there are
+   * bars to spare") is nonsense about a kitchen.
+   */
+  focusNote?: string;
   /**
    * How far this building's workers range for their nodes, per level — or, for
    * the mine, how far the seam it is working spreads. Shown to the player while
@@ -350,6 +389,7 @@ export type ActivityKind =
   | 'planting'
   | 'harvesting'
   | 'eating'
+  | 'cooking'
   | 'resting'
   | 'chatting'
   | 'watching'
@@ -370,11 +410,14 @@ export type Step =
   /** Deferred consequence, applied the instant the preceding action finishes. */
   | {
       t: 'effect';
-      kind: 'eat' | 'sow' | 'reap' | 'batch' | 'extract' | 'arrived' | 'settled';
+      kind: 'eat' | 'sow' | 'reap' | 'batch' | 'extract' | 'catch' | 'arrived' | 'settled';
       id?: number;
       slot?: number;
       /** Which material this stint at the rock face was for, or which recipe ran. */
       res?: ResourceId;
+      /** The water a `catch` was pulled out of, so the spot knows it was worked. */
+      x?: number;
+      y?: number;
     };
 
 export interface Villager {
@@ -395,6 +438,13 @@ export interface Villager {
   carrying: { res: ResourceId; qty: number } | null;
   appearance: VillagerAppearance;
   favorite: boolean;
+  /**
+   * Which of the two prepared foods they reach for first. Personality and
+   * nothing else: both fill them up entirely, they will happily eat the other
+   * when their own is not in store, and no system anywhere reads this except
+   * the walk to the larder and the line in their card.
+   */
+  favoriteFood: ResourceId;
   /** Game-day the villager joined the kingdom. */
   arrived: number;
   history: { day: number; text: string }[];
@@ -582,10 +632,26 @@ export interface GameState {
   };
   founderId: number;
   founding: Founding;
+  /**
+   * Fish breaking the surface: purely something to look at, never saved, and
+   * drained by the renderer as it draws them. It lives on the state rather than
+   * in the renderer because the sim is what knows a fish was just landed, and
+   * the headless run has to be able to let them expire with nobody watching.
+   */
+  splashes: { x: number; y: number; t: number; jump: boolean; heard?: boolean }[];
   stats: {
     built: number;
     harvested: number;
+    /** Loaves out of the kitchen. Bread alone — `cooked` is the pair of them. */
     baked: number;
+    /**
+     * Meals of any kind out of the kitchen, bread and cooked fish together.
+     * This is what the commons asks for and what Vibes wait on, so that neither
+     * branch of the food chain is quietly the real one.
+     */
+    cooked: number;
+    /** Fish landed, ever. An accomplishment, so it cannot un-happen. */
+    caught: number;
     arrivals: number;
     /**
      * Stone taken out of the rock by the mine. Counted because the mine's own

@@ -39,9 +39,12 @@ const SETTINGS_KEY = 'tkm.settings';
  * the two mithril entries nothing yet produces. A version 6 quarry harvested
  * boulders that regrew; this one cuts into the ground it stands on and boulders
  * never come back. Neither the stores nor the buildings mean the same thing.
+ * 8: fishing, and the Bakery became the Kitchen. A version 7 file names a
+ * building and a trade that no longer exist, has no fish or cooked fish in a
+ * stock that now has both, and has no record of how rested any of its water is.
  * Older files are refused rather than guessed at.
  */
-export const SAVE_VERSION = 7;
+export const SAVE_VERSION = 8;
 
 export interface SlotInfo {
   id: string;
@@ -235,6 +238,7 @@ export function serialize(g: GameState): SavePayload {
       carrying: v.carrying,
       appearance: v.appearance,
       favorite: v.favorite,
+      favoriteFood: v.favoriteFood,
       arrived: v.arrived,
       history: v.history,
       wakeOffset: v.wakeOffset,
@@ -278,6 +282,10 @@ function packTiles(g: GameState) {
   const building = new Int32Array(n);
   const plot = new Int32Array(n);
   const blocked = new Uint8Array(n);
+  // How rested each stretch of water is, as hundredths. A kingdom reopened with
+  // every spot back at full would make closing the tab the fastest way to
+  // freshen the lake, which is the same bug the wildlife cooldowns had.
+  const fish = new Uint8Array(n);
   for (let i = 0; i < n; i++) {
     const t = g.tiles[i];
     terrain[i] = t.terrain;
@@ -288,6 +296,7 @@ function packTiles(g: GameState) {
     building[i] = t.building;
     plot[i] = t.plot;
     blocked[i] = t.blocked ? 1 : 0;
+    fish[i] = Math.round(clamp(t.fish, 0, 1) * 100);
   }
   return {
     terrain: rle(terrain),
@@ -298,6 +307,10 @@ function packTiles(g: GameState) {
     building: [...building],
     plot: [...plot],
     blocked: [...blocked],
+    // Water is overwhelmingly either untouched or dry land, so this packs down
+    // to almost nothing — the same reason terrain and props are run-length
+    // encoded rather than written out per tile.
+    fish: rle([...fish].map(String)),
   };
 }
 
@@ -337,6 +350,7 @@ export function deserialize(raw: unknown): GameState {
   const packed = p.tiles;
   const terrain = unrle(packed.terrain, n);
   const prop = unrle(packed.prop, n);
+  const fish = packed.fish ? unrle(packed.fish, n) : null;
 
   const tiles = new Array(n);
   for (let i = 0; i < n; i++) {
@@ -353,6 +367,7 @@ export function deserialize(raw: unknown): GameState {
       blocked: !!(packed.blocked ? packed.blocked[i] : packed.building[i]),
       plot: packed.plot[i] ?? 0,
       claimed: 0,
+      fish: fish ? clamp(Number(fish[i]) / 100, 0, 1) : 1,
     };
   }
 
@@ -421,7 +436,19 @@ export function deserialize(raw: unknown): GameState {
     wildlife: reviveWildlife(p.wildlife),
     founderId: p.founderId ?? 0,
     founding: p.founding,
-    stats: { built: 0, harvested: 0, baked: 0, arrivals: 1, mined: 0, smelted: 0, ...(p.stats ?? {}) },
+    // Never saved: whatever was on the water when the tab closed has landed.
+    splashes: [],
+    stats: {
+      built: 0,
+      harvested: 0,
+      baked: 0,
+      cooked: 0,
+      caught: 0,
+      arrivals: 1,
+      mined: 0,
+      smelted: 0,
+      ...(p.stats ?? {}),
+    },
     nameSeq: 0,
   };
 
@@ -477,6 +504,7 @@ function reviveVillager(v: any): Villager {
     carrying: v.carrying ?? null,
     appearance: v.appearance,
     favorite: !!v.favorite,
+    favoriteFood: v.favoriteFood === 'cookedFish' ? 'cookedFish' : 'bread',
     arrived: v.arrived ?? 1,
     history: v.history ?? [],
     wakeOffset: v.wakeOffset ?? 0,

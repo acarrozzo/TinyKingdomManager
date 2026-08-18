@@ -8,7 +8,7 @@
 import type { GameState, ResourceId } from '../types';
 import { RESOURCE_ORDER, STORED_RESOURCES } from '../types';
 import { GAME_MINUTE, RESOURCE_INFO, RESOURCE_META, VIBE_MAX } from '../sim/defs';
-import { bedSources, bedsFree, housingCapacity } from '../sim/state';
+import { bedSources, bedsFree, housingCapacity, preparedFood } from '../sim/state';
 import { arrivalEta } from '../sim/population';
 import { vibesOf } from '../sim/vibes';
 import { foundingDone } from '../sim/founding';
@@ -229,12 +229,12 @@ function vibeAdvice(g: GameState): string {
       `${VIBE_MAX.decor - v.decor} of the decorating is still to do — benches, lanterns, flowerbeds, a well, a standing stone.`,
     );
   }
-  if (v.preBread) {
-    bits.push('Food and how people are keeping are both held at a neutral figure until the first bread comes out of an oven of your own.');
+  if (v.preFood) {
+    bits.push('Food and how people are keeping are both held at a neutral figure until something comes out of a kitchen of your own — bread or fish, it makes no difference which.');
   } else {
     if (v.food < VIBE_MAX.food) {
-      const per = (g.stock.bread / Math.max(1, g.villagers.length)).toFixed(1);
-      bits.push(`${per} loaves a head in store. Four each is as reassuring as it gets.`);
+      const per = (preparedFood(g) / Math.max(1, g.villagers.length)).toFixed(1);
+      bits.push(`${per} meals a head in store, counting bread and cooked fish alike. Four each is as reassuring as it gets.`);
     }
     if (v.wellbeing < VIBE_MAX.wellbeing) bits.push('Somebody here is going properly hungry, and it shows.');
   }
@@ -388,6 +388,12 @@ function everSeen(game: Game, res: ResourceId): boolean {
       return g.buildings.some((b) => b.def === 'mill');
     case 'bread':
       return g.stats.baked > 0;
+    // A chip for fish the moment there is somewhere to catch them, and one for
+    // supper the moment there is somewhere to cook it. Both stay once shown.
+    case 'fish':
+      return g.buildings.some((b) => b.def === 'fishhut') || g.stats.caught > 0;
+    case 'cookedFish':
+      return g.stock.cookedFish > 0 || g.unlocked.has('seen:cookedFish');
     case 'ironOre':
       return mineAt(2);
     case 'coal':

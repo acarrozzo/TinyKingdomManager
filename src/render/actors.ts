@@ -7,6 +7,7 @@
 import type { Animal, GameState, Villager } from '../types';
 import { BUILDINGS, SPECIES } from '../sim/defs';
 import { RESOURCE_META } from '../sim/defs';
+import { preparedFood } from '../sim/state';
 import { shade } from './palette';
 
 type Ctx = CanvasRenderingContext2D;
@@ -362,6 +363,7 @@ const GLYPHS: Record<string, string[]> = {
   chat: ['.XXXXX.', 'XXXXXXX', 'X#X#X#X', 'XXXXXXX', '.XXXXX.', '..X....', '.......'],
   bench: ['.......', '.......', 'XXXXXXX', 'XXXXXXX', '.#...#.', '.#...#.', '.......'],
   fish: ['.......', '..XXX.X', '.XXXXXX', 'X#XXXXX', '.XXXXXX', '..XXX.X', '.......'],
+  pot: ['.......', '.X...X.', '.XXXXX.', 'XXXXXXX', 'X#####X', 'X#####X', '.XXXXX.'],
   star: ['...X...', '...X...', '..XXX..', 'XXXXXXX', '..XXX..', '...X...', '...X...'],
 };
 
@@ -381,6 +383,7 @@ const GLYPH_COLORS: Record<string, [string, string]> = {
   chat: ['#f5efe2', '#4a4038'],
   bench: ['#c9a273', '#8a6a45'],
   fish: ['#8fc0d2', '#2e3a42'],
+  pot: ['#8c8f96', '#d8a86a'],
   star: ['#ffd77a', '#ffd77a'],
 };
 
@@ -400,8 +403,10 @@ function jobGlyph(g: GameState, v: Villager, fallback: string): string {
         return 'wheat';
       case 'miller':
         return 'sails';
-      case 'baker':
+      case 'cook':
         return 'bread';
+      case 'fisher':
+        return 'fish';
       default:
         return fallback;
     }
@@ -430,6 +435,8 @@ function activityGlyph(g: GameState, v: Villager): string | null {
       return 'wheat';
     case 'eating':
       return 'bread';
+    case 'cooking':
+      return 'pot';
     case 'resting':
       return 'bench';
     case 'chatting':
@@ -481,7 +488,7 @@ export function drawMood(ctx: Ctx, g: GameState, v: Villager, sx: number, sy: nu
   if (v.activity === 'sleeping') return;
   // Sits beside the activity badge rather than under it, so the two never stack.
   const y = Math.round(sy) - 27;
-  if (v.hunger > 0.85 && g.stock.bread <= 0) {
+  if (v.hunger > 0.85 && preparedFood(g) <= 0) {
     px(ctx, Math.round(sx) + 6, y, '#e8b45c', 3, 3);
     px(ctx, Math.round(sx) + 7, y + 1, '#8a5a28', 1, 1);
   }

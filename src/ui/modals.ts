@@ -49,7 +49,7 @@ export function buildingTabs(b: Building): string[] {
   const def = BUILDINGS[b.def];
   if (b.stage !== 'done') return ['Site', 'About'];
   const tabs = ['People'];
-  if (def.recipe || def.recipes || def.plots || def.harvests || def.extracts) tabs.push('Work');
+  if (def.recipe || def.recipes || def.plots || def.harvests || def.extracts || def.fishes) tabs.push('Work');
   tabs.push('About');
   return tabs;
 }
@@ -349,11 +349,10 @@ function buildingWork(game: Game, b: Building): string {
             : 'Everything it needs is to hand.'
       }</div></div>`;
 
-    out += focusPicker(
-      b,
-      'What it is making',
-      'Balanced smelts ore into iron and only reaches for the coal once there are bars to spare. Name one and it will favour that instead. Changing your mind costs nothing, and nothing in progress is lost.',
-    );
+    // The note is the building's own: what Balanced does at a forge is nonsense
+    // about a kitchen, and a picker that explains the wrong building is worse
+    // than one that explains nothing.
+    out += focusPicker(b, 'What it is making', def.focusNote ?? '');
   }
 
   if (def.plots && b.plots.length) {
@@ -416,11 +415,30 @@ function buildingWork(game: Game, b: Building): string {
             : ''
       }</div></div>`;
 
-    out += focusPicker(
-      b,
-      'What they are cutting for',
-      'Balanced follows whatever the kingdom is shortest of rather than keeping equal piles. Name one material and they will favour it — and if there is nowhere left to put that one, they quietly work on something else instead of stopping.',
-    );
+    out += focusPicker(b, 'What they are cutting for', def.focusNote ?? '');
+  }
+
+  // The hut: how much water it can reach, how much of that is worth the walk,
+  // and how rested it is at the moment. Like the mine and unlike the lodge,
+  // none of these are counts of something that can run out.
+  if (def.fishes) {
+    const reach = rangeOf(b.def, b.level);
+    const { total, good } = game.spotsInRange(b.def, b.level, b.x, b.y);
+    const rested = Math.round(game.spotRest(b) * 100);
+    out += `<div class="bsec"><div class="bh">Works the water nearby</div>
+      <div class="kv"><span class="k">Water within ${reach} tiles</span><span class="v">${total} tiles</span></div>
+      <div class="kv"><span class="k">Spots worth casting into</span><span class="v">${good}</span></div>
+      <div class="kv"><span class="k">How settled that water is</span><span class="v">${rested}%</span></div>
+      <div class="kv"><span class="k">Fish in the store</span><span class="v">${Math.floor(g.stock.fish)}</span></div>
+      <div class="tiny muted" style="margin-top:7px;line-height:1.55">${
+        total === 0
+          ? `There is no water in reach of this at all, which is a thing that can happen when the shoreline moves under a hut. ${
+              game.canRelocate(b) ? 'Move it to a bank.' : 'It can be moved once it is finished.'
+            }`
+          : b.workers.length === 0
+            ? 'Nobody is here to fish it. The water is not going anywhere.'
+            : 'Fishers take the best spot free, cast a few times and carry the catch to the nearest store. Water worked hard goes quiet for a while and settles again on its own, so this can never be fished out — the worst it gets is slow.'
+      }</div></div>`;
   }
 
   if (def.harvests) {

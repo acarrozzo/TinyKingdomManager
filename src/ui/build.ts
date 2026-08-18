@@ -238,6 +238,23 @@ function rangeNote(game: Game, def: BuildingId, level: number, spot: { x: number
     if (n < 50) return `${n} tiles of rock within ${reach}. A fair seam. `;
     return `${n} tiles of rock within ${reach}. As good as it gets. `;
   }
+  // Water is the mine's case rather than the lodge's: a hut never stands idle,
+  // so the question is how *well* it would do here and never whether it would
+  // work at all. Both numbers, because they say different things — a mile of
+  // open coast is a great deal of water and not much of it worth the walk.
+  if (d.fishes) {
+    const { total, good } = game.spotsInRange(def, level, spot.x, spot.y);
+    if (total === 0) return `No water within ${reach} tiles. `;
+    const water = `${total} tiles of water within ${reach}`;
+    // The bands are set from what huts actually see: an open stretch of coast
+    // comes out in the single figures and a good bank of the lake in the
+    // thirties, so a scale topping out at fourteen called every lakeside spot
+    // the best on the island and told the player nothing.
+    if (good === 0) return `${water}, and none of it especially promising — open water, fished slowly. `;
+    if (good < 10) return `${water}, ${good} of them worth casting into. Thin, but it never dries up. `;
+    if (good < 25) return `${water}, ${good} of them worth casting into. Good water. `;
+    return `${water}, ${good} of them worth casting into. As good as this island gets. `;
+  }
   if (!d.harvests) return '';
   const what = d.harvests === 'tree' ? 'trees' : 'boulders';
   if (n === 0) return `Nothing to work: no ${what} at all within ${reach} tiles. It would stand idle. `;
@@ -318,12 +335,12 @@ export function toolHintMarkup(game: Game, env: UIEnv): string {
  */
 function liveRange(game: Game, def: BuildingId, level: number): string {
   const d = BUILDINGS[def];
-  if (!d.harvests && !d.extracts) return '';
+  if (!d.harvests && !d.extracts && !d.fishes) return '';
   const spot = game.hover;
   if (!spot) {
-    return d.extracts
-      ? 'The shaded ground is the seam it would cut into; the marked tiles are rock. '
-      : 'The shaded ground is how far its workers will go. ';
+    if (d.extracts) return 'The shaded ground is the seam it would cut into; the marked tiles are rock. ';
+    if (d.fishes) return 'The shaded water is what it could work; the marked tiles are the spots worth casting into. ';
+    return 'The shaded ground is how far its workers will go. ';
   }
   return rangeNote(game, def, level, spot);
 }

@@ -4,7 +4,7 @@
  * It is the one number in the game that is openly a fudge, and it says so:
  * *Vibes are not an exact science. We assigned them a number anyway.* Three
  * things feed it and they are all things the player did on purpose — what they
- * built for no reason, whether there is bread put by, and whether anybody is
+ * built for no reason, whether there is food put by, and whether anybody is
  * going hungry.
  *
  * What is deliberately **not** in it: jobs. Filling a post, leaving one open or
@@ -26,33 +26,37 @@ import {
   VIBE_BANDS,
   VIBE_MAX,
 } from './defs';
-import { isOperational } from './state';
+import { isOperational, preparedFood } from './state';
 
 export interface Vibes {
   /** Comforts standing about the place, up to `VIBE_MAX.decor`. */
   decor: number;
-  /** Bread per villager, or a neutral figure before the first loaf. */
+  /** Meals per villager, or a neutral figure before the kitchen has ever run. */
   food: number;
   /** Whether anybody is going properly hungry. */
   wellbeing: number;
   total: number;
   band: string;
   /**
-   * True until the kingdom has baked. Food and wellbeing are both held at a
-   * neutral figure while it is, and the panel says so rather than showing two
-   * numbers the player cannot yet move.
+   * True until the kingdom has cooked anything at all. Food and wellbeing are
+   * both held at a neutral figure while it is, and the panel says so rather
+   * than showing two numbers the player cannot yet move.
    */
-  preBread: boolean;
+  preFood: boolean;
 }
 
 /** The whole reckoning, and the only thing that should ever be asked for it. */
 export function vibesOf(g: GameState): Vibes {
-  const preBread = g.stats.baked <= 0;
+  // Either kitchen recipe counts. A kingdom living on fish has been handed the
+  // food system just as surely as one living on bread, and holding it at the
+  // neutral figure until it happened to bake would be marking it down for
+  // taking the other of two equal paths.
+  const preFood = g.stats.cooked <= 0;
   const decor = decorVibes(g);
-  const food = preBread ? FOOD_VIBES_NEUTRAL : foodVibes(g);
-  const wellbeing = preBread ? VIBE_MAX.wellbeing : wellbeingVibes(g);
+  const food = preFood ? FOOD_VIBES_NEUTRAL : foodVibes(g);
+  const wellbeing = preFood ? VIBE_MAX.wellbeing : wellbeingVibes(g);
   const total = Math.round(clamp(decor + food + wellbeing, 0, 100));
-  return { decor, food, wellbeing, total, band: vibeBand(total), preBread };
+  return { decor, food, wellbeing, total, band: vibeBand(total), preFood };
 }
 
 /**
@@ -74,11 +78,16 @@ export function decorVibes(g: GameState): number {
 }
 
 /**
- * Loaves per head, read as a ramp through `FOOD_VIBES` rather than as steps —
- * baking one more loaf should move the number, not wait for a threshold.
+ * Meals per head, read as a ramp through `FOOD_VIBES` rather than as steps —
+ * cooking one more should move the number, not wait for a threshold.
+ *
+ * Loaves and cooked fish are added together and weighed the same. There is no
+ * bonus for keeping both and no penalty for keeping one: variety is something
+ * the villagers have opinions about, and this is not the place those opinions
+ * turn into a number the player has to manage.
  */
 export function foodVibes(g: GameState): number {
-  const per = g.stock.bread / Math.max(1, g.villagers.length);
+  const per = preparedFood(g) / Math.max(1, g.villagers.length);
   const at = clamp(per, 0, FOOD_VIBES.length - 1);
   const lo = Math.floor(at);
   const hi = Math.min(lo + 1, FOOD_VIBES.length - 1);

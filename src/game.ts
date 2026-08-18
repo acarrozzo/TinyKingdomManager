@@ -20,6 +20,7 @@ import {
   BUILDINGS,
   DAY_LENGTH,
   DAYS_PER_SEASON,
+  GOOD_SPOT,
   JOB_META,
   buildingName,
   focusOptions,
@@ -55,7 +56,15 @@ import { updateWildlife, rebuildHabitat } from './sim/wildlife';
 import { updatePopulation } from './sim/population';
 import { updateGoals, availableToBuild, buildLimit } from './sim/goals';
 import { journal, toast, updateToasts } from './sim/journal';
-import { rockInRange, tileAt, touchesRock, updateTerrain } from './world/terrain';
+import {
+  fishQuality,
+  fishSpotsInRange,
+  nearWater,
+  rockInRange,
+  tileAt,
+  touchesRock,
+  updateTerrain,
+} from './world/terrain';
 import { toScreenX, toScreenY } from './world/iso';
 import { Camera } from './render/camera';
 import { Renderer, type RenderOptions } from './render/renderer';
@@ -401,6 +410,28 @@ export class Game {
       rain: g.weather,
       population: g.villagers.length,
     });
+    this.hearSplashes(g);
+  }
+
+  /**
+   * A fish landing, once each and quieter the further off it is.
+   *
+   * Fired from here rather than from the sim, because whether a splash is worth
+   * hearing depends on where the camera is looking and the sim has no opinion
+   * about that. `heard` is set on the record itself: the list is transient and
+   * never saved, so a flag on it costs nothing and is the only way to be sure
+   * one splash makes one sound however many frames it lives for.
+   */
+  private hearSplashes(g: GameState): void {
+    for (const s of g.splashes) {
+      if (s.heard) continue;
+      s.heard = true;
+      const dx = toScreenX(s.x, s.y) - this.camera.x;
+      const dy = toScreenY(s.x, s.y) - this.camera.y;
+      const d = Math.hypot(dx, dy);
+      if (d > 520) continue;
+      audio.splash((s.jump ? 0.055 : 0.03) * (1 - d / 520));
+    }
   }
 
   private followTarget(): { x: number; y: number } | null {
@@ -474,16 +505,18 @@ export class Game {
     }
     if (!def) return null;
     const d = BUILDINGS[def];
-    // Two things draw a ring, and they mark different ground inside it: a lodge
-    // marks the trees its people will walk to, a mine marks the rock its seam
-    // runs through. Everything else has no reach worth showing.
-    if (!d.harvests && !d.extracts) return null;
+    // Three things draw a ring, and they mark different ground inside it: a
+    // lodge marks the trees its people will walk to, a mine marks the rock its
+    // seam runs through, and a hut marks the water worth casting into.
+    // Everything else has no reach worth showing.
+    if (!d.harvests && !d.extracts && !d.fishes) return null;
     return {
       cx: spot.x + (d.w - 1) / 2,
       cy: spot.y + (d.h - 1) / 2,
       radius: rangeOf(def, level),
       prop: d.harvests ?? null,
       terrain: d.extracts ? 'rocky' : null,
+      spots: !!d.fishes,
     };
   }
 
@@ -500,6 +533,7 @@ export class Game {
     const cy = y + (d.h - 1) / 2;
     const r = rangeOf(def, level);
     if (d.extracts) return rockInRange(g, cx, cy, r);
+    if (d.fishes) return this.spotsInRange(def, level, x, y).good;
     if (!d.harvests) return 0;
     let n = 0;
     for (let ty = Math.max(0, Math.floor(cy - r)); ty <= Math.min(g.h - 1, Math.ceil(cy + r)); ty++)
@@ -510,6 +544,47 @@ export class Game {
         n++;
       }
     return n;
+  }
+
+  /**
+   * The water a hut standing here would be working: how much of it there is at
+   * all, and how much of it is worth the walk. Two numbers rather than one,
+   * because they answer different questions — "will this work" and "how well" —
+   * and a hut on a mile of empty coast is a perfectly valid slow hut.
+   */
+  spotsInRange(def: BuildingId, level: number, x: number, y: number): { total: number; good: number } {
+    const d = BUILDINGS[def];
+    return fishSpotsInRange(
+      this.state,
+      x + (d.w - 1) / 2,
+      y + (d.h - 1) / 2,
+      rangeOf(def, level),
+    );
+  }
+
+  /**
+   * How settled the water inside a hut's reach is, averaged over the spots
+   * worth casting into. This is the one number that moves while you watch: a
+   * hut being worked hard sits in the seventies and comes back up overnight,
+   * which is the visible form of "spots recover" and the only place the player
+   * is ever shown it as a figure.
+   */
+  spotRest(b: Building): number {
+    const g = this.state;
+    const d = BUILDINGS[b.def];
+    const cx = b.x + (d.w - 1) / 2;
+    const cy = b.y + (d.h - 1) / 2;
+    const r = rangeOf(b.def, b.level);
+    let sum = 0;
+    let n = 0;
+    for (let y = Math.max(0, Math.floor(cy - r)); y <= Math.min(g.h - 1, Math.ceil(cy + r)); y++)
+      for (let x = Math.max(0, Math.floor(cx - r)); x <= Math.min(g.w - 1, Math.ceil(cx + r)); x++) {
+        if ((x - cx) ** 2 + (y - cy) ** 2 > r * r) continue;
+        if (fishQuality(g, x, y) < GOOD_SPOT) continue;
+        sum += g.tiles[y * g.w + x].fish;
+        n++;
+      }
+    return n === 0 ? 1 : sum / n;
   }
 
   /**
@@ -724,10 +799,18 @@ export class Game {
   /** True when the tile under the cursor changes what the placement hint says. */
   private hintFollowsCursor(): boolean {
     if (this.requireConfirm) return false; // A tap sets a candidate; hover means nothing.
-    if (this.tool.kind === 'build') return !!BUILDINGS[this.tool.def].harvests;
+    // Anything whose worth depends on the ground under it. All three of these
+    // say a number out loud while you move the cursor, and a number that only
+    // changes when you click is not a number anybody can shop with — which the
+    // mine has quietly been doing since its ring was added.
+    const counts = (def: BuildingId) => {
+      const d = BUILDINGS[def];
+      return !!d.harvests || !!d.extracts || !!d.fishes;
+    };
+    if (this.tool.kind === 'build') return counts(this.tool.def);
     if (this.tool.kind === 'relocate') {
       const b = buildingById(this.state, this.tool.id);
-      return !!b && !!BUILDINGS[b.def].harvests;
+      return !!b && counts(b.def);
     }
     return false;
   }
@@ -959,6 +1042,13 @@ export class Game {
     // always obvious at a glance from three zoom levels out.
     if (d.needsRock && !touchesRock(g, x, y, d.w, d.h)) {
       return 'No rock here to work. It has to sit on rocky ground, or right against it.';
+    }
+    // The same shape of rule for the hut, and said the same way: what is wrong
+    // with this spot, not what the rule is. The lake and the sea both count, so
+    // the answer is never "you cannot build one of these here" — it is "not
+    // here", and there is always a shoreline somewhere.
+    if (d.fishes && !nearWater(g, x, y, d.w, d.h)) {
+      return 'No water within reach of this. It wants to stand on the bank — the lake or the coast, either one.';
     }
     return null;
   }

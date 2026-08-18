@@ -2,7 +2,7 @@
 
 import { RNG, fbm, hash2, clamp, mix32 } from '../core/util';
 import type { GameState, PropId, Tile, TerrainId } from '../types';
-import { TERRAIN_SPEED } from '../sim/defs';
+import { FISH_FLOOR, FISH_REST, GOOD_SPOT, TERRAIN_SPEED, WATER_NEAR } from '../sim/defs';
 
 export const MAP_W = 40;
 export const MAP_H = 40;
@@ -55,6 +55,58 @@ const NEAR_TREE_RADIUS = 9;
  */
 const CLEARING_RADIUS = 3.6;
 
+// ---------------------------------------------------------------------------
+// The lake
+// ---------------------------------------------------------------------------
+
+/**
+ * The lake as a handful of overlapping circles rather than one.
+ *
+ * A single circle with noise on its radius gives a wobbly coin, which is what
+ * this used to be: no crooks to it, nowhere for a shore to double back, and the
+ * same walk all the way round. A main body with a lobe or two pushed off it
+ * gives an outline that is asymmetrical at the scale somebody actually looks at
+ * — and the *joints* between the blobs are the good part, because the notch
+ * where two circles meet is exactly the inlet a fisher wants to stand in.
+ */
+interface Lake {
+  blobs: { x: number; y: number; r: number }[];
+}
+
+function makeLake(r: RNG, x: number, y: number, outward: number): Lake {
+  const blobs = [{ x, y, r: 4.55 }];
+  // One lobe always, a second more often than not. Two is a lake with a waist
+  // in it; three starts to sprawl across the island and read as a river.
+  const lobes = r.chance(0.6) ? 2 : 1;
+  // Broadside on, and that is load-bearing rather than tidy. The lake sits
+  // eleven tiles from the middle of an island whose coast is about eighteen out,
+  // so a lobe pushed *outward* walks straight through the beach and the lake
+  // stops being a lake — measured over five hundred seeds, half of them came out
+  // as bays. Pushed along the shore instead it grows by the same amount and
+  // stays the same distance from the sea.
+  const side = r.chance(0.5) ? 1 : -1;
+  for (let i = 0; i < lobes; i++) {
+    // One lobe each way when there are two, so the lake reads as a long shape
+    // across the shore rather than a circle with a bump.
+    const across = outward + (i === 0 ? side : -side) * (Math.PI / 2) + r.range(-0.5, 0.5);
+    const d = r.range(4.4, 5.2);
+    blobs.push({ x: x + Math.cos(across) * d, y: y + Math.sin(across) * d, r: r.range(2.75, 3.3) });
+  }
+  return { blobs };
+}
+
+/**
+ * How far this tile is from the lake's shore, in tiles, negative inside it. The
+ * union of the blobs, which is the smallest of their individual distances — and
+ * the reason the notches between them come out concave, which is the whole
+ * point of building the lake this way.
+ */
+function lakeEdge(lake: Lake, x: number, y: number): number {
+  let best = Infinity;
+  for (const b of lake.blobs) best = Math.min(best, Math.hypot(x - b.x, y - b.y) - b.r);
+  return best;
+}
+
 export function idx(g: { w: number }, x: number, y: number): number {
   return y * g.w + x;
 }
@@ -79,6 +131,8 @@ function blankTile(terrain: TerrainId): Tile {
     blocked: false,
     plot: 0,
     claimed: 0,
+    // Every stretch of water starts undisturbed. Nothing has been fished yet.
+    fish: 1,
   };
 }
 
@@ -131,10 +185,10 @@ export function generateMap(seed: number): {
   const cy = h / 2;
   const S = saltsFor(seed);
 
-  // Pond centre, placed off to one side of the clearing.
+  // The lake, off to one side of the clearing, as a main body with a lobe or
+  // two pushed out of it. See `makeLake`.
   const pondAngle = r.range(0, Math.PI * 2);
-  const pondX = cx + Math.cos(pondAngle) * 11;
-  const pondY = cy + Math.sin(pondAngle) * 11;
+  const lake = makeLake(r, cx + Math.cos(pondAngle) * 11, cy + Math.sin(pondAngle) * 11, pondAngle);
 
   // Rocky outcrop on roughly the opposite side.
   const rockAngle = pondAngle + Math.PI + r.range(-0.7, 0.7);
@@ -170,12 +224,25 @@ export function generateMap(seed: number): {
         else terrain = 'grass';
       }
 
-      // Pond carved into the land.
-      const pondD = Math.sqrt((x - pondX) ** 2 + (y - pondY) ** 2);
-      const pondR = 3.4 + fbm(nx * 4, ny * 4, 2, S.pond) * 2.2;
-      if (pondD < pondR - 0.9) terrain = 'water';
-      else if (pondD < pondR + 0.5) terrain = 'shallow';
-      else if (pondD < pondR + 1.4 && terrain !== 'water') terrain = 'sand';
+      // The lake, carved into the land. `edgeOf` is signed distance from the
+      // shore in tiles — negative inside, positive out — so the bands below read
+      // as depths rather than as radii, and a lobe is no different from the main
+      // body once it has been folded into that one number.
+      const shore = lakeEdge(lake, x, y);
+      if (shore < 4) {
+        // The rim wanders in and out rather than sitting at a fixed offset, so
+        // the shallows are a band of uneven width instead of a drawn ring.
+        const wobble = fbm(nx * 4, ny * 4, 2, S.pond) * 1.5 - 0.3;
+        const depth = shore + wobble;
+        // Shoals inside the lake: a slower, coarser noise lifting the bed back
+        // up to wading depth here and there. This is what makes the water read
+        // as having a shape under it, and it is where the fish are.
+        const shoal = fbm(nx * 2.6 + 12, ny * 2.6 - 7, 2, S.pond) > 0.58;
+        if (depth < -1.6) terrain = shoal ? 'shallow' : 'water';
+        else if (depth < -0.4) terrain = 'water';
+        else if (depth < 0.6) terrain = 'shallow';
+        else if (depth < 1.5 && terrain !== 'water') terrain = 'sand';
+      }
 
       tiles[y * w + x] = blankTile(terrain);
     }
@@ -187,6 +254,11 @@ export function generateMap(seed: number): {
       const t = tiles[y * w + x];
       const clearD = Math.sqrt((x - cx) ** 2 + (y - cy) ** 2);
       const rr = hash2(x, y, S.props);
+      // How weedy this part of the water is: a slow field, so reeds and lily
+      // pads clump into beds instead of speckling the whole shoreline evenly.
+      const weedy = 0.35 + fbm((x / 9) * 2.2 - 30, (y / 9) * 2.2 + 18, 2, S.props) * 1.5;
+      // Still water: the lake and its immediate margin, as against the open sea.
+      const sheltered = lakeEdge(lake, x, y) < 3;
       let prop: PropId | null = null;
 
       if (t.terrain === 'forest') {
@@ -203,10 +275,22 @@ export function generateMap(seed: number): {
         if (rr < 0.42) prop = 'boulder';
         else if (rr < 0.56) prop = 'pebbles';
       } else if (t.terrain === 'shallow') {
-        if (rr < 0.22) prop = 'reeds';
-        else if (rr < 0.3) prop = 'lilypad';
+        // Waterside growth comes in patches rather than an even sprinkle: one
+        // corner of the lake is a reed bed and the next is open. Same amount of
+        // it overall, gathered into places worth walking to — which is most of
+        // what makes one stretch of shore better fishing than another.
+        //
+        // And it is overwhelmingly a lake thing. Reeds and lily pads want still
+        // sheltered water, so the open coast gets a fraction of what the lake
+        // does. That is what the brief's "the lake should generally be the
+        // better fishing" comes down to in practice: without it, measured over
+        // two hundred islands, the sea scored exactly as well as the lake and
+        // nine tenths of all water counted as a good spot.
+        const still = weedy * (sheltered ? 1 : 0.22);
+        if (rr < 0.24 * still) prop = 'reeds';
+        else if (rr < 0.35 * still) prop = 'lilypad';
       } else if (t.terrain === 'sand') {
-        if (rr < 0.08) prop = 'reeds';
+        if (rr < 0.08 * weedy * (sheltered ? 1 : 0.3)) prop = 'reeds';
       }
 
       // Keep the founding clearing genuinely clear.
@@ -602,12 +686,19 @@ export function findNode(
 }
 
 /**
- * Advances node regrowth. Depleted trees leave stumps that quietly come back.
+ * Advances node regrowth. Depleted trees leave stumps that quietly come back,
+ * and water that has been fished over settles down again.
  *
- * Trees, and only trees. Pebbles are not on a timer and never turn back into a
- * boulder: surface rock is finite by design, which is what makes sinking a
- * quarry — whose seam is endless — the thing the early kingdom is working
- * towards rather than a convenience.
+ * Trees, and only trees, so far as *nodes* go. Pebbles are not on a timer and
+ * never turn back into a boulder: surface rock is finite by design, which is
+ * what makes sinking a quarry — whose seam is endless — the thing the early
+ * kingdom is working towards rather than a convenience.
+ *
+ * Water is neither of those things. It is not a node and it is not finite: a
+ * spot that has been worked hard gives less for a while and then does not, and
+ * there is no state it can reach that a fisher cannot still stand at. That is
+ * the difference between a resource somebody has to site a building for and a
+ * resource somebody can use up, and fishing is deliberately the first kind.
  */
 export function updateTerrain(g: GameState, dt: number): void {
   // Sampled rather than exhaustive: the whole map every few seconds is plenty.
@@ -625,7 +716,20 @@ export function updateTerrain(g: GameState, dt: number): void {
         }
       }
     }
+    if (t.fish < 1) t.fish = Math.min(1, t.fish + FISH_REST * dt * stride);
   }
+}
+
+/**
+ * A go at this spot: it gives what it gives, and then it is quieter for a
+ * while. The tile holds plain rest, nought to one; `spotYield` is where the
+ * floor lives, so that "worked out" is a thing water gets *slower* at and never
+ * a thing it stops doing.
+ */
+export function workSpot(g: GameState, x: number, y: number, tire: number): void {
+  const t = tileAt(g, x, y);
+  if (!t) return;
+  t.fish = Math.max(0, t.fish - tire);
 }
 
 /**
@@ -655,6 +759,189 @@ export function rockInRange(
       n++;
     }
   return n;
+}
+
+// ---------------------------------------------------------------------------
+// Fishing water
+// ---------------------------------------------------------------------------
+
+/** Water somebody could put a line into. The sea counts; a farm pond would not. */
+export function isFishable(t: Tile | null): boolean {
+  return !!t && (t.terrain === 'water' || t.terrain === 'shallow');
+}
+
+/**
+ * How promising a stretch of water is, nought to one — worked out from the map
+ * rather than stored, so nothing has to be kept in step with the terrain.
+ *
+ * Three things make water worth standing at, and they are the three the brief
+ * for this was written around: cover to sit under, a shore that doubles back on
+ * itself, and the lip where the shallows drop away into the deep. A reed bed in
+ * the crook of an inlet is as good as it gets; open sea off a straight beach is
+ * the floor, and the floor is still perfectly fishable.
+ *
+ * This is deliberately *not* wildlife. Ducks and frogs like reeds too, and that
+ * is a coincidence of what reeds are rather than a connection between the two
+ * systems: no fisher ever catches an animal and no animal is ever consumed.
+ */
+export function fishQuality(g: { tiles: Tile[]; w: number; h: number }, x: number, y: number): number {
+  if (!inBounds(g, x, y)) return 0;
+  const t = g.tiles[y * g.w + x];
+  if (!isFishable(t)) return 0;
+
+  let weeds = 0;
+  let land = 0;
+  let deep = 0;
+  let shallows = 0;
+  let seen = 0;
+  for (let dy = -2; dy <= 2; dy++)
+    for (let dx = -2; dx <= 2; dx++) {
+      const ox = x + dx;
+      const oy = y + dy;
+      // Off the map is neither land nor water: counting it either way would
+      // make every tile along the border read as somewhere it is not.
+      if (!inBounds(g, ox, oy)) continue;
+      const o = g.tiles[oy * g.w + ox];
+      seen++;
+      if (o.prop === 'reeds') weeds += 1;
+      else if (o.prop === 'lilypad') weeds += 0.8;
+      if (o.terrain === 'water') deep++;
+      else if (o.terrain === 'shallow') shallows++;
+      else land++;
+    }
+  if (seen === 0) return 0;
+
+  // Cover is the big one, and it is meant to be: reeds and lily pads are the
+  // thing a player can actually see from the map before deciding where the hut
+  // goes, and they are overwhelmingly a lake thing.
+  const cover = Math.min(1, weeds / 3);
+  // A straight shore has about two fifths of its surroundings on land; a cove
+  // or an inlet has far more, and a headland has less. The band is narrow
+  // because almost every fishable tile is *somewhere* on a shore — the question
+  // is whether the shore turns back on itself here.
+  const cove = clamp((land / seen - 0.38) / 0.28, 0, 1);
+  // Both depths well represented nearby means this tile is on the drop-off
+  // rather than out in the middle of either one. Weighted lightest of the
+  // three: nearly every reachable tile is near both, so on its own it says
+  // little, and at a fifth of the total it was quietly making all water good.
+  const lip = Math.min(1, Math.min(deep, shallows) / 7);
+  return clamp(0.22 + 0.34 * cover + 0.26 * cove + 0.16 * lip, 0, 1);
+}
+
+/**
+ * What one go at this spot would actually bring up, as a multiplier: how good
+ * the water is, times how rested it is. Never nought — a spot worked to a
+ * standstill still gives something, because a fisher standing over dead water
+ * would be a punishment for a decision made an hour ago.
+ */
+export function spotYield(g: GameState, x: number, y: number): number {
+  const t = tileAt(g, x, y);
+  if (!isFishable(t)) return 0;
+  return fishQuality(g, x, y) * Math.max(FISH_FLOOR, t!.fish);
+}
+
+/**
+ * The water inside a hut's reach: how much of it there is, and how much of it
+ * is worth walking to. The placement bar says both out loud, because at any
+ * sensible zoom the ring runs off the side of the screen and the counts are the
+ * part that always fits.
+ */
+export function fishSpotsInRange(
+  g: { tiles: Tile[]; w: number; h: number },
+  cx: number,
+  cy: number,
+  radius: number,
+): { total: number; good: number } {
+  let total = 0;
+  let good = 0;
+  const r2 = radius * radius;
+  const x0 = clamp(Math.floor(cx - radius), 0, g.w - 1);
+  const x1 = clamp(Math.ceil(cx + radius), 0, g.w - 1);
+  const y0 = clamp(Math.floor(cy - radius), 0, g.h - 1);
+  const y1 = clamp(Math.ceil(cy + radius), 0, g.h - 1);
+  for (let y = y0; y <= y1; y++)
+    for (let x = x0; x <= x1; x++) {
+      if (!isFishable(g.tiles[y * g.w + x])) continue;
+      if ((x - cx) ** 2 + (y - cy) ** 2 > r2) continue;
+      total++;
+      if (fishQuality(g, x, y) >= GOOD_SPOT) good++;
+    }
+  return { total, good };
+}
+
+/**
+ * Whether a footprint here is close enough to the water to be a fishing hut at
+ * all. The same shape of rule as `touchesRock`, only looser: a hut wants to be
+ * *at* the water rather than exactly on the last dry tile, and insisting on the
+ * waterline would rule out every shore with a reed bed along it.
+ */
+export function nearWater(
+  g: { tiles: Tile[]; w: number; h: number },
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  near = WATER_NEAR,
+): boolean {
+  for (let ty = y - near; ty < y + h + near; ty++)
+    for (let tx = x - near; tx < x + w + near; tx++) {
+      if (!inBounds(g, tx, ty)) continue;
+      if (isFishable(g.tiles[ty * g.w + tx])) return true;
+    }
+  return false;
+}
+
+/**
+ * The spot a fisher should walk to: the best water inside the hut's reach that
+ * somebody could actually stand beside, with a nudge toward the near ones so
+ * nobody crosses the island for a marginally better lily pad.
+ *
+ * Claimed spots are skipped, so two fishers never crowd the same water — the
+ * same rule two woodcutters follow about a tree, using the same tile flag.
+ */
+export function findFishingSpot(
+  g: GameState,
+  cx: number,
+  cy: number,
+  radius: number,
+): { x: number; y: number } | null {
+  let best: { x: number; y: number } | null = null;
+  let bestScore = 0;
+  const r2 = radius * radius;
+  const x0 = clamp(Math.floor(cx - radius), 0, g.w - 1);
+  const x1 = clamp(Math.ceil(cx + radius), 0, g.w - 1);
+  const y0 = clamp(Math.floor(cy - radius), 0, g.h - 1);
+  const y1 = clamp(Math.ceil(cy + radius), 0, g.h - 1);
+  for (let y = y0; y <= y1; y++)
+    for (let x = x0; x <= x1; x++) {
+      const t = g.tiles[y * g.w + x];
+      if (!isFishable(t) || t.claimed) continue;
+      const d2 = (x - cx) ** 2 + (y - cy) ** 2;
+      if (d2 > r2) continue;
+      // Half a tile of walking is worth about a percent of the catch: enough to
+      // break ties toward the near water, not enough to keep somebody at a spot
+      // they have already fished flat.
+      const score = spotYield(g, x, y) - Math.sqrt(d2) * 0.012;
+      if (score <= bestScore) continue;
+      // Somewhere to stand. Water with no bank to it is water nobody can fish.
+      if (!hasWalkableNeighbour(g, x, y)) continue;
+      bestScore = score;
+      best = { x, y };
+    }
+  return best;
+}
+
+function hasWalkableNeighbour(g: GameState, x: number, y: number): boolean {
+  for (let dy = -1; dy <= 1; dy++)
+    for (let dx = -1; dx <= 1; dx++) {
+      if (!dx && !dy) continue;
+      const t = tileAt(g, x + dx, y + dy);
+      // Dry land only: somebody wading out to their chest to cast is not the
+      // picture, and the shallows are where the fish are supposed to be.
+      if (!t || t.terrain === 'water' || t.terrain === 'shallow') continue;
+      if (isWalkable(g, x + dx, y + dy)) return true;
+    }
+  return false;
 }
 
 /**

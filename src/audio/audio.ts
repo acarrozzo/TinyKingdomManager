@@ -258,6 +258,38 @@ export class Audio {
     }
   }
 
+  /**
+   * A fish going back under. Filtered noise with the band sweeping downward —
+   * a plop is a burst of everything at once that loses its top end almost at
+   * once, and an oscillator of any shape reads as a note instead.
+   *
+   * `gain` is how near it happened: the renderer knows where on the screen the
+   * ring is and the sound is quieter for one at the far end of the lake, which
+   * is the whole of the spatial audio here.
+   */
+  splash(gain = 0.05): void {
+    if (!this.canPlay(0.02)) return;
+    const ctx = this.ctx!;
+    const t = ctx.currentTime;
+    const frames = Math.floor(ctx.sampleRate * 0.22);
+    const buf = ctx.createBuffer(1, frames, ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < frames; i++) data[i] = Math.random() * 2 - 1;
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.Q.value = 1.1;
+    filter.frequency.setValueAtTime(1900, t);
+    filter.frequency.exponentialRampToValueAtTime(320, t + 0.2);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(gain, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
+    src.connect(filter).connect(g).connect(this.master!);
+    src.start(t);
+    src.stop(t + 0.24);
+  }
+
   /** Soft click for UI interactions. */
   tick(): void {
     if (!this.canPlay(0.01)) return;

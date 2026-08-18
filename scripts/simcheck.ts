@@ -16,8 +16,10 @@ import {
   bedSources,
   bedsFree,
   buildingById,
+  foodComfort,
   housingCapacity,
   makeBuilding,
+  preparedFood,
   storageCapacity,
 } from '../src/sim/state';
 import { severelyHungry, vibesOf } from '../src/sim/vibes';
@@ -27,11 +29,12 @@ import { updateWildlife } from '../src/sim/wildlife';
 import { updatePopulation } from '../src/sim/population';
 import { atBuildLimit, availableToBuild, buildLimit, updateGoals } from '../src/sim/goals';
 import { chooseCamp, suggestCamp } from '../src/sim/founding';
-import { updateTerrain, tileAt, touchesRock } from '../src/world/terrain';
+import { updateTerrain, fishQuality, nearWater, tileAt, touchesRock } from '../src/world/terrain';
 import {
   BUILDINGS,
   CARRY_CAPACITY,
   DAY_LENGTH,
+  GOOD_SPOT,
   SPECIES,
   rangeOf,
   relocateCost,
@@ -53,6 +56,8 @@ function place(def: BuildingId, x: number, y: number): boolean {
   // The mine works the ground it stands on, so the harness may no more drop one
   // on a meadow than the player can.
   if (d.needsRock && !touchesRock(g, x, y, d.w, d.h)) return false;
+  // …and the hut wants a bank, for the same reason.
+  if (d.fishes && !nearWater(g, x, y, d.w, d.h)) return false;
   for (let dy = 0; dy < d.h; dy++)
     for (let dx = 0; dx < d.w; dx++) {
       const t = tileAt(g, x + dx, y + dy);
@@ -93,6 +98,8 @@ function findSpot(def: BuildingId, near: { x: number; y: number }, minR = 3, max
           }
         }
       if (ok && d.needsRock && !touchesRock(g, x, y, d.w, d.h)) ok = false;
+      // The hut plays by its own placement rule too: dry land, beside water.
+      if (ok && d.fishes && !nearWater(g, x, y, d.w, d.h)) ok = false;
       if (ok) return { x, y };
     }
   }
@@ -125,6 +132,24 @@ function improve(state: GameState, def: BuildingId): boolean {
     return true;
   }
   return false;
+}
+
+/** How settled the good water inside a hut's reach is, as the panel reports it. */
+function averageRest(b: Building): number {
+  const d = BUILDINGS[b.def];
+  const cx = b.x + (d.w - 1) / 2;
+  const cy = b.y + (d.h - 1) / 2;
+  const r = rangeOf(b.def, b.level);
+  let sum = 0;
+  let n = 0;
+  for (let y = Math.max(0, Math.floor(cy - r)); y <= Math.min(g.h - 1, Math.ceil(cy + r)); y++)
+    for (let x = Math.max(0, Math.floor(cx - r)); x <= Math.min(g.w - 1, Math.ceil(cx + r)); x++) {
+      if ((x - cx) ** 2 + (y - cy) ** 2 > r * r) continue;
+      if (fishQuality(g, x, y) < GOOD_SPOT) continue;
+      sum += g.tiles[y * g.w + x].fish;
+      n++;
+    }
+  return n === 0 ? 1 : sum / n;
 }
 
 /** Live nodes of a building's kind within the reach it actually works to. */
@@ -267,9 +292,13 @@ function autoplay(state: GameState): void {
   if (!has('storehouse')) wants.push('storehouse');
   if (!has('lodge')) wants.push('lodge');
   if (!has('quarry')) wants.push('quarry');
+  // Both branches of the food chain, in the order a player meets them: the hut
+  // is cheap and quick and comes first, the farm is the one that keeps up later.
+  // A run that built only one of them would leave half of this untested.
+  if (!has('fishhut')) wants.push('fishhut');
   if (!has('farm')) wants.push('farm');
   if (!has('mill')) wants.push('mill');
-  if (!has('bakery')) wants.push('bakery');
+  if (!has('kitchen')) wants.push('kitchen');
   if (!has('forge')) wants.push('forge');
   if (beds - state.villagers.length < 2 && !improve(state, 'cabin')) wants.push('cabin');
   /*
@@ -279,7 +308,7 @@ function autoplay(state: GameState): void {
    * that exercises the flat build limits and the decoration half of the meter,
    * both of which would otherwise never be touched by a run.
    */
-  if (done('bakery')) {
+  if (done('kitchen')) {
     for (const def of ['bench', 'flowerbed', 'lantern', 'well', 'statue'] as BuildingId[]) wants.push(def);
   }
   // Grow the commons whenever the kingdom has earned it. This is the spine of
@@ -311,13 +340,21 @@ function autoplay(state: GameState): void {
     // Woodcutters want trees; the mine wants rocky ground under it, which is a
     // terrain now rather than a prop — the boulders lying on it are scenery.
     let near = { x: fire.x, y: fire.y };
-    if (def === 'lodge' || def === 'quarry') {
+    if (def === 'lodge' || def === 'quarry' || def === 'fishhut') {
       let best: { x: number; y: number } | null = null;
       let bestD = Infinity;
       for (let y = 0; y < state.h; y++)
         for (let x = 0; x < state.w; x++) {
           const t = state.tiles[y * state.w + x];
-          const wanted = def === 'lodge' ? t.prop === 'tree' : t.terrain === 'rocky';
+          // A hut goes for the *good* water rather than the nearest puddle,
+          // exactly as a player reading the ring would — otherwise the run
+          // never exercises a hut on anything but the sea.
+          const wanted =
+            def === 'lodge'
+              ? t.prop === 'tree'
+              : def === 'quarry'
+                ? t.terrain === 'rocky'
+                : fishQuality(state, x, y) >= GOOD_SPOT;
           if (!wanted) continue;
           const d = (x - fire.x) ** 2 + (y - fire.y) ** 2;
           if (d < bestD) {
@@ -327,9 +364,10 @@ function autoplay(state: GameState): void {
         }
       if (best) near = best;
     }
-    // Lodges and quarries follow the resource; everything else wants elbow room
-    // round the commons rather than crowding the ground people walk through.
-    const minR = def === 'lodge' || def === 'quarry' ? 2 : 4;
+    // The three that follow a resource sit as close to it as they can; every-
+    // thing else wants elbow room round the commons rather than crowding the
+    // ground people walk through.
+    const minR = def === 'lodge' || def === 'quarry' || def === 'fishhut' ? 2 : 4;
     const spot = findSpot(def, near, minR);
     if (spot) place(def, spot.x, spot.y);
     break;
@@ -349,13 +387,17 @@ function autoplay(state: GameState): void {
  * and half the workshops are waiting on. The forge comes last, because nothing
  * is yet waiting on a bar.
  */
-const PRIORITY: BuildingId[] = ['quarry', 'bakery', 'mill', 'farm', 'lodge', 'forge'];
+const PRIORITY: BuildingId[] = ['quarry', 'kitchen', 'fishhut', 'mill', 'farm', 'lodge', 'forge'];
 const SOFT_CAP: Partial<Record<BuildingId, number>> = {
   lodge: 2,
   quarry: 2,
   farm: 2,
   mill: 1,
-  bakery: 2,
+  kitchen: 2,
+  // One is what the hut starts with, and one is the point of it: a food chain
+  // that wants a single pair of hands. Staffing both slots the moment they
+  // exist would test the building and not the trade-off.
+  fishhut: 1,
   forge: 1,
 };
 
@@ -447,8 +489,30 @@ line(`Day ${g.day}, ${g.season} of year ${g.year}   ·   population ${g.villager
 line(`Storage ${Object.entries(g.stock).map(([k, v]) => `${k} ${Math.floor(v)}`).join('  ')}   (cap ${storageCapacity(g)})`);
 line(
   `Stats: built ${g.stats.built}  harvested ${g.stats.harvested}  baked ${g.stats.baked}` +
+    `  caught ${g.stats.caught}  cooked ${g.stats.cooked}` +
     `  mined ${Math.floor(g.stats.mined)}  smelted ${Math.floor(g.stats.smelted)}  arrivals ${g.stats.arrivals}`,
 );
+
+/*
+ * The two branches of the food chain, side by side. This is the quickest read
+ * on whether either of them has quietly become the only one worth having: a run
+ * where one column is doing all the work is a run where the other is decoration.
+ * The larder line is the balance figure — meals per head against what the
+ * kingdom is comfortable holding, which is what the cooks are actually reading.
+ */
+{
+  const hut = g.buildings.find((b) => b.def === 'fishhut');
+  const rest = hut ? averageRest(hut) : 1;
+  line(
+    `\nFood: bread ${Math.floor(g.stock.bread)}  cooked fish ${Math.floor(g.stock.cookedFish)}` +
+      `  ·  raw fish ${Math.floor(g.stock.fish)}  flour ${Math.floor(g.stock.flour)}  wheat ${Math.floor(g.stock.wheat)}`,
+  );
+  line(
+    `Larder ${(preparedFood(g) / Math.max(1, g.villagers.length)).toFixed(1)} meals a head` +
+      `  (comfortable is ${(foodComfort(g) / Math.max(1, g.villagers.length)).toFixed(1)})` +
+      (hut ? `  ·  hut water ${Math.round(rest * 100)}% settled` : '  ·  no fishing hut'),
+  );
+}
 
 /*
  * People and Vibes. Beds are the only cap there is, and Vibes are the only
@@ -467,7 +531,7 @@ line(
   );
   line(
     `Vibes ${v.total}/100 — ${v.band}   decor ${Math.round(v.decor)}/60  food ${Math.round(v.food)}/30` +
-      `  wellbeing ${Math.round(v.wellbeing)}/10${v.preBread ? '  (neutral: nothing baked yet)' : ''}`,
+      `  wellbeing ${Math.round(v.wellbeing)}/10${v.preFood ? '  (neutral: nothing cooked yet)' : ''}`,
   );
   line(
     `Arrival window at this population ${window.min / 60}–${window.max / 60} game-min` +
@@ -572,6 +636,38 @@ if (used > storageCapacity(g) + inFlight + 1) {
 for (const v of g.villagers) {
   if (v.carrying && v.activity === 'idle' && g.founding.stage === 'done') {
     problems.push(`${v.name} is stuck holding ${Math.round(v.carrying.qty)} ${v.carrying.res}`);
+  }
+}
+
+/*
+ * Fish come out of the water and nowhere else, and nothing eats them raw. Both
+ * of those are the same kind of rule as stone coming only from a quarry: a
+ * kingdom with no hut and fish in the barn means something is handing them out,
+ * and cooked fish with no kitchen means the chain has a second ending.
+ */
+if (!g.buildings.some((b) => b.def === 'fishhut') && g.stats.caught > 0) {
+  problems.push(`${g.stats.caught} fish caught in a kingdom with no fishing hut`);
+}
+if (!g.buildings.some((b) => b.def === 'kitchen') && g.stock.cookedFish + g.stock.bread > 0) {
+  problems.push('cooked food in a kingdom with no kitchen');
+}
+// The larder is measured against the people who eat out of it, not the barn.
+// Runaway food is what the whole comfort rule exists to stop, and it is the one
+// balance failure that hides — a kingdom with four hundred loaves looks fine.
+{
+  const meals = g.stock.bread + g.stock.cookedFish;
+  const roof = foodComfort(g) + g.villagers.length * CARRY_CAPACITY;
+  if (meals > roof) {
+    problems.push(`${Math.floor(meals)} meals for ${g.villagers.length} people (comfortable is ${Math.round(foodComfort(g))})`);
+  }
+}
+// Water is never used up. A spot at the floor is a spot being worked hard; a
+// spot below it means something is treating the lake as a node with an amount.
+for (let i = 0; i < g.tiles.length; i++) {
+  const t = g.tiles[i];
+  if (t.fish < -0.001 || t.fish > 1.001) {
+    problems.push(`tile ${i % g.w},${Math.floor(i / g.w)} has impossible fish rest ${t.fish.toFixed(2)}`);
+    break;
   }
 }
 

@@ -17,6 +17,8 @@
 import {
   generateMap,
   campSuitable,
+  fishSpotsInRange,
+  nearWater,
   rockInRange,
   touchesRock,
   walkableFrom,
@@ -63,6 +65,25 @@ const QUARRY_H = 2;
 const QUARRY_RANGE = 13;
 const WANT_QUARRY_ROCK = 25;
 const WANT_QUARRY_SITES = 3;
+/**
+ * Somewhere the one Fishing Hut could go, and enough of them to be a choice.
+ *
+ * The same argument as the quarry, one step gentler. Fishing is optional — a
+ * kingdom can live entirely on bread — so an island with no good water is not
+ * unplayable the way an island with no rock is. What it *is* is an island where
+ * half of what the storehouse unlocked turns out to be a row that cannot be
+ * used, and the player has no way of knowing that is the island's fault.
+ *
+ * The lake and the coast both count, deliberately, because the game counts them
+ * both. What is asked for is a site with real water in reach rather than a
+ * puddle: `WANT_HUT_SPOTS` is well above the placement rule's own minimum of
+ * one, since a hut with a single promising tile is legal and dismal.
+ */
+const HUT_W = 2;
+const HUT_H = 2;
+const HUT_RANGE = 10;
+const WANT_HUT_SPOTS = 4;
+const WANT_HUT_SITES = 3;
 
 const count = Number(process.argv[2] ?? 10000);
 const first = Number(process.argv[3] ?? 1);
@@ -156,7 +177,100 @@ function check(seed: number, m: World): string[] {
     );
   }
 
+  // …and somewhere for the other half of the food chain, on the same land.
+  const huts = hutSites(m, reach);
+  if (huts < WANT_HUT_SITES) {
+    bad.push(
+      `${huts} places a fishing hut could work from (beside water, ${WANT_HUT_SPOTS}+ good spots within ${HUT_RANGE}), wanted ${WANT_HUT_SITES}`,
+    );
+  }
+
   return bad;
+}
+
+/**
+ * Two-by-two footprints of buildable, reachable ground beside water with enough
+ * worth casting into inside a hut's reach. Sampled on a stride for the same
+ * reason the quarry is: neighbouring footprints see almost the same water.
+ */
+function hutSites(m: World, reach: Uint8Array): number {
+  const { tiles, w, h } = m;
+  let n = 0;
+  for (let y = 1; y < h - HUT_H; y += 2)
+    for (let x = 1; x < w - HUT_W; x += 2) {
+      let ok = true;
+      for (let dy = 0; dy < HUT_H && ok; dy++)
+        for (let dx = 0; dx < HUT_W; dx++) {
+          const t = tiles[(y + dy) * w + (x + dx)];
+          if (t.terrain === 'water' || t.terrain === 'shallow' || reach[(y + dy) * w + (x + dx)] !== 1) ok = false;
+        }
+      if (!ok) continue;
+      // The game's own placement rule first, exactly as with the quarry.
+      if (!nearWater(m, x, y, HUT_W, HUT_H)) continue;
+      const spots = fishSpotsInRange(m, x + (HUT_W - 1) / 2, y + (HUT_H - 1) / 2, HUT_RANGE);
+      if (spots.good >= WANT_HUT_SPOTS) n++;
+    }
+  return n;
+}
+
+/** The best water any single legal hut site can reach. Reported, not asserted. */
+function bestHut(m: World, reach: Uint8Array): number {
+  const { tiles, w, h } = m;
+  let best = 0;
+  for (let y = 1; y < h - HUT_H; y += 2)
+    for (let x = 1; x < w - HUT_W; x += 2) {
+      let ok = true;
+      for (let dy = 0; dy < HUT_H && ok; dy++)
+        for (let dx = 0; dx < HUT_W; dx++) {
+          const t = tiles[(y + dy) * w + (x + dx)];
+          if (t.terrain === 'water' || t.terrain === 'shallow' || reach[(y + dy) * w + (x + dx)] !== 1) ok = false;
+        }
+      if (!ok || !nearWater(m, x, y, HUT_W, HUT_H)) continue;
+      best = Math.max(best, fishSpotsInRange(m, x + (HUT_W - 1) / 2, y + (HUT_H - 1) / 2, HUT_RANGE).good);
+    }
+  return best;
+}
+
+/**
+ * The inland water: everything wet a flood fill from the border cannot reach.
+ * Reported rather than asserted, because a lake that has met the sea and become
+ * a bay is still perfectly good fishing — but it is worth knowing how often the
+ * island ends up without a lake in it at all.
+ */
+function lakeSize(m: World): number {
+  const { tiles, w, h } = m;
+  const wet = (i: number) => tiles[i].terrain === 'water' || tiles[i].terrain === 'shallow';
+  const sea = new Uint8Array(w * h);
+  const queue: number[] = [];
+  const push = (i: number) => {
+    if (!sea[i] && wet(i)) {
+      sea[i] = 1;
+      queue.push(i);
+    }
+  };
+  for (let x = 0; x < w; x++) {
+    push(x);
+    push((h - 1) * w + x);
+  }
+  for (let y = 0; y < h; y++) {
+    push(y * w);
+    push(y * w + w - 1);
+  }
+  for (let k = 0; k < queue.length; k++) {
+    const i = queue[k];
+    const x = i % w;
+    const y = (i - x) / w;
+    for (let dy = -1; dy <= 1; dy++)
+      for (let dx = -1; dx <= 1; dx++) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+        push(ny * w + nx);
+      }
+  }
+  let n = 0;
+  for (let i = 0; i < w * h; i++) if (!sea[i] && wet(i)) n++;
+  return n;
 }
 
 /**
@@ -277,7 +391,11 @@ const stats = {
   treeD: [Infinity, 0],
   quarry: [Infinity, 0],
   quarryBest: [Infinity, 0],
+  hut: [Infinity, 0],
+  hutBest: [Infinity, 0],
+  lake: [Infinity, 0],
 };
+let bays = 0;
 
 for (let i = 0; i < count; i++) {
   const seed = first + i;
@@ -321,6 +439,11 @@ for (let i = 0; i < count; i++) {
   note(stats.treeD, nearestTree);
   note(stats.quarry, quarrySites(m, reach));
   note(stats.quarryBest, bestQuarry(m, reach));
+  note(stats.hut, hutSites(m, reach));
+  note(stats.hutBest, bestHut(m, reach));
+  const lake = lakeSize(m);
+  note(stats.lake, lake);
+  if (lake < 20) bays++;
 
   if (i > 0 && i % 2000 === 0) console.log(`  …${i}`);
 }
@@ -334,3 +457,7 @@ console.log(`  trees within ${NEAR_TREE_RADIUS} of the start   ${stats.near[0]}�
 console.log(`  walk to the nearest tree        ${stats.treeD[0].toFixed(1)}–${stats.treeD[1].toFixed(1)} tiles`);
 console.log(`  places a quarry could work from ${stats.quarry[0]}–${stats.quarry[1]}`);
 console.log(`  rock reachable from the best    ${stats.quarryBest[0]}–${stats.quarryBest[1]}`);
+console.log(`  places a hut could work from    ${stats.hut[0]}–${stats.hut[1]}`);
+console.log(`  good spots from the best        ${stats.hutBest[0]}–${stats.hutBest[1]}`);
+console.log(`  inland lake                     ${stats.lake[0]}–${stats.lake[1]} tiles`);
+console.log(`  islands whose lake met the sea  ${bays} of ${count}`);

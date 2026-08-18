@@ -9,9 +9,9 @@
 
 import { clamp, hash2 } from '../core/util';
 import type { Building, GameState, PropId, Season, TerrainId, Villager } from '../types';
-import { BUILDINGS } from '../sim/defs';
+import { BUILDINGS, GOOD_SPOT } from '../sim/defs';
 import { HALF_H, HALF_W, TILE_H, TILE_W, toGridX, toGridY, toScreenX, toScreenY } from '../world/iso';
-import { CAMP_HALF, CAMP_SPAN } from '../world/terrain';
+import { CAMP_HALF, CAMP_SPAN, fishQuality } from '../world/terrain';
 import { Camera } from './camera';
 import { ambientTint } from './palette';
 import { celestial, drawMoon, drawSun, skyColors, sunlight, type Sunlight } from './sky';
@@ -51,9 +51,17 @@ export interface RenderOptions {
    */
   /**
    * The reach to draw, and what to mark inside it: a lodge marks the trees its
-   * people will walk to, a mine marks the rocky ground its seam runs through.
+   * people will walk to, a mine marks the rocky ground its seam runs through,
+   * and a fishing hut marks the water worth casting into.
    */
-  range: { cx: number; cy: number; radius: number; prop: PropId | null; terrain: TerrainId | null } | null;
+  range: {
+    cx: number;
+    cy: number;
+    radius: number;
+    prop: PropId | null;
+    terrain: TerrainId | null;
+    spots?: boolean;
+  } | null;
   demolish: boolean;
 }
 
@@ -809,6 +817,16 @@ export class Renderer {
       });
     }
 
+    // Fish breaking the surface. In the sorted pass like everything else, so a
+    // ring on the far side of the lake goes behind the reeds in front of it —
+    // anything drawn outside this pass lands on top of the whole world.
+    for (const s of g.splashes) {
+      if (s.x < minX - 2 || s.x > maxX + 2 || s.y < minY - 2 || s.y > maxY + 2) continue;
+      const sx = Math.round(toScreenX(s.x, s.y) - this.viewX);
+      const sy = Math.round(toScreenY(s.x, s.y) - this.viewY);
+      list.push({ depth: s.x + s.y, order: 0, draw: () => this.drawSplash(s, sx, sy) });
+    }
+
     // Animals.
     for (const a of g.animals) {
       if (a.x < minX - 3 || a.x > maxX + 3 || a.y < minY - 3 || a.y > maxY + 3) continue;
@@ -886,7 +904,100 @@ export class Renderer {
     b.restore();
   }
 
-  /** Sails turn while the mill has a miller working it. */
+  /**
+   * A fish, or at least the evidence of one.
+   *
+   * Two beats. A jump is a body out of the water on a short arc, landing with a
+   * plop; a plain rise is the plop on its own. Both end in rings spreading and
+   * fading, which is the part that actually reads at this size — the fish
+   * itself is five pixels and gone in half a second, and that is on purpose,
+   * because a fish you can study is a fish you start expecting.
+   */
+  private drawSplash(s: { x: number; y: number; t: number; jump: boolean }, sx: number, sy: number): void {
+    const b = this.bctx;
+    const air = s.jump ? 0.5 : 0;
+    b.save();
+
+    if (s.jump && s.t < air) {
+      // Up and down on a parabola, leaning the way it is travelling.
+      const k = s.t / air;
+      const lift = Math.round(Math.sin(k * Math.PI) * 9);
+      const drift = Math.round((k - 0.5) * 5);
+      const fx = sx + drift;
+      const fy = sy - lift - 2;
+      const rising = k < 0.5;
+      b.fillStyle = '#5c7f92';
+      b.fillRect(fx - 2, fy + (rising ? 0 : 1), 4, 2);
+      b.fillStyle = '#a8cfdd';
+      b.fillRect(fx - 2, fy + (rising ? 0 : 1), 3, 1);
+      // A tail, on the side it has come from.
+      b.fillStyle = '#5c7f92';
+      b.fillRect(fx + (rising ? -3 : 2), fy + (rising ? 1 : 0), 1, 2);
+    }
+
+    // The water itself, from the moment it is hit.
+    const wet = s.t - air;
+    if (wet >= 0) {
+      const life = 1.7 - air;
+      const k = Math.min(1, wet / life);
+      b.globalAlpha = (1 - k) * (s.jump ? 0.85 : 0.6);
+      b.fillStyle = '#d8f0fa';
+      this.ripple(sx, sy, 2 + k * (s.jump ? 9 : 6));
+      if (k < 0.55) {
+        b.globalAlpha = (1 - k / 0.55) * 0.7;
+        this.ripple(sx, sy, 1 + k * 3);
+      }
+      // The first instant of a landing throws a little water up with it.
+      if (s.jump && wet < 0.16) {
+        b.globalAlpha = 1 - wet / 0.16;
+        b.fillRect(sx - 3, sy - 3, 1, 1);
+        b.fillRect(sx + 2, sy - 4, 1, 1);
+        b.fillRect(sx, sy - 5, 1, 1);
+      }
+    }
+    b.restore();
+  }
+
+  /**
+   * One ring on the water. A circle on the ground is an ellipse twice as wide
+   * as it is tall in this projection, and it is plotted pixel by pixel rather
+   * than stroked so the edge stays as hard as everything else in the buffer.
+   *
+   * Walked along both axes rather than by angle. Even steps of angle bunch up
+   * at the ends of an ellipse and spread out along its sides, which at the two
+   * or three pixels a new ring starts at came out as a handful of dots rather
+   * than a ring at all. The pixels go through a set first because these are
+   * drawn at part alpha, and a pixel covered twice is visibly darker than its
+   * neighbours — which would put a bright spot at each end of every ripple.
+   */
+  private ripple(cx: number, cy: number, r: number): void {
+    const b = this.bctx;
+    const ry = r * 0.5;
+    const seen = new Set<number>();
+    const plot = (x: number, y: number) => {
+      const px = Math.round(x);
+      const py = Math.round(y);
+      const key = ((px & 0xffff) << 16) | (py & 0xffff);
+      if (seen.has(key)) return;
+      seen.add(key);
+      b.fillRect(px, py, 1, 1);
+    };
+    for (let dx = -Math.ceil(r); dx <= Math.ceil(r); dx++) {
+      const k = 1 - (dx * dx) / (r * r);
+      if (k < 0) continue;
+      const dy = ry * Math.sqrt(k);
+      plot(cx + dx, cy - dy);
+      plot(cx + dx, cy + dy);
+    }
+    for (let dy = -Math.ceil(ry); dy <= Math.ceil(ry); dy++) {
+      const k = 1 - (dy * dy) / (ry * ry);
+      if (k < 0) continue;
+      const dx = r * Math.sqrt(k);
+      plot(cx - dx, cy + dy);
+      plot(cx + dx, cy + dy);
+    }
+  }
+
   /** Sails turn briskly with a miller at work and barely at all without one. */
   private drawMillSails(bd: Building, cx: number, cy: number): void {
     drawMillSails(this.bctx, cx, cy, this.time * (bd.workers.length > 0 ? 1.1 : 0.18));
@@ -994,7 +1105,7 @@ export class Renderer {
    * is a thing you can see at a glance rather than a shaded blob.
    */
   private drawWorkRange(g: GameState, range: NonNullable<RenderOptions['range']>): void {
-    const { cx, cy, radius, prop, terrain } = range;
+    const { cx, cy, radius, prop, terrain, spots } = range;
     const b = this.bctx;
 
     /*
@@ -1042,9 +1153,10 @@ export class Renderer {
       for (let x = x0; x <= x1; x++) {
         if ((x - cx) ** 2 + (y - cy) ** 2 > r2) continue;
         const t = g.tiles[y * g.w + x];
-        // Either kind of mark, never both — a live node, or ground of the kind
-        // this building works.
-        const marked = prop ? t.prop === prop && t.amount > 0 : terrain ? t.terrain === terrain : false;
+        // One kind of mark, never two — a live node, ground of the kind this
+        // building works, or water worth casting into.
+        const good = spots ? fishQuality(g, x, y) >= GOOD_SPOT : false;
+        const marked = prop ? t.prop === prop && t.amount > 0 : terrain ? t.terrain === terrain : good;
         if (!marked) continue;
         // On the tile itself rather than on the sprite standing on it: the tree
         // is drawn later and would cover a mark placed at its crown.
@@ -1057,6 +1169,17 @@ export class Renderer {
           b.fillStyle = '#ffe9a6';
           b.fillRect(sx - 1, sy, 3, 1);
           b.fillRect(sx, sy - 1, 1, 3);
+        } else if (spots) {
+          // A ring on the water rather than a pin in it. A good spot is a place
+          // rather than an object, and a hard mark in the lake reads as
+          // something floating there that a fisher will go and collect.
+          b.fillStyle = 'rgba(20,32,40,0.45)';
+          b.fillRect(sx - 2, sy, 5, 1);
+          b.fillRect(sx - 1, sy - 1, 3, 1);
+          b.fillRect(sx - 1, sy + 1, 3, 1);
+          b.fillStyle = 'rgba(198,240,255,0.85)';
+          b.fillRect(sx - 2, sy, 2, 1);
+          b.fillRect(sx + 1, sy, 2, 1);
         } else {
           // Rock is measured by the acre rather than counted, and there can be
           // a hundred tiles of it inside the ring: a plus sign on every one is

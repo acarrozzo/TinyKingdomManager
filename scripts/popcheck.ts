@@ -102,17 +102,17 @@ for (const j of [-1, -0.5, 0, 0.5, 1]) {
 }
 
 /*
- * Vibes against pace. Bread is the cheapest lever from here — the food and
- * wellbeing halves are both unlocked by having baked — so the meter is driven
- * with loaves and the wait is watched shortening. Two things are being checked:
- * that it is a ramp rather than a switch, and that a hundred Vibes is not a
- * promise of the exact minimum.
+ * Vibes against pace. Food is the cheapest lever from here — the food and
+ * wellbeing halves are both unlocked by having cooked anything — so the meter
+ * is driven with meals and the wait is watched shortening. Two things are being
+ * checked: that it is a ramp rather than a switch, and that a hundred Vibes is
+ * not a promise of the exact minimum.
  */
 g.arrival.jitter = 0;
-g.stats.baked = 1;
+g.stats.cooked = 1;
 const paces: { vibes: number; mins: number }[] = [];
-for (const bread of [0, 1, 2, 4, 8]) {
-  g.stock.bread = bread * g.villagers.length;
+for (const meals of [0, 1, 2, 4, 8]) {
+  g.stock.bread = meals * g.villagers.length;
   paces.push({ vibes: vibesOf(g).total, mins: arrivalNeed(g) / GAME_MINUTE });
 }
 console.log(
@@ -126,11 +126,37 @@ ok(
 ok('and it is a ramp, not a switch', new Set(paces.map((p) => p.mins.toFixed(2))).size > 2);
 ok('the fastest wait is still not the minimum', paces[paces.length - 1].mins > window2.min / GAME_MINUTE);
 
-// Before the first loaf the food chain must cost the player nothing.
+// The two foods are worth exactly the same, and neither is worth more for
+// being kept alongside the other. Three larders of the same size, one Vibe.
+{
+  const per = g.villagers.length * 3;
+  const scores: number[] = [];
+  for (const [bread, fish] of [
+    [per, 0],
+    [0, per],
+    [per / 2, per / 2],
+  ]) {
+    g.stock.bread = bread;
+    g.stock.cookedFish = fish;
+    scores.push(vibesOf(g).food);
+  }
+  ok('bread and cooked fish are worth the same', new Set(scores.map((s) => s.toFixed(4))).size === 1);
+  g.stock.cookedFish = 0;
+}
+
+// Before the first meal the food chain must cost the player nothing — and
+// "first meal" means either one, or a kingdom living on fish would be marked
+// down for never having baked.
 const fresh = newGame(seed);
 const v = vibesOf(fresh);
-ok('food is neutral before the first bread', v.preBread && v.food === FOOD_VIBES_NEUTRAL);
+ok('food is neutral before the first cooked meal', v.preFood && v.food === FOOD_VIBES_NEUTRAL);
 ok('and so is how everyone is keeping', v.wellbeing === VIBE_MAX.wellbeing);
+{
+  const fishy = newGame(seed);
+  fishy.stats.cooked = 1;
+  fishy.stock.cookedFish = fishy.villagers.length * 4;
+  ok('a kingdom that only ever cooks fish still reaches full food Vibes', vibesOf(fishy).food === 30);
+}
 
 console.log(failures ? `\n${failures} PROBLEM(S)\n` : '\nArrivals are sound.\n');
 process.exit(failures ? 1 : 0);

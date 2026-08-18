@@ -101,14 +101,19 @@ export function activityLabel(v: Villager): string {
       return 'Harvesting';
     case 'eating':
       return 'Eating';
+    case 'cooking':
+      return 'Cooking';
     case 'resting':
       return 'Sitting down';
     case 'chatting':
       return 'Talking to someone';
     case 'watching':
       return 'Watching the world go by';
+    // Somebody whose trade it is, and somebody sitting on the bank of an
+    // afternoon, are doing visibly the same thing and meaning quite different
+    // things by it.
     case 'fishing':
-      return 'Fishing, more or less';
+      return v.job === 'fisher' ? 'Fishing' : 'Fishing, more or less';
     case 'arriving':
       return 'Just arrived';
     default:

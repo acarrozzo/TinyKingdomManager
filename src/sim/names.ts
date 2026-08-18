@@ -78,6 +78,8 @@ export const CHATTER = {
     'Don’t startle it.',
     'That one’s got a nerve.',
   ],
-  hungry: ['Could eat.', 'Is there bread?', 'Skipped lunch.'],
+  // Nothing here names one food as *the* food any more: half the kingdoms that
+  // hear these lines have never baked a loaf.
+  hungry: ['Could eat.', 'Anything in the store?', 'Skipped lunch.', 'Something off the fire would do.'],
   idle: ['Nothing wants doing.', 'I’ll find something.', 'Bit of a lull.'],
 };
