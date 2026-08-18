@@ -33,6 +33,26 @@ console.log('water still settling down:', worked, 'tiles');
 const likes = g.villagers.filter((v) => v.favoriteFood === 'cookedFish').length;
 console.log('food preferences:', likes, 'for fish,', g.villagers.length - likes, 'for bread');
 
+/*
+ * What every building is holding. This is the kingdom's entire stock now — there
+ * is no shared pile beside it — so a `store` that failed to survive the trip
+ * would be every resource in the kingdom quietly going to nought, which is the
+ * single worst thing a save could get wrong and would look, on opening, exactly
+ * like a kingdom that had been robbed.
+ */
+{
+  const held = new Map<string, number>();
+  for (const b of g.buildings)
+    for (const k in b.store) held.set(k, (held.get(k) ?? 0) + (b.store[k as 'wood'] ?? 0));
+  const rows = [...held].filter(([, n]) => n > 0);
+  console.log(
+    'kept in buildings:',
+    rows.map(([k, n]) => `${k} ${Math.floor(n)}`).join(', ') || '(nothing)',
+  );
+  const benches = g.buildings.reduce((n, b) => n + Object.keys(b.input).length, 0);
+  console.log('workshop benches with something on them:', benches);
+}
+
 const again = serialize(g);
 // A second trip has to land in exactly the same place. Anything that survives
 // one pass and not two is a field being rebuilt from defaults somewhere.

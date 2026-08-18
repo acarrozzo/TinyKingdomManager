@@ -83,7 +83,7 @@ export function villagerCard(game: Game): string {
         g.stats.cooked > 0
           ? `<div class="tiny muted" style="margin-top:5px;line-height:1.5">Would rather have
               ${v.favoriteFood === 'bread' ? 'bread than fish' : 'fish than bread'}, and will eat
-              whichever is in the store.</div>`
+              whichever the kitchen has.</div>`
           : ''
       }
     </div>

@@ -1,14 +1,20 @@
 /**
- * The top strip: what the kingdom owns, how much room is left, and the time.
+ * The top strip: what the kingdom owns, how much room it has for it, and the time.
  *
  * It is the first of the three levels of the interface — the things you glance
  * at constantly — so it stays one line tall on every screen and never moves.
+ *
+ * There is no store meter here any more, and nothing replaced it. One bar
+ * saying "80% full" was a true sentence about one shared pool; it is not a
+ * sentence anybody can write about thirteen separate compartments, and the
+ * honest version of it is the one every chip now carries — this much of this,
+ * out of room for this much.
  */
 
 import type { GameState, ResourceId } from '../types';
 import { RESOURCE_ORDER } from '../types';
-import { GAME_MINUTE, RESOURCE_INFO, RESOURCE_META, VIBE_MAX } from '../sim/defs';
-import { bedSources, bedsFree, housingCapacity, preparedFood } from '../sim/state';
+import { GAME_MINUTE, RESOURCE_INFO, RESOURCE_META, VIBE_MAX, buildingName } from '../sim/defs';
+import { bedSources, bedsFree, housingCapacity, preparedFood, totalOf } from '../sim/state';
 import { arrivalEta } from '../sim/population';
 import { vibesOf } from '../sim/vibes';
 import { foundingDone } from '../sim/founding';
@@ -20,9 +26,6 @@ export class Hud {
   private resNodes = new Map<ResourceId, { wrap: HTMLElement; val: HTMLElement }>();
   private strip: HTMLElement;
   private stripWrap: HTMLElement;
-  private storageBar: HTMLElement;
-  private storageTxt: HTMLElement;
-  private storageState: HTMLElement;
   private popTxt: HTMLElement;
   private vibeTxt: HTMLElement;
   private clockT: HTMLElement;
@@ -61,7 +64,7 @@ export class Hud {
     this.strip = el('div', 'pill res-strip');
     this.strip.dataset.act = 'open-stores';
     this.strip.setAttribute('role', 'group');
-    this.strip.setAttribute('aria-label', 'Stores');
+    this.strip.setAttribute('aria-label', 'Storage');
     for (const res of RESOURCE_ORDER) {
       const meta = RESOURCE_META[res];
       const wrap = el('span', 'res');
@@ -82,25 +85,6 @@ export class Hud {
     // Sits over the right-hand edge when there is more strip than screen.
     this.stripWrap.appendChild(el('span', 'moreres', '›'));
     left.appendChild(this.stripWrap);
-
-    // A button rather than a div: the stores sheet is the only place the
-    // resource copy exists without a hover, so it has to be reachable by
-    // keyboard as well as by thumb.
-    const storePill = el('button', 'pill store-pill');
-    storePill.dataset.act = 'open-stores';
-    storePill.setAttribute('aria-label', 'Stores — what the kingdom has and how much room is left');
-    storePill.innerHTML =
-      `<span class="storage"><span class="lb">Store</span>` +
-      `<span class="bar"><i style="width:0%"></i></span>` +
-      `<span class="txt">0/0</span><span class="state"></span><span class="tip"></span></span>`;
-    this.storageBar = storePill.querySelector('.bar') as HTMLElement;
-    this.storageTxt = storePill.querySelector('.txt') as HTMLElement;
-    this.storageState = storePill.querySelector('.state') as HTMLElement;
-    const storeTip = storePill.querySelector('.tip') as HTMLElement;
-    storePill.addEventListener('pointerenter', () => {
-      storeTip.innerHTML = storageTip(game);
-    });
-    left.appendChild(storePill);
     host.appendChild(left);
 
     const right = el('div', 'cluster');
@@ -127,28 +111,34 @@ export class Hud {
       `${g.villagers.length} people, ${housingCapacity(g)} beds. Vibes ${vibes.total} of 100, ${vibes.band}.`,
     );
 
+    /*
+     * Every chip carries its own room now: "180 / 250" rather than "180" and a
+     * meter somewhere else saying how full the kingdom is in general. It is
+     * four more characters per chip and it is the whole of the storage
+     * interface, because with each resource in its own compartment there is no
+     * general answer to give — a full woodpile and an empty larder are the same
+     * kingdom, and the old bar averaged them into something meaningless.
+     */
     for (const res of RESOURCE_ORDER) {
       const node = this.resNodes.get(res)!;
-      const hidden = res !== 'wood' && res !== 'stone' && g.stock[res] <= 0 && !everSeen(game, res);
+      const held = totalOf(g, res);
+      const hidden = res !== 'wood' && res !== 'stone' && held <= 0 && !everSeen(game, res);
       node.wrap.classList.toggle('locked', hidden);
-      const amount = fmt(g.stock[res]);
+      if (hidden) continue;
+      const store = game.storageInfo(res);
+      const amount = store.cap > 0 ? `${fmt(held)}/${fmt(store.cap)}` : fmt(held);
       if (node.val.textContent !== amount) node.val.textContent = amount;
-      node.wrap.setAttribute('aria-label', `${RESOURCE_META[res].name}: ${amount}`);
+      // Full is worth marking on the chip itself: it is the one state that
+      // changes what the player should do next, and the answer to it — improve
+      // the building that keeps this — is in the hover and the sheet.
+      node.wrap.classList.toggle('full', store.cap > 0 && store.room <= 0);
+      node.wrap.setAttribute(
+        'aria-label',
+        store.cap > 0
+          ? `${RESOURCE_META[res].name}: ${fmt(held)} of ${fmt(store.cap)}`
+          : `${RESOURCE_META[res].name}: ${fmt(held)}, with nowhere to keep any`,
+      );
     }
-
-    const store = game.storageInfo();
-    const pct = store.cap > 0 ? Math.min(100, (store.used / store.cap) * 100) : 0;
-    (this.storageBar.firstElementChild as HTMLElement).style.width = `${pct}%`;
-    this.storageBar.classList.toggle('full', pct > 97);
-    this.storageTxt.textContent = `${fmt(store.used)}/${fmt(store.cap)}`;
-    /*
-     * The bar alone says "quite full" to somebody who can see colour and knows
-     * what the bar is. The word says it to everybody, and it is the one number
-     * on the strip that changes what the player should do next.
-     */
-    const state = pct > 97 ? 'Full' : pct > 88 ? 'Nearly full' : '';
-    if (this.storageState.textContent !== state) this.storageState.textContent = state;
-    this.storageState.className = `state${state ? ' on' : ''}`;
 
     // A strip you can scroll must look scrollable, or the tail is simply lost.
     const over = this.strip.scrollWidth - this.strip.clientWidth > 4;
@@ -234,7 +224,7 @@ function vibeAdvice(g: GameState): string {
   } else {
     if (v.food < VIBE_MAX.food) {
       const per = (preparedFood(g) / Math.max(1, g.villagers.length)).toFixed(1);
-      bits.push(`${per} meals a head in store, counting bread and cooked fish alike. Four each is as reassuring as it gets.`);
+      bits.push(`${per} meals a head at the kitchen, counting bread and cooked fish alike. Four each is as reassuring as it gets.`);
     }
     if (v.wellbeing < VIBE_MAX.wellbeing) bits.push('Somebody here is going properly hungry, and it shows.');
   }
@@ -295,45 +285,71 @@ export function populationBody(game: Game): string {
     </div>`;
 }
 
-/** Hover copy for a top-bar resource: how much, where from, where to. */
+/**
+ * Where a resource is kept, building by building. The whole point of the
+ * redesign is that this question has an answer you can walk to, so it is the
+ * first thing both the hover and the sheet say.
+ */
+function whereRows(game: Game, res: ResourceId): string {
+  const store = game.storageInfo(res);
+  if (store.where.length === 0) return '';
+  return store.where
+    .map(({ b, held, cap }) => {
+      const gain = game.capacityGain(b, res);
+      const note = cap <= 0 ? ' on the bench' : held >= cap ? ' · full' : gain ? ` · +${fmt(gain)} if improved` : '';
+      return `<span class="tip-row"><span>${esc(buildingName(b.def, b.level))}${note}</span>
+        <span>${fmt(Math.floor(held))}${cap > 0 ? `/${fmt(cap)}` : ''}</span></span>`;
+    })
+    .join('');
+}
+
+/** How many of these are in somebody's arms just now, when any are. */
+function carriedLine(game: Game, res: ResourceId): string {
+  let n = 0;
+  for (const v of game.state.villagers) if (v.carrying?.res === res) n += v.carrying.qty;
+  if (n < 1) return '';
+  return `<span class="tip-row"><span>Being carried</span><span>${fmt(Math.floor(n))}</span></span>`;
+}
+
+/**
+ * What the people who make this are doing about it, in one line. Three states
+ * worth telling apart, because they want three different things from the
+ * player: nowhere to put it (improve the building), enough already (nothing —
+ * this is the food chain easing off, and it is not a problem), or working.
+ */
+function flowLine(game: Game, res: ResourceId): string {
+  const store = game.storageInfo(res);
+  if (store.cap <= 0) return 'Nothing in the kingdom keeps this yet.';
+  if (store.room <= 0) {
+    const full = store.where.filter((w) => w.cap > 0 && w.held >= w.cap);
+    const names = full.map((w) => buildingName(w.b.def, w.b.level));
+    // Only offer the fix when there is one. Every keeper of this at its top
+    // level is a perfectly ordinary end state, and telling somebody to improve
+    // a building that cannot be improved is worse than saying nothing.
+    const gain = full.reduce((n, w) => n + (game.capacityGain(w.b, res) ?? 0), 0);
+    return (
+      `Full${names.length ? ` at the ${names.join(' and the ').toLowerCase()}` : ''}, so nobody is making more for now. ` +
+      'Anything already being carried still gets put away, which is why this can read a little over. ' +
+      (gain > 0 ? `Improving would make room for ${fmt(gain)} more.` : 'Nothing here can hold any more of it than this.')
+    );
+  }
+  return `Room for ${fmt(store.room)} more.`;
+}
+
+/** Hover copy for a top-bar resource: how much, where it is, where from, where to. */
 function resourceTip(game: Game, res: ResourceId): string {
-  const g = game.state;
   const meta = RESOURCE_META[res];
   const info = RESOURCE_INFO[res];
-  const store = game.storageInfo();
-  const amount = Math.floor(g.stock[res]);
-  const share = store.cap <= 0 ? null : Math.round((g.stock[res] / store.cap) * 100);
+  const store = game.storageInfo(res);
 
   return `<span class="tip-head"><span class="tip-ic">${meta.icon}</span>${esc(meta.name)}
-      <b>${fmt(amount)}</b></span>
-    ${share === null ? '' : `<span class="tip-row"><span>Of the store</span><span>${share}%</span></span>`}
+      <b>${fmt(Math.floor(store.held))}${store.cap > 0 ? `/${fmt(store.cap)}` : ''}</b></span>
+    ${whereRows(game, res)}
+    ${carriedLine(game, res)}
+    <span class="tip-line">${esc(flowLine(game, res))}</span>
+    <span class="tip-line"><b>Kept at</b> ${esc(info.kept)}</span>
     <span class="tip-line"><b>From</b> ${esc(info.from)}</span>
     <span class="tip-line"><b>For</b> ${esc(info.used)}</span>`;
-}
-
-/** Hover copy for the store meter: what is actually taking up the room. */
-function storageTip(game: Game): string {
-  const g = game.state;
-  const store = game.storageInfo();
-  const rows = RESOURCE_ORDER.filter((res) => g.stock[res] > 0)
-    .sort((a, b) => g.stock[b] - g.stock[a])
-    .map(
-      (res) =>
-        `<span class="tip-row"><span>${RESOURCE_META[res].icon} ${esc(RESOURCE_META[res].name)}</span>
-          <span>${fmt(Math.floor(g.stock[res]))}</span></span>`,
-    )
-    .join('');
-  const room = Math.max(0, store.cap - store.used);
-
-  return `<span class="tip-head">The store <b>${fmt(store.used)}/${fmt(store.cap)}</b></span>
-    ${rows || '<span class="tip-line">Nothing in it yet.</span>'}
-    <span class="tip-line">${roomLine(room)}</span>`;
-}
-
-function roomLine(room: number): string {
-  return room <= 0
-    ? 'Full, so nobody is gathering more. Anything already being carried still gets put away, which is why this can read over the limit. Build a storehouse to raise it.'
-    : `Room for ${fmt(room)} more. Storehouses raise the ceiling.`;
 }
 
 /**
@@ -341,18 +357,20 @@ function roomLine(room: number): string {
  * hover, and "🌫 3" on its own is not a sentence anybody can read.
  */
 export function storesBody(game: Game): string {
-  const g = game.state;
-  const store = game.storageInfo();
-  const room = Math.max(0, store.cap - store.used);
-  const pct = store.cap > 0 ? Math.min(100, (store.used / store.cap) * 100) : 0;
-
-  const rows = RESOURCE_ORDER.filter((res) => everSeen(game, res) || g.stock[res] > 0 || res === 'wood' || res === 'stone')
+  const rows = RESOURCE_ORDER.filter(
+    (res) => everSeen(game, res) || totalOf(game.state, res) > 0 || res === 'wood' || res === 'stone',
+  )
     .map((res) => {
       const info = RESOURCE_INFO[res];
-      const share = store.cap <= 0 ? null : Math.round((g.stock[res] / store.cap) * 100);
+      const store = game.storageInfo(res);
+      const pct = store.cap > 0 ? Math.min(100, (store.held / store.cap) * 100) : 0;
       return `<div class="storerow">
         <div class="sr-top"><span class="nm">${RESOURCE_META[res].icon} ${esc(RESOURCE_META[res].name)}</span>
-          <span class="amt">${fmt(Math.floor(g.stock[res]))}${share === null ? '' : `<span class="muted tiny"> · ${share}% of the store</span>`}</span></div>
+          <span class="amt">${fmt(Math.floor(store.held))}${store.cap > 0 ? `<span class="muted"> / ${fmt(store.cap)}</span>` : ''}</span></div>
+        ${store.cap > 0 ? `<div class="need"><span class="track"><i style="width:${pct}%"></i></span></div>` : ''}
+        ${whereRows(game, res)}
+        ${carriedLine(game, res)}
+        <div class="tiny muted">${esc(flowLine(game, res))}</div>
         <div class="tiny muted"><b>From</b> ${esc(info.from)}</div>
         <div class="tiny muted"><b>For</b> ${esc(info.used)}</div>
       </div>`;
@@ -360,11 +378,10 @@ export function storesBody(game: Game): string {
     .join('');
 
   return `<div class="bsec">
-      <div class="bh">Room in the store</div>
-      <div class="need"><span aria-hidden="true">📦</span>
-        <span class="track"><i style="width:${pct}%"></i></span>
-        <span class="num">${fmt(store.used)}/${fmt(store.cap)}</span></div>
-      <div class="tiny muted" style="margin-top:8px;line-height:1.55">${roomLine(room)}</div>
+      <div class="bh">Where things are kept</div>
+      <div class="tiny muted" style="line-height:1.55">Nothing is kept in one great pile. Each resource lives in the building that
+        produces it — wood at the lodge, stone at the mine, supper at the kitchen — with its own room, and
+        whoever needs some walks there for it. Improving a building is what raises what it can hold.</div>
     </div>
     <div class="bsec"><div class="bh">What there is</div>${rows}</div>`;
 }
@@ -393,7 +410,7 @@ function everSeen(game: Game, res: ResourceId): boolean {
     case 'fish':
       return g.buildings.some((b) => b.def === 'fishhut') || g.stats.caught > 0;
     case 'cookedFish':
-      return g.stock.cookedFish > 0 || g.unlocked.has('seen:cookedFish');
+      return totalOf(g, 'cookedFish') > 0 || g.unlocked.has('seen:cookedFish');
     case 'ironOre':
       return mineAt(2);
     case 'coal':

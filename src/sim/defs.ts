@@ -19,6 +19,29 @@ import type {
 
 export const CARRY_CAPACITY = 12;
 
+/**
+ * How much of one resource a building holds, by its level. One ladder for the
+ * whole kingdom: whatever a building is the home of, it holds this much of it,
+ * and every resource gets its own compartment at the full figure — a mine full
+ * of stone goes on bringing up ore, because the two were never sharing a shelf.
+ *
+ * They are deliberately generous. Storage used to be one pool everything
+ * competed for, and the competition was the pressure; now the question a player
+ * answers is *where* a resource lives rather than *whether* there is room for
+ * it, and a ceiling tight enough to be interesting would just be the old pool
+ * with extra walking.
+ */
+export const STORAGE_TIERS = [250, 1000, 2500, 5000];
+
+/**
+ * …and how much of an ingredient a workshop keeps on the bench. Small against
+ * the figures above, and that is the whole distinction: wheat *lives* at the
+ * farm, and the windmill keeps enough to be getting on with. Without the gap,
+ * every workshop would quietly become a second granary for its own inputs and
+ * "where does this resource live" would stop having an answer.
+ */
+export const INPUT_TIERS = [50, 100];
+
 /** One in-game day at 1× speed, in real seconds. 20 min day + 10 min night. */
 export const DAY_LENGTH = 30 * 60;
 /** Days per season — 3 real hours at 1× = 6 days. */
@@ -121,8 +144,10 @@ export const PERSONAL_DAY_SHIFT = 0.015;
  *
  * It is a floor on *fetching*, never on storing or spending, so nothing is ever
  * unaffordable because of it: a site takes its materials a dozen at a time and
- * the store is topped back up between loads, so a ninety-wood commons is paid
- * for in seven trips rather than not at all.
+ * the wood storage is topped back up between loads, so a ninety-wood commons is
+ * paid for in seven trips rather than not at all. That is what keeps the lodge
+ * optional now that wood has a home of its own — the Base Camp's hundred is
+ * above every cost the kingdom can actually reach.
  */
 export const WOOD_RESERVE = 32;
 
@@ -206,59 +231,77 @@ export const RESOURCE_META: Record<string, { name: string; icon: string; color: 
   mithrilBar: { name: 'Mithril Bar', icon: '💠', color: '#a8e0f0' },
 };
 
-/** Where each resource comes from and where it goes, for the top-bar hover. */
-export const RESOURCE_INFO: Record<string, { from: string; used: string }> = {
+/**
+ * Where each resource comes from, where it goes, and where it lives. That last
+ * one is new and is the point of the whole arrangement: a resource is kept at
+ * the building that produces it, so "where is my stone" has an answer you can
+ * walk to rather than a number in a shared pool.
+ */
+export const RESOURCE_INFO: Record<string, { from: string; used: string; kept: string }> = {
   wood: {
-    from: 'Woodcutters at the lodge, who are the only ones who can keep up with a growing kingdom. General Workers will fell a tree by hand when the store drops below thirty-two, at half the pace and no faster. The first twelve came off a single tree, swung at by somebody who had only just arrived.',
+    from: 'Woodcutters at the lodge, who are the only ones who can keep up with a growing kingdom. General Workers will fell a tree by hand when wood drops below thirty-two, at half the pace and no faster. The first twelve came off a single tree, swung at by somebody who had only just arrived.',
     used: 'Nearly every building, from a cabin at 20 up to a windmill at 50, and every step the commons takes.',
+    kept: 'The lodge, once there is one. Before that — and always, alongside it — the Base Camp keeps a hundred, which is enough for anything the kingdom can currently build.',
   },
   stone: {
     from: 'Miners cutting it out of the rocky ground the quarry stands on, and nowhere else. The loose boulders lying about are scenery — too much for bare hands, and gone for good once anything is built over one.',
     used: 'Improving the commons or a cabin, wells, and the workshops further along the chain.',
+    kept: 'The mine, which is also where it comes out of the ground. Builders and smiths walk over for what they need.',
   },
   wheat: {
     from: 'Farmers sowing and reaping the plots around a wheat farm.',
     used: 'Ground into flour at the windmill, three wheat at a time.',
+    kept: 'The farm. The windmill keeps a small working supply on the bench and sends for more as it grinds through it.',
   },
   flour: {
     from: 'The windmill, two flour for every three wheat carried in.',
     used: 'Baked into bread at the kitchen, two flour to a batch of three loaves.',
+    kept: 'The windmill. The kitchen keeps enough on hand for the next few batches.',
   },
   bread: {
     from: 'The kitchen, three loaves a batch. Slower to set up than fish and far easier to keep going once it is.',
     used: 'Eaten. One loaf is a whole meal, and some people would rather have it than fish.',
+    kept: 'The kitchen, which is where everybody in the kingdom walks to eat.',
   },
   fish: {
     from: 'Fishers working the water within reach of their hut, a few at a time. A spot worked hard goes quiet for a while and then comes back.',
     used: 'Nothing eats it raw. Two fish cook down to two meals at the kitchen.',
+    kept: 'The hut. Cooks come down for it, which is a walk worth thinking about when you site the kitchen.',
   },
   cookedFish: {
     from: 'The kitchen, out of raw fish. The same cooks make the bread.',
     used: 'Eaten, and it fills somebody up exactly as well as a loaf does.',
+    kept: 'The kitchen, on the same shelf the bread is on and with its own room.',
   },
   ironOre: {
     from: 'The mine, once it has been sunk deep enough to be an Iron Mine. The same miners bring it up as bring up the stone.',
     used: 'Smelted into iron bars at the forge, one for one, with no coal wanted.',
+    kept: 'The mine, in its own compartment. A mine full of stone still has room for this.',
   },
   coal: {
     from: 'A Deep Mine, which is the third thing the mine becomes. Nothing else in the kingdom turns any up.',
     used: 'Only the forge burns it, and only for steel: two coal to every iron bar going into one.',
+    kept: 'The mine. The smith fetches it as they need it.',
   },
   ironBar: {
     from: 'The forge, one bar from one iron ore. No coal is needed for this part, which surprises people.',
     used: 'The heavier building work, and the first half of every steel bar.',
+    kept: 'The forge — and since that is also where steel is made, the smith never has to carry one anywhere to use it.',
   },
   steelBar: {
     from: 'The forge again: one iron bar and two coal make one steel bar.',
     used: 'Nothing yet. It piles up handsomely and waits for the kingdom to think of something.',
+    kept: 'The forge, stacked against the wall.',
   },
   mithrilOre: {
     from: 'Nowhere. There is talk of a seam under the deep workings, and talk is as far as it has got.',
     used: 'Nothing, since there is none of it.',
+    kept: 'Nowhere, since there is none of it.',
   },
   mithrilBar: {
     from: 'Nowhere yet. The forge would want one mithril ore and four coal, if there were any ore.',
     used: 'Nothing, since there is none of it.',
+    kept: 'Nowhere, since there is none of it.',
   },
 };
 
@@ -381,7 +424,7 @@ const COMMONS_REQS: UpgradeReq[][] = [
  * No step may ask for something the same step unlocks: the Iron Mine is what
  * hands over the forge, so it is the step *after* that may ask for iron off it.
  * And every requirement is an accomplishment rather than a stock level, because
- * what is in the store goes down again the moment anybody builds a cabin.
+ * what is in storage goes down again the moment anybody builds a cabin.
  *
  * The last step is deliberately out of reach, exactly like the Kingdom Commons.
  * Turning mithril on later is a one-line change to that predicate.
@@ -416,11 +459,11 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     cost: { wood: 12 },
     labour: 16,
     maxLevel: 4,
-    // Every step has to be payable out of the storage the step before it left
-    // behind. Hand-gathering no longer sets a second ceiling — a General Worker
-    // tops the store back up to `WOOD_RESERVE` between loads, so a cost above
-    // that is slow rather than impossible — but a cost above *storage* is one
-    // nobody can ever meet.
+    // Wood is the one material with a ceiling worth watching here, because the
+    // Base Camp's own cache is a hundred and a kingdom is not obliged to build a
+    // lodge. Every reachable step below fits inside that; the 150 belongs to a
+    // level whose requirement is `met: () => false`, so nothing can arrive at it
+    // with no lodge and no way to pay.
     upgradeCosts: [
       { wood: 25, stone: 10 },
       { wood: 90, stone: 55 },
@@ -431,10 +474,13 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     // there is only ever the one.
     order: -1,
     once: true,
-    desc: 'A fire, somewhere to put things down, and room to sleep rough beside it. Where the kingdom begins, and afterwards the middle of it.',
-    how: 'The first fire, the kingdom\'s first store and two places to sleep out of doors, all on the same nine tiles. It grows with the kingdom rather than being replaced — a Settled Camp, then a Village Commons, and there is talk of something after that — and it never closes for the work: the store stays open at its current size the whole time, so nothing is ever stranded. Every step opens up more of the kingdom: new kinds of building, and one more cabin and one more storehouse than before. Improving it wants materials and a settlement that has got somewhere; both are listed in full before you commit. People walk through it, sit at it and stand about in it whether or not they have any business there, which is rather the point. It cannot be taken down, and it cannot be moved: it stands where the kingdom began.',
+    desc: 'A fire, a woodpile, and room to sleep rough beside it. Where the kingdom begins, and afterwards the middle of it.',
+    how: 'The first fire, a hundred wood against the first few buildings, and two places to sleep out of doors, all on the same nine tiles. That woodpile is the only storage the commons ever has and it does not grow: everything else the kingdom produces is kept at the building that made it, and the lodge is where wood goes once there is one. It grows with the kingdom rather than being replaced — a Settled Camp, then a Village Commons, and there is talk of something after that — and it never closes for the work. Every step opens up more of the kingdom: new kinds of building, and one more cabin than before. Improving it wants materials and a settlement that has got somewhere; both are listed in full before you commit. People walk through it, sit at it and stand about in it whether or not they have any business there, which is rather the point. It cannot be taken down, and it cannot be moved: it stands where the kingdom began.',
     housing: [2, 2, 2, 2],
-    storage: [60, 200, 450, 800],
+    // The founding cache, and the whole of the commons' storage. Flat across
+    // every level on purpose: improving the heart of the kingdom opens up new
+    // buildings, and each of those brings its own storage with it.
+    cache: { wood: 100 },
     light: [{ x: 1.5, y: 1.5, radius: 50, color: '#ffb35c' }],
     solid: false,
   },
@@ -456,7 +502,7 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     order: 0,
     unlock: 'cabin',
     desc: 'A roof, a door, and somewhere dry to sleep. Sleeps two, and grows.',
-    how: 'Somewhere dry to sleep, and at first that is the whole of it. People walk home at their own bedtime and rise at their own hour, a little earlier or later than each other. Improving it adds two more beds and a good deal more building: a chimney first, then stone footings and a proper roof. Six sleep in a finished one. How many cabins the kingdom may have at once is set by the commons — one more with every step it takes — so a growing settlement is usually better served by improving the cabins it has. On the day one is finished it takes in anyone still sleeping out at the commons, and you can move people between cabins yourself from this panel.',
+    how: 'Somewhere dry to sleep, and at first that is the whole of it — nothing is kept here. People walk home at their own bedtime and rise at their own hour, a little earlier or later than each other. Improving it adds two more beds and a good deal more building: a chimney first, then stone footings and a proper roof. Six sleep in a finished one. How many cabins the kingdom may have at once is set by the commons — one more with every step it takes — so a growing settlement is usually better served by improving the cabins it has. On the day one is finished it takes in anyone still sleeping out at the commons, and you can move people between cabins yourself from this panel.',
     // One more cabin per step the commons takes. Housing is the tightest of the
     // two counts by design: a cabin that grows to six beds is worth more than a
     // second cabin of two, and this is what makes that the obvious move.
@@ -464,24 +510,6 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     housing: [2, 4, 6],
     sheltered: true,
     light: [{ x: 1.0, y: 1.35, radius: 36, color: '#ffc06a' }],
-    solid: true,
-  },
-  storehouse: {
-    id: 'storehouse',
-    name: 'Storehouse',
-    category: 'storage',
-    w: 2,
-    h: 2,
-    cost: { wood: 25 },
-    labour: 40,
-    maxLevel: 2,
-    upgradeCostMul: 2.4,
-    order: 10,
-    desc: 'Everything the kingdom keeps ends up here. Build them near where goods are made.',
-    how: 'Adds 250 to the shared store, or 550 once improved. Goods are one pool for the whole kingdom, so this raises the ceiling rather than holding anything of its own. Villagers carry loads to whichever store is nearest, which is the only reason where you put it matters — and it is reason enough, since a storehouse out by the woods is half the walking. The commons decides how many may stand at once, one more with each step it takes.',
-    maxCount: [1, 2, 3, 4],
-    storage: [250, 550],
-    unlock: 'storehouse',
     solid: true,
   },
   lodge: {
@@ -495,11 +523,12 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     maxLevel: 2,
     upgradeCostMul: 2.2,
     order: 20,
-    desc: 'The kingdom’s one lodge. Woodcutters work the trees nearby, so place it in or beside a wood.',
-    how: 'Woodcutters work whatever trees stand within thirteen tiles of the lodge — seventeen once it is improved — and range further only when the near ones are gone. The reach is drawn on the map while you are placing or moving it, along with every tree inside it. Each felled tree becomes a stump and grows back in time. They chop three trips\' worth, haul it to the nearest store, and set off again. When wood climbs past about a third of the whole store they stop and go help elsewhere, so the barn never fills with timber while the supper runs out. Nothing in the kingdom insists on a lodge — General Workers will always fell enough by hand to keep thirty-two in store — but they do it at half a woodcutter\'s pace and they stop there, so this is what a kingdom that means to keep building runs on. There is only ever one lodge; if the wood around it thins out, move it rather than building a second.',
+    desc: 'Where the kingdom’s wood lives. Woodcutters work the trees nearby, so place it in or beside a wood.',
+    how: 'This is where wood is kept — 250 of it, or 1,000 once the lodge is improved — and where anybody building anything comes to fetch it. Woodcutters work whatever trees stand within thirteen tiles of the lodge, seventeen once improved, and range further only when the near ones are gone. The reach is drawn on the map while you are placing or moving it, along with every tree inside it. Each felled tree becomes a stump and grows back in time. They chop three trips\' worth, carry it back here, and set off again; when the woodpile is full they stop and go and help elsewhere, and nothing else in the kingdom is affected by that. Nothing insists on a lodge — the Base Camp keeps a hundred wood of its own and General Workers will always fell enough by hand to keep thirty-two of it — but they do that at half a woodcutter\'s pace and they stop there, so this is what a kingdom that means to keep building runs on. There is only ever one lodge; if the wood around it thins out, move it, and the woodpile goes with it.',
     slots: [2, 3],
     job: 'woodcutter',
     harvests: 'tree',
+    holds: ['wood'],
     range: [13, 17],
     unique: true,
     unlock: 'lodge',
@@ -522,8 +551,6 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     maxLevel: 4,
     // Explicit rather than a multiplier, because each step wants a material the
     // step before it could not produce — which is the whole shape of the ladder.
-    // Every one of these has to fit inside the storage the kingdom has by then:
-    // a Settled Camp holds 200, a Village Commons 450.
     upgradeCosts: [
       { wood: 70, stone: 45 },
       { wood: 120, stone: 90, ironBar: 12 },
@@ -531,8 +558,8 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     ],
     upgradeReqs: MINE_REQS,
     order: 21,
-    desc: 'Everything that comes out of the ground comes out of here. It has to stand on or against rocky ground.',
-    how: 'Miners work the rock the building itself stands on, so it wants rocky ground under it or beside it — the ring drawn while you place it is how far the seam spreads, and the more rock inside that ring the faster the work goes. It does not depend on the loose boulders lying about; those are scenery, they are finite, and building over one is the end of it. The rock underneath is not: a quarry goes on producing indefinitely. Sunk deeper it becomes an Iron Mine, then a Deep Mine, and each step adds a material without taking one away — the same people work it, and nobody needs reassigning. What they bring up is set by the Getting out box on this panel: leave it Balanced and they follow whatever the kingdom is shortest of, or name one material and they will favour it. Changing your mind costs nothing. As with wood, they down tools and go help elsewhere once one material is past about a third of the store. There is only ever one mine; if you have sunk it in the wrong place, move it.',
+    desc: 'Everything that comes out of the ground comes out of here, and stays here. It has to stand on or against rocky ground.',
+    how: 'Miners walk out to a face somewhere in the rock around the building, cut there, and carry the load back — so it wants rocky ground under it or beside it, and the ring drawn while you place it is how far they will go. The more rock inside that ring, the faster the work. It does not depend on the loose boulders lying about; those are scenery, they are finite, and building over one is the end of it. The rock underneath is not: a mine goes on producing indefinitely. Everything it brings up is kept here — 250 of each material, rising to 1,000, 2,500 and 5,000 as it is sunk deeper — each in its own compartment, so a mine with nowhere left to put stone carries on cutting ore. Builders and smiths come here for what they need. Sunk deeper it becomes an Iron Mine, then a Deep Mine, and each step adds a material without taking one away — the same people work it, and nobody needs reassigning. What they bring up is set by the Getting out box on this panel: leave it Balanced and they follow whatever the kingdom is shortest of, or name one material and they will favour it. Changing your mind costs nothing. There is only ever one mine; if you have sunk it in the wrong place, move it, and everything stored here moves with it.',
     slots: [2, 3, 3, 4],
     job: 'miner',
     // Never shrinks. An improvement adds to this list, so a Deep Mine still
@@ -544,7 +571,7 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
       ['stone', 'ironOre', 'coal', 'mithrilOre'],
     ],
     focusNote:
-      'Balanced follows whatever the kingdom is shortest of rather than keeping equal piles. Name one material and they will favour it — and if there is nowhere left to put that one, they quietly work on something else instead of stopping.',
+      'Balanced follows whatever the kingdom is shortest of rather than keeping equal piles. Name one material and they will favour it — and if that compartment is full, they quietly cut something else instead of stopping.',
     needsRock: true,
     range: [13, 15, 17, 19],
     unique: true,
@@ -563,7 +590,7 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     upgradeCostMul: 2.0,
     order: 26,
     desc: 'Ore becomes iron, and iron becomes steel. Wants an Iron Mine behind it.',
-    how: 'One iron ore makes one iron bar, and that part wants no coal at all — the coal is for the next step, where one iron bar and two coal make one steel bar. There is a third recipe written on the wall, for mithril, and nobody here has ever seen any. The smith fetches their own materials from the store and carries the bars back. Which of the two it is working on is set by the Making box on this panel; left Balanced it smelts ore into iron and only reaches for the coal once there are bars to spare. Short of something, it simply waits — nothing here is spoiled or lost by a shelf running empty. There is one forge, and it can be moved.',
+    how: 'One iron ore makes one iron bar, and that part wants no coal at all — the coal is for the next step, where one iron bar and two coal make one steel bar. There is a third recipe written on the wall, for mithril, and nobody here has ever seen any. The smith walks to the mine for ore and coal and keeps a working supply of each on the bench; the bars stay here, 250 of each and 1,000 once it is improved. Iron bars being kept here is why steel is easy — the smith reaches for one off the stack rather than fetching it from anywhere. Which of the two it is working on is set by the Making box on this panel; left Balanced it smelts ore into iron and only reaches for the coal once there are bars to spare. Short of something, it simply waits — nothing here is spoiled or lost by a bench running empty. There is one forge, and it can be moved, bars and all.',
     slots: [1, 2],
     job: 'smith',
     // Iron wants no coal. That is the one thing about this building people get
@@ -592,10 +619,11 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     upgradeCostMul: 2.0,
     order: 23,
     desc: 'A small barn and eight plots. Farmers sow, wait, and harvest wheat.',
-    how: 'Eight plots around a small barn. A farmer sows a bare plot, leaves it, and comes back when it is ripe — a little over three minutes of growing at normal speed, quickest in summer and about a third of that pace in winter. A farm with nobody assigned still creeps along at about a third the pace. Harvested wheat goes to the nearest store, not into the barn. There is one farm in the kingdom; moving it lays out fresh plots on the new ground, so whatever was in the old ones is lost with them — worth waiting for a harvest first.',
+    how: 'Eight plots around a small barn. A farmer sows a bare plot, leaves it, and comes back when it is ripe — a little over three minutes of growing at normal speed, quickest in summer and about a third of that pace in winter. A farm with nobody assigned still creeps along at about a third the pace. Harvested wheat goes into the barn and stays there: this is where the kingdom\'s wheat lives, 250 of it and 1,000 once the farm is improved, and the miller walks over for it. There is one farm in the kingdom; moving it takes the barn and everything in it, but lays out fresh plots on the new ground, so whatever was standing in the old ones is lost with them — worth waiting for a harvest first.',
     slots: [2, 3],
     job: 'farmer',
     plots: true,
+    holds: ['wheat'],
     unique: true,
     unlock: 'farm',
     solid: false,
@@ -612,7 +640,7 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     upgradeCostMul: 2.0,
     order: 24,
     desc: 'Grinds wheat into flour. The sails turn whenever the miller is working.',
-    how: 'Three wheat in, two flour out, about eighteen seconds a batch and quicker as the miller learns the work. The miller fetches wheat from the store personally rather than waiting to be supplied, and carries the flour back once the shelf is worth a trip. Nothing here is automatic: if nobody is walking, nothing is moving. There is one windmill, and it can be moved — a shorter walk between the farm, the mill and the ovens is most of what makes bread arrive.',
+    how: 'Three wheat in, two flour out, about eighteen seconds a batch and quicker as the miller learns the work. The miller walks to the farm for wheat personally rather than waiting to be supplied, keeps 50 of it on the bench — 100 once the mill is improved — and the flour stays here, which is where the kingdom\'s flour lives and where the cooks come for it. Nothing here is automatic: if nobody is walking, nothing is moving. There is one windmill, and it can be moved — a shorter walk between the farm, the mill and the ovens is most of what makes bread arrive.',
     slots: [1, 2],
     job: 'miller',
     recipe: { inputs: { wheat: 3 }, outputs: { flour: 2 }, seconds: 18 },
@@ -632,7 +660,7 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     upgradeCostMul: 2.0,
     order: 25,
     desc: 'Where both chains end: flour becomes bread, and the morning’s fish becomes supper.',
-    how: 'Two flour make three loaves in about twenty-two seconds; two fish come off the fire as two meals in about sixteen. A loaf and a cooked fish fill somebody up exactly as well as each other, so which of the two the kingdom lives on is a question about the land rather than about the food. The cooks decide between the recipes themselves — whichever the kingdom is shorter of, with whatever is actually in store — so there is no queue to keep and nothing to switch by hand, though you can name a preference if you want one. They fetch their own flour and fish and carry the meals back. Once there is comfortably enough food for everybody they ease off and go and help elsewhere, rather than cooking a hundred suppers nobody has room for. The oven draws people over even when they have no business here, which is a reason in itself to put it somewhere people pass. There is one kitchen, and it can be moved.',
+    how: 'Two flour make three loaves in about twenty-two seconds; two fish come off the fire as two meals in about sixteen. A loaf and a cooked fish fill somebody up exactly as well as each other, so which of the two the kingdom lives on is a question about the land rather than about the food. The cooks decide between the recipes themselves — whichever the kingdom is shorter of, out of whatever they can actually get — so there is no queue to keep and nothing to switch by hand, though you can name a preference if you want one. They walk to the windmill for flour and down to the hut for fish, and keep a working supply of each here. The meals stay: 250 loaves and 250 cooked fish, doubling four times over once it is improved, and this is where every hungry person in the kingdom comes to eat. Once there is comfortably enough food for everybody the cooks ease off and go and help elsewhere, which is a decision about mouths rather than about shelf room and the panel says so. The oven draws people over even when they have no business here, which is a reason in itself to put it somewhere people pass. There is one kitchen, and it can be moved, supper and all.',
     slots: [2, 3],
     job: 'cook',
     // Bread first: it is the recipe most kingdoms meet first, and the panel
@@ -642,7 +670,7 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
       { inputs: { fish: 2 }, outputs: { cookedFish: 2 }, seconds: 16 },
     ],
     focusNote:
-      'Balanced cooks whichever meal the kingdom is shorter of, out of whatever is actually in store — which is usually the right answer. Name one and the cooks will favour it, and quietly make the other anyway rather than standing idle if the ingredients run out.',
+      'Balanced cooks whichever meal the kingdom is shorter of, out of whatever the cooks can actually fetch — which is usually the right answer. Name one and the cooks will favour it, and quietly make the other anyway rather than standing idle if the ingredients run out.',
     unique: true,
     unlock: 'kitchen',
     light: [{ x: 1.0, y: 1.3, radius: 42, color: '#ffa14a' }],
@@ -663,10 +691,11 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     upgradeCostMul: 2.2,
     order: 22,
     desc: 'Stands on dry land beside fishable water. Fishers work the spots nearby, lake or coast.',
-    how: 'It has to stand on dry land with water inside its reach — the lake or the sea, both work, though a lake shore is usually the richer of the two. The ring drawn while you are placing it marks every promising spot in reach: reed beds, lily pads, the lip where the shallows drop away, and the crooks of an inlet. Fishers walk out to one, cast, wait, and bring back what they get. A spot worked over and over goes quiet for a while and then comes back on its own, so nothing here can ever be fished out — a hut on thin water is slower, never idle. One fisher to begin with and two once it is improved, which is as far as it goes: this is the food chain that feeds a small settlement quickly, not the one that feeds a large one forever. There is one hut, and it can be moved when the good water is somewhere else.',
+    how: 'It has to stand on dry land with water inside its reach — the lake or the sea, both work, though a lake shore is usually the richer of the two. The ring drawn while you are placing it marks every promising spot in reach: reed beds, lily pads, the lip where the shallows drop away, and the crooks of an inlet. Fishers walk out to one, cast, wait, and bring the catch back here, which is where the kingdom\'s raw fish is kept — 250 of it, 1,000 once the hut is improved — and where the cooks come down for it. A spot worked over and over goes quiet for a while and then comes back on its own, so nothing here can ever be fished out — a hut on thin water is slower, never idle. One fisher to begin with and two once it is improved, which is as far as it goes: this is the food chain that feeds a small settlement quickly, not the one that feeds a large one forever. There is one hut, and it can be moved when the good water is somewhere else.',
     slots: [1, 2],
     job: 'fisher',
     fishes: true,
+    holds: ['fish'],
     range: [10, 13],
     unique: true,
     unlock: 'fishhut',
@@ -815,7 +844,7 @@ export function upgradeCostOf(def: BuildingId, level: number): Partial<Record<Re
 
 /**
  * What the kingdom must have *done* before the next improvement, as opposed to
- * what it must have in store. Most buildings ask for nothing beyond materials.
+ * what it must have in storage. Most buildings ask for nothing beyond materials.
  */
 export function upgradeReqsOf(def: BuildingId, level: number): UpgradeReq[] {
   return BUILDINGS[def].upgradeReqs?.[level - 1] ?? [];
@@ -860,6 +889,45 @@ export function extractsOf(def: BuildingId, level: number): ResourceId[] {
  */
 export function outputsOf(def: BuildingId, level: number): ResourceId[] {
   return [...extractsOf(def, level), ...liveRecipesOf(def).map(recipeOutput)];
+}
+
+/**
+ * Everything this building is the home of, at this level — which is what it
+ * makes, plus whatever it is simply where the kingdom keeps. The three that
+ * need the second half are the ones whose produce comes off the map rather than
+ * off a recipe: the lodge's wood, the farm's wheat, the hut's catch.
+ *
+ * This is the list `storesOf` gives compartments to, and every question of the
+ * form "where does a villager take this" or "where does one come from" is
+ * answered by walking the buildings and asking this.
+ */
+export function holdsOf(def: BuildingId, level: number): ResourceId[] {
+  const out = outputsOf(def, level);
+  for (const res of BUILDINGS[def].holds ?? []) if (!out.includes(res)) out.push(res);
+  return out;
+}
+
+/**
+ * What this building holds, per resource, at this level. Every compartment is
+ * its own: a resource never eats into the room reserved for another, which is
+ * the whole reason a Deep Mine full of stone goes on bringing up coal.
+ *
+ * The commons is the one building here that stores something it does not
+ * produce, and its `cache` is written down rather than derived precisely
+ * because it is the exception.
+ */
+export function storesOf(def: BuildingId, level: number): Partial<Record<ResourceId, number>> {
+  const cap = STORAGE_TIERS[Math.min(level, STORAGE_TIERS.length) - 1];
+  const out: Partial<Record<ResourceId, number>> = {};
+  for (const res of holdsOf(def, level)) out[res] = cap;
+  const cache = BUILDINGS[def].cache;
+  if (cache) for (const k in cache) out[k as ResourceId] = cache[k as ResourceId];
+  return out;
+}
+
+/** How much of one ingredient a workshop keeps on the bench at this level. */
+export function inputCapOf(_def: BuildingId, level: number): number {
+  return INPUT_TIERS[Math.min(level, INPUT_TIERS.length) - 1];
 }
 
 /**
@@ -981,8 +1049,10 @@ export const FISH_SEASON: Record<string, number> = {
  * Meals per head the kingdom is comfortable holding, and a small pantry on top
  * so that a settlement of two is not held to five suppers. Past this the cooks
  * bank the fire and go and help elsewhere — the same rule the woodcutters
- * follow with a full barn, and the reason a kitchen cannot bury the kingdom
- * under four hundred loaves while the stone it wants has nowhere to go.
+ * follow with a full woodpile, and the reason a kitchen with room for two
+ * hundred and fifty loaves does not bake two hundred and fifty of them. This is
+ * a decision about mouths and never about shelf room; the two are kept apart on
+ * purpose, and the kitchen's own panel labels them separately.
  *
  * Comfortably above the four a head that Vibes stop counting at, so easing off
  * never costs the kingdom a point of food security.
@@ -998,8 +1068,9 @@ export const FOOD_COMFORT_FLOOR = 10;
  *
  * This is how far the *whole* chain looks ahead before easing off. Without it
  * the kingdom stops cooking at a comfortable larder and then goes on farming,
- * milling and fishing into a barn full of ingredients for meals nobody wants —
- * which is the same complaint one step upstream.
+ * milling and fishing until the farm, the mill and the hut are all full of
+ * ingredients for meals nobody wants — which is the same complaint one step
+ * upstream, and now three buildings rather than one shelf.
  */
 export const FOOD_CHAIN_VALUE: Partial<Record<ResourceId, number>> = {
   bread: 1,
@@ -1015,6 +1086,30 @@ export const FOOD_CHAIN_VALUE: Partial<Record<ResourceId, number>> = {
  * make easing off look like a stall.
  */
 export const FOOD_CHAIN_HEADROOM = 1.5;
+
+/**
+ * How far along the chain each thing is: off the land, milled, cooked.
+ *
+ * A job is judged on its own step and everything after it, and never on what is
+ * waiting behind it. That is not a refinement — it is the rule that stops a
+ * link being closed by the very pile it exists to clear. The cooks have always
+ * been exempt from the pipeline for exactly this reason; the miller needed the
+ * same exemption and did not have it, and a run reached a state it could not
+ * leave: a hundred and fifty-nine sheaves in the barn were on their own enough
+ * to hold the whole chain over its threshold, so the mill stopped, so the
+ * sheaves stayed, for the rest of the run, with three loaves to feed twenty.
+ *
+ * The sources are still judged on the whole chain, which is the intended
+ * behaviour and the reason the farmers and the fishers ease off together: what
+ * a farmer adds is new food, and what a miller does is move it along.
+ */
+export const FOOD_CHAIN_STAGE: Partial<Record<ResourceId, number>> = {
+  wheat: 0,
+  fish: 0,
+  flour: 1,
+  bread: 2,
+  cookedFish: 2,
+};
 
 /**
  * How far this building's workers will go for their nodes. One number, used by
@@ -1033,8 +1128,9 @@ export function rangeOf(def: BuildingId, level: number): number {
  * labour: taking a building apart and putting it up again somewhere else is the
  * same work either way, and charging less would make relocation the cheap way
  * to hold a building rather than a decision. What it is *not* is a rebuild —
- * the level, the name, the workers and the history all step across intact, so
- * moving an improved quarry never costs you the improvement.
+ * the level, the name, the workers, the history and everything stored inside
+ * all step across intact, so moving an improved quarry never costs you the
+ * improvement, and moving a full one never costs you the stone.
  */
 export function relocateCost(def: BuildingId): Partial<Record<ResourceId, number>> {
   return { ...BUILDINGS[def].cost };
@@ -1044,9 +1140,10 @@ export function relocateLabour(def: BuildingId): number {
   return BUILDINGS[def].labour;
 }
 
+// No Storage category any more: there is no building whose job is to hold
+// things in general, because every production building holds its own.
 export const CATEGORY_META: Record<string, { name: string; icon: string }> = {
   housing: { name: 'Housing', icon: '🏠' },
-  storage: { name: 'Storage', icon: '📦' },
   production: { name: 'Production', icon: '⚙️' },
   comfort: { name: 'Comfort', icon: '🌷' },
 };

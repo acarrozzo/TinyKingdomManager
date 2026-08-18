@@ -24,15 +24,17 @@ import {
   extractsOf,
   focusLabel,
   focusOptions,
+  inputCapOf,
   rangeOf,
   rankOf,
   recipeOutput,
   recipesOf,
   relocateCost,
   richnessMul,
+  storesOf,
   upgradeReqsOf,
 } from '../sim/defs';
-import { buildingById, homeCapacity, jobSlots, villagerById, xpOf } from '../sim/state';
+import { buildingById, homeCapacity, jobSlots, sourceOf, totalOf, villagerById, xpOf } from '../sim/state';
 import { buildLimit, commonsGrants, mineGrants } from '../sim/goals';
 import { labourNeeded, siteNeeds } from '../sim/villager';
 import { protectedBuilding } from '../sim/founding';
@@ -304,12 +306,62 @@ function recipeRow(r: Recipe, active: boolean): string {
     <span class="muted">${r.locked ? 'nobody here has seen any' : `${Math.round(r.seconds)}s`}</span></div>`;
 }
 
-/** What the place is actually doing: the recipe, the fields, the shelf. */
+/**
+ * What this building is holding, one row per resource, with the room it has.
+ *
+ * Two lists rather than one, and keeping them apart is the whole of the
+ * distinction the redesign rests on: what the building is the *home* of, which
+ * is where the kingdom's stock of that thing actually is, and what is on the
+ * bench waiting to be used, which is a working supply and deliberately small.
+ * Showing 24 flour at the kitchen next to 180 bread without saying which is
+ * which is how somebody concludes the kitchen is where flour lives.
+ */
+/** "bread and cooked fish", not "bread, cooked fish". Sentences, not lists. */
+function plainList(items: string[]): string {
+  if (items.length < 2) return items[0] ?? '';
+  return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+}
+
+function storageSection(game: Game, b: Building): string {
+  const held = storesOf(b.def, b.level);
+  const keeps = (Object.keys(held) as ResourceId[]).filter((res) => (held[res] ?? 0) > 0);
+  const bench = (Object.keys(b.input) as ResourceId[]).filter((res) => (b.input[res] ?? 0) > 0);
+  if (keeps.length === 0 && bench.length === 0) return '';
+
+  const benchCap = inputCapOf(b.def, b.level);
+  const row = (res: ResourceId, qty: number, cap: number, gain: number | null) => {
+    const full = cap > 0 && qty >= cap;
+    return `<div class="kv"><span class="k">${RESOURCE_META[res].icon} ${esc(RESOURCE_META[res].name)}</span>
+      <span class="v" style="color:${full ? 'var(--warn)' : 'inherit'}">${Math.floor(qty)} / ${cap}${
+        gain ? `<span class="muted tiny"> · +${gain} if improved</span>` : ''
+      }</span></div>`;
+  };
+
+  return `<div class="bsec"><div class="bh">Kept here</div>
+    ${keeps.map((res) => row(res, b.store[res] ?? 0, held[res] ?? 0, game.capacityGain(b, res))).join('') ||
+      '<div class="tiny muted">Nothing is kept here.</div>'}
+    ${
+      bench.length
+        ? `<div class="tiny muted" style="margin:10px 0 5px">On the bench — working supplies, fetched as they are used</div>
+           ${bench.map((res) => row(res, b.input[res] ?? 0, benchCap, null)).join('')}`
+        : ''
+    }
+    ${
+      keeps.length
+        ? `<div class="tiny muted" style="margin-top:8px;line-height:1.55">This is where the kingdom keeps
+            ${plainList(keeps.map((res) => RESOURCE_META[res].name.toLowerCase()))}. Anyone who needs some walks here for it${
+              game.canRelocate(b) ? ', and moving the building takes everything in it along' : ''
+            }.</div>`
+        : ''
+    }</div>`;
+}
+
+/** What the place is actually doing: the recipe, the fields, the seam. */
 function buildingWork(game: Game, b: Building): string {
   const g = game.state;
   const def = BUILDINGS[b.def];
   const recipes = recipesOf(b.def);
-  let out = '';
+  let out = storageSection(game, b);
 
   if (recipes.length) {
     const live = recipes.filter((r) => !r.locked);
@@ -317,25 +369,22 @@ function buildingWork(game: Game, b: Building): string {
     // Everything the current recipe wants, against what is actually on the
     // shelf — a two-input recipe that shows only one of them is how somebody
     // ends up convinced their forge is broken.
+    // Against everything the building can lay hands on without walking: the
+    // bench *and* its own stack. That second half is what makes steel look
+    // sensible — the iron bar it wants is one it made and kept.
+    const onHand = (res: ResourceId) => Math.floor((b.input[res] ?? 0) + (b.store[res] ?? 0));
     const wantRows = (Object.keys(current.inputs) as ResourceId[])
       .map((res) => {
         const need = current.inputs[res] ?? 0;
-        const held = Math.floor(b.input[res] ?? 0);
+        const held = onHand(res);
         return `<div class="kv"><span class="k">${RESOURCE_META[res].name} on hand</span>
           <span class="v" style="color:${held >= need ? 'var(--good)' : 'var(--faint)'}">${held} of ${need}</span></div>`;
       })
       .join('');
-    const shelf = (Object.keys(b.output) as ResourceId[])
-      .filter((res) => (b.output[res] ?? 0) > 0)
-      .map(
-        (res) =>
-          `<div class="kv"><span class="k">${RESOURCE_META[res].name} waiting to be carried off</span>
-            <span class="v">${Math.floor(b.output[res] ?? 0)}</span></div>`,
-      )
-      .join('');
     const short = (Object.keys(current.inputs) as ResourceId[]).find(
-      (res) => (b.input[res] ?? 0) < (current.inputs[res] ?? 0),
+      (res) => onHand(res) < (current.inputs[res] ?? 0),
     );
+    const from = short ? sourceOf(g, short, b.x, b.y) : null;
 
     out += `<div class="bsec"><div class="bh">Makes</div>
       ${recipes.map((r) => recipeRow(r, r === current)).join('')}
@@ -343,12 +392,13 @@ function buildingWork(game: Game, b: Building): string {
         <span class="track"><i style="width:${Math.round(Math.min(1, b.progress) * 100)}%;background:var(--good)"></i></span>
         <span class="num">${Math.round(Math.min(1, b.progress) * 100)}%</span></div>
       <div style="margin-top:8px">${wantRows}</div>
-      ${shelf}
       <div class="tiny muted" style="margin-top:7px;line-height:1.55">${
         b.workers.length === 0
           ? 'Nobody is here to run it, so it sits idle.'
           : short
-            ? `Short of ${RESOURCE_META[short].name.toLowerCase()}. Whoever works here will go and fetch some${g.stock[short] > 0 ? '' : ', once the kingdom has any'}.`
+            ? `Short of ${RESOURCE_META[short].name.toLowerCase()}. Whoever works here will walk ${
+                from ? `to the ${buildingName(from.def, from.level).toLowerCase()}` : 'off'
+              } and fetch some${from ? '' : ', once the kingdom has any'}.`
             : 'Everything it needs is to hand.'
       }</div></div>`;
 
@@ -390,26 +440,16 @@ function buildingWork(game: Game, b: Building): string {
     const reachable = b.level < def.maxLevel && !upgradeReqsOf(b.def, b.level).some((r) => r.impossible);
     const next = reachable ? extractsOf(b.def, b.level + 1).filter((r) => !gets.includes(r)) : [];
     const horizon = !reachable && b.level < def.maxLevel;
-    const shelf = (Object.keys(b.output) as ResourceId[])
-      .filter((res) => (b.output[res] ?? 0) > 0)
-      .map(
-        (res) =>
-          `<div class="kv"><span class="k">${RESOURCE_META[res].name} waiting to be carried off</span>
-            <span class="v">${Math.floor(b.output[res] ?? 0)}</span></div>`,
-      )
-      .join('');
-
     out += `<div class="bsec"><div class="bh">Getting out</div>
       <div class="row tiny" style="gap:6px;margin-bottom:8px">${gets
         .map((res) => `<span class="tag accent">${RESOURCE_META[res].icon} ${esc(RESOURCE_META[res].name)}</span>`)
         .join('')}</div>
       <div class="kv"><span class="k">Rock within ${reach} tiles</span><span class="v">${rock}</span></div>
       <div class="kv"><span class="k">Which makes the work</span><span class="v">${pace}% of full pace</span></div>
-      ${shelf}
       <div class="tiny muted" style="margin-top:7px;line-height:1.55">${
         b.workers.length === 0
           ? 'Nobody is here to work it. The rock is not going anywhere.'
-          : 'They cut into the ground the building stands on, so this never runs out — thin rock only means slower. The loose boulders lying about are scenery, and finite: nothing puts one back.'
+          : 'Miners walk out to a face in the rock, cut there, and carry the load back here. The ground does not run out — thin rock only means slower. The loose boulders lying about are scenery, and finite: nothing puts one back.'
       }${
         next.length
           ? ` Sinking it deeper would add ${next.map((r) => RESOURCE_META[r].name.toLowerCase()).join(' and ')}, without giving up any of this.`
@@ -432,7 +472,6 @@ function buildingWork(game: Game, b: Building): string {
       <div class="kv"><span class="k">Water within ${reach} tiles</span><span class="v">${total} tiles</span></div>
       <div class="kv"><span class="k">Spots worth casting into</span><span class="v">${good}</span></div>
       <div class="kv"><span class="k">How settled that water is</span><span class="v">${rested}%</span></div>
-      <div class="kv"><span class="k">Fish in the store</span><span class="v">${Math.floor(g.stock.fish)}</span></div>
       <div class="tiny muted" style="margin-top:7px;line-height:1.55">${
         total === 0
           ? `There is no water in reach of this at all, which is a thing that can happen when the shoreline moves under a hut. ${
@@ -440,24 +479,22 @@ function buildingWork(game: Game, b: Building): string {
             }`
           : b.workers.length === 0
             ? 'Nobody is here to fish it. The water is not going anywhere.'
-            : 'Fishers take the best spot free, cast a few times and carry the catch to the nearest store. Water worked hard goes quiet for a while and settles again on its own, so this can never be fished out — the worst it gets is slow.'
+            : 'Fishers take the best spot free, cast a few times and carry the catch back here, which is where it stays until a cook comes down for it. Water worked hard goes quiet for a while and settles again on its own, so this can never be fished out — the worst it gets is slow.'
       }</div></div>`;
   }
 
   if (def.harvests) {
     const what = def.harvests === 'tree' ? 'trees' : 'boulders';
-    const res = def.harvests === 'tree' ? 'wood' : 'stone';
     const reach = rangeOf(b.def, b.level);
     const nearby = game.nodesInRange(b.def, b.level, b.x, b.y);
     out += `<div class="bsec"><div class="bh">Works the ground nearby</div>
       <div class="kv"><span class="k">${cap(what)} within ${reach} tiles</span><span class="v">${nearby}</span></div>
-      <div class="kv"><span class="k">${RESOURCE_META[res].name} in the store</span><span class="v">${Math.floor(g.stock[res as ResourceId])}</span></div>
       <div class="tiny muted" style="margin-top:7px;line-height:1.55">${
         nearby === 0
           ? `Nothing left within reach. They will range further, and be slower for it, until these grow back — and if this ground is worked out for good, ${
               game.canRelocate(b) ? 'move it somewhere with more in it.' : 'it can be moved once it is finished.'
             }`
-          : `Workers here take the nearest ${what}, haul the load to the closest store, and come back for more. Felled trees leave stumps, and stumps grow back.`
+          : `Workers here take the nearest ${what}, carry the load back here, and set off again. Felled trees leave stumps, and stumps grow back.`
       }</div></div>`;
   }
   return out || `<div class="tiny muted">Nothing is made here.</div>`;
@@ -529,7 +566,10 @@ function buildingAbout(game: Game, b: Building): string {
   if (def.maxLevel > 1) facts.push(kv('Level', `${b.level} of ${def.maxLevel}`));
   if (def.housing) facts.push(kv('Beds', `${homeCapacity(b)}`));
   if (def.slots) facts.push(kv('Places to work', `${jobSlots(b)}`));
-  if (def.storage) facts.push(kv('Adds to the store', `${def.storage[Math.min(b.level, def.storage.length) - 1]}`));
+  const keeps = Object.entries(storesOf(b.def, b.level));
+  if (keeps.length) {
+    facts.push(kv('Keeps', keeps.map(([res, cap]) => `${cap} ${RESOURCE_META[res as ResourceId].name.toLowerCase()}`).join(', ')));
+  }
   if (def.job) facts.push(kv('Trade', JOB_META[def.job].name));
   if (def.harvests) facts.push(kv('Workers range', `${rangeOf(b.def, b.level)} tiles`));
   if (def.extracts) {
@@ -562,7 +602,7 @@ function buildingAbout(game: Game, b: Building): string {
 
 /**
  * Everything the next step of this building asks for, always, whether or not it
- * can be taken yet — materials with what is in store beside what is wanted,
+ * can be taken yet — materials with what the kingdom has beside what is wanted,
  * accomplishments ticked off one at a time, and what the step hands back.
  *
  * The rule this section exists to obey: a disabled button is not an
@@ -592,7 +632,7 @@ function improveSection(game: Game, b: Building): string {
   const costRows = game
     .upgradeCost(b)
     .map(({ res, qty }) => {
-      const have = Math.floor(g.stock[res] - (reserved[res] ?? 0));
+      const have = Math.floor(totalOf(g, res) - (reserved[res] ?? 0));
       const met = have >= qty;
       return `<div class="kv"><span class="k">${met ? '✓' : '○'} ${RESOURCE_META[res].icon} ${esc(
         RESOURCE_META[res].name,
@@ -611,7 +651,7 @@ function improveSection(game: Game, b: Building): string {
     .join('');
 
   // What the step is for. Read off the def where it can be — beds, slots, room
-  // in the store — and off the unlock tier where the commons is concerned, so
+  // room to keep things — and off the unlock tier where the commons is concerned, so
   // the answer to "why bother" is on the same screen as the price.
   const gains = improveGains(b);
   if ((def.harvests || def.extracts) && def.range && b.level < def.range.length) {
@@ -632,7 +672,7 @@ function improveSection(game: Game, b: Building): string {
   ];
   const shortOf = game
     .upgradeCost(b)
-    .filter(({ res, qty }) => g.stock[res] - (reserved[res] ?? 0) < qty)
+    .filter(({ res, qty }) => totalOf(g, res) - (reserved[res] ?? 0) < qty)
     .map(({ res }) => RESOURCE_META[res].name.toLowerCase());
 
   const why = b.movingTo
@@ -697,7 +737,17 @@ function improveGains(b: Building): string[] {
   };
   step(def.housing, 'Beds');
   step(def.slots, 'Places to work');
-  step(def.storage, 'Room in the store');
+  // Room, per resource. Not one figure: each compartment is its own, and a
+  // line reading "Storage: 250 → 1,000" about a mine that keeps three separate
+  // materials would be understating it threefold.
+  const now = storesOf(b.def, b.level);
+  const then = storesOf(b.def, b.level + 1);
+  for (const k in then) {
+    const res = k as ResourceId;
+    const was = now[res] ?? 0;
+    const will = then[res] ?? 0;
+    if (will > was) out.push(`${RESOURCE_META[res].name} kept: ${was} → ${will}`);
+  }
   return out;
 }
 
@@ -721,7 +771,7 @@ export function buildingFoot(game: Game, b: Building): string {
       ? ' — it is on its way somewhere else'
       : waiting.length
         ? ` — waiting on: ${waiting[0].label.toLowerCase()}`
-        : ' — not enough in store';
+        : ' — not enough in storage';
   // Moving is offered on the building's own panel and nowhere else, because it
   // is a thing you do to a *particular* building rather than a mode you enter.
   const movable = game.canRelocate(b);

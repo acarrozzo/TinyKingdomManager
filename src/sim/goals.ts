@@ -8,16 +8,23 @@
  * has to come before the commons can ask for a cooked meal. Nothing unlocks
  * something that is a prerequisite of itself; see `COMMONS_REQS` in `defs.ts`.
  *
- * Food is deliberately two branches from one gate. A storehouse opens the Wheat
- * Farm *and* the Fishing Hut, and the Kitchen opens on the first thing worth
- * cooking from either of them — so a kingdom that never sows and a kingdom that
- * never casts both arrive at the same building, and neither branch is a
+ * Food is deliberately two branches from one gate. Giving the kingdom's first
+ * resource a home of its own — a staffed lodge or a staffed mine — opens the
+ * Wheat Farm *and* the Fishing Hut, and the Kitchen opens on the first thing
+ * worth cooking from either of them, so a kingdom that never sows and a kingdom
+ * that never casts both arrive at the same building and neither branch is a
  * prerequisite of the other.
+ *
+ * That first gate used to be a Storehouse, and moving it is the point of the
+ * storage redesign rather than a consequence of it: the lesson a player needs
+ * in the first ten minutes is no longer "build somewhere to put things" but
+ * "things are kept where they are made, so put the building somewhere sensible".
  */
 
 import type { BuildingId, GameState, Goal } from '../types';
 import { BUILDINGS, RESOURCE_META, extractsOf } from './defs';
 import { journal, toast } from './journal';
+import { totalOf } from './state';
 import { rankOf } from './defs';
 import { foundingDone } from './founding';
 
@@ -33,14 +40,14 @@ function staffed(g: GameState, def: string): boolean {
  * kingdom's spine: everything else the menu offers is either a comfort, which
  * needs no permission at all, or part of the food chain, which the goals open.
  *
- * The Base Camp hands over all four foundations at once — somewhere to sleep,
- * somewhere to put things, and the two buildings that produce the only two raw
- * materials there are. That is deliberate: the first hour is about deciding
- * where those four go, and a kingdom that can fell trees but not break stone is
- * one waiting on permission rather than on itself.
+ * The Base Camp hands over three foundations at once — somewhere to sleep, and
+ * the two buildings that produce the only two raw materials there are, each of
+ * which is also where that material will be kept. That is deliberate: the first
+ * hour is about deciding where those three go, and a kingdom that can fell trees
+ * but not break stone is one waiting on permission rather than on itself.
  */
 const COMMONS_UNLOCKS: Record<number, string[]> = {
-  1: ['cabin', 'storehouse', 'lodge', 'quarry'],
+  1: ['cabin', 'lodge', 'quarry'],
   2: ['well'],
   3: ['statue'],
 };
@@ -130,7 +137,7 @@ export function commonsGrants(g: GameState, level: number): string[] {
     const def = (BUILDINGS as Record<string, { name: string } | undefined>)[key];
     if (def) out.push(`Opens the ${def.name}`);
   }
-  for (const id of ['cabin', 'storehouse'] as BuildingId[]) {
+  for (const id of ['cabin'] as BuildingId[]) {
     const counts = BUILDINGS[id].maxCount;
     if (!counts) continue;
     const now = counts[Math.min(level, counts.length) - 1] ?? 0;
@@ -143,7 +150,8 @@ export function commonsGrants(g: GameState, level: number): string[] {
 
 /**
  * Wood in the founder's arms. During founding this is the whole of the kingdom's
- * wealth — there is no store to count instead until the camp is finished.
+ * wealth — there is nowhere to put anything down until the camp is finished,
+ * and the camp's own woodpile is the first storage the kingdom ever has.
  */
 export function carriedByFounder(g: GameState): number {
   const founder = g.villagers.find((v) => v.id === g.founderId);
@@ -187,10 +195,10 @@ export function buildGoals(): Goal[] {
     },
     {
       id: 'store',
-      title: 'Build a Storehouse',
-      desc: 'The camp only holds sixty, and it is at the middle of everything. A storehouse raises the ceiling and shortens the walk — put it near where the work is.',
+      title: 'Give resources a home',
+      desc: 'Nothing is kept in one great pile: wood lives at the lodge and stone lives at the mine, and whoever needs some walks there for it. Build either one and put somebody on it. The camp keeps a hundred wood to get you started, and that is the whole of what it keeps.',
       done: false,
-      check: (g) => has(g, 'storehouse'),
+      check: (g) => staffed(g, 'lodge') || staffed(g, 'quarry'),
       // Both ways of feeding the place, handed over together. A hut is cheap
       // and quick and wants water; a farm is dearer and slower and wants room.
       // Either will do, both is fine, and neither is the right answer.
@@ -199,16 +207,16 @@ export function buildGoals(): Goal[] {
     {
       id: 'lodge',
       title: "Put someone to work at a Woodcutter's Lodge",
-      desc: 'Build the lodge in or beside a wood — the ring on the map is how far its woodcutters will go — then assign a villager to it.',
+      desc: 'Build the lodge in or beside a wood — the ring on the map is how far its woodcutters will go — then assign a villager to it. The wood they fell is kept there, so it is also where every builder in the kingdom will come for timber.',
       done: false,
       check: (g) => staffed(g, 'lodge'),
     },
     {
       id: 'stone',
       title: 'Open a Quarry and stock 40 stone',
-      desc: 'Nothing comes out of the ground by hand. The quarry has to stand on or against rocky ground — the more rock inside the ring, the faster it works — and then somebody has to be put on it. Every scrap of stone the kingdom will ever have comes from there.',
+      desc: 'Nothing comes out of the ground by hand. The quarry has to stand on or against rocky ground — the more rock inside the ring, the faster it works — and then somebody has to be put on it. Every scrap of stone the kingdom will ever have comes from there, and stays there until somebody carries it off to build with.',
       done: false,
-      check: (g) => g.stock.stone >= 40,
+      check: (g) => totalOf(g, 'stone') >= 40,
       unlocks: 'mill',
     },
     {
@@ -223,7 +231,7 @@ export function buildGoals(): Goal[] {
       title: 'Sow a Wheat Farm',
       desc: 'A farm needs open ground and a farmer. Wheat takes time to ripen. The long way to feed the kingdom, and the one that keeps up once there are a lot of you.',
       done: false,
-      check: (g) => g.stock.wheat >= 10,
+      check: (g) => totalOf(g, 'wheat') >= 10,
     },
     {
       id: 'fishhut',
@@ -244,7 +252,7 @@ export function buildGoals(): Goal[] {
       title: 'Bring home something worth cooking',
       desc: 'Flour or raw fish, whichever the kingdom finds first. Either one opens the Kitchen, where both of them turn into supper.',
       done: false,
-      check: (g) => g.stock.flour >= 1 || g.stats.caught >= 1,
+      check: (g) => totalOf(g, 'flour') >= 1 || g.stats.caught >= 1,
       unlocks: 'kitchen',
     },
     {
@@ -252,7 +260,7 @@ export function buildGoals(): Goal[] {
       title: 'Grind wheat into flour',
       desc: 'Build a Windmill and assign a miller. Someone has to bring the wheat over.',
       done: false,
-      check: (g) => g.stock.flour >= 6,
+      check: (g) => totalOf(g, 'flour') >= 6,
     },
     {
       id: 'bread',
@@ -266,7 +274,7 @@ export function buildGoals(): Goal[] {
       title: 'Cook the first of the catch',
       desc: 'The same Kitchen, the same cooks, the other recipe. A cooked fish fills somebody up exactly as well as a loaf does.',
       done: false,
-      check: (g) => g.stock.cookedFish >= 1 || g.unlocked.has('seen:cookedFish'),
+      check: (g) => totalOf(g, 'cookedFish') >= 1 || g.unlocked.has('seen:cookedFish'),
     },
     {
       id: 'pop6',
@@ -301,7 +309,7 @@ export function buildGoals(): Goal[] {
       title: 'Make a Steel Bar',
       desc: 'One iron bar and two coal. The coal wants a Deep Mine, which is what the mine becomes after the Iron Mine.',
       done: false,
-      check: (g) => g.stock.steelBar >= 1,
+      check: (g) => totalOf(g, 'steelBar') >= 1,
     },
     {
       id: 'adept',

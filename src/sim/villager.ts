@@ -20,12 +20,14 @@ import {
   FISH_TIRE,
   FISH_YIELD,
   FOOD_CHAIN_HEADROOM,
+  FOOD_CHAIN_STAGE,
   FOOD_CHAIN_VALUE,
   HAND_FELL_MUL,
   JOB_META,
   MINE_SECONDS,
   MINE_YIELD,
   PERSONAL_DAY_SHIFT,
+  RESOURCE_META,
   SCHEDULE,
   SEVERE_HUNGER,
   TERRAIN_SPEED,
@@ -34,7 +36,6 @@ import {
   buildingName,
   extractsOf,
   liveRecipesOf,
-  outputsOf,
   rangeOf,
   recipeOutput,
   relocateCost,
@@ -55,12 +56,14 @@ import {
   foodComfort,
   foodPotential,
   homeCapacity,
+  homeFor,
+  inputRoom,
   isClaimed,
-  nearestStore,
   preparedFood,
   releaseClaim,
-  storageCapacity,
-  storageFree,
+  roomIn,
+  sourceOf,
+  totalOf,
   withdraw,
   xpOf,
 } from './state';
@@ -68,6 +71,7 @@ import {
   TREE_REGROW,
   findFishingSpot,
   findNode,
+  findRockFace,
   isWalkable,
   rockInRange,
   spotYield,
@@ -91,8 +95,6 @@ import {
 } from './founding';
 
 const BASE_SPEED = 1.15; // tiles per second on plain grass
-const INPUT_CAP = 14;
-const OUTPUT_CAP = 14;
 const CHOP_SECONDS = 4.5;
 const CHOP_YIELD = 3;
 const PLANT_SECONDS = 3.5;
@@ -104,54 +106,68 @@ const PLOT_GROW_SECONDS = 200;
 const SEASON_GROWTH: Record<string, number> = { spring: 1.1, summer: 1.3, autumn: 0.9, winter: 0.35 };
 
 /**
- * True when there is plenty of this already. Specialists then go and do
- * something else instead of burying the kingdom under the same material —
- * production slows rather than jamming, which is the whole idea.
+ * True when the kingdom has enough of this already and the people who make it
+ * should go and be useful elsewhere. Production slows rather than jamming,
+ * which is the whole idea.
  *
- * Two rules, because there are two different questions. Anything that is only
- * ever *stored* is measured against the barn: past a third of it, stop. Food is
- * measured against the people who eat it, which is a different question and the
- * only one worth asking about supper — a kingdom of four with two hundred
- * meals put by has not achieved anything a kingdom of four with forty has not,
- * and the barn had nothing to do with it. The whole chain looks at the same
- * figure, so the cooks easing off does not simply move the pile upstream to the
- * millers.
+ * This is now *only* about food, and that is the point of the redesign. There
+ * used to be a second rule — stop once one material is past a third of the
+ * shared store — and it existed to keep a woodcutter from crowding the supper
+ * out of a pool they were both in. There is no shared pool: wood at its ceiling
+ * says nothing whatever about the larder, so the only reason left to stop is
+ * that the compartment in front of you is full, which is a question about a
+ * particular building and is asked where the trip is planned.
+ *
+ * Food stays, because food was never measured against the barn: a kingdom of
+ * four with two hundred meals put by has achieved nothing a kingdom of four
+ * with forty has not. It is a desired reserve rather than a ceiling, and the
+ * kitchen's panel is careful to say so.
  */
-function glutOf(g: GameState, res: ResourceId): boolean {
-  if (FOOD_CHAIN_VALUE[res] !== undefined) {
-    const comfort = foodComfort(g);
-    if (PREPARED_FOODS.includes(res)) {
-      // Cooked food is judged on its own, and *only* on its own. Measuring it
-      // against the whole pipeline instead stops the cooks for having too much
-      // to cook, which is the one job that would have fixed it: seed 12345 came
-      // out of a twenty-three-day run with seventy raw fish, eighty wheat, no
-      // supper at all and nineteen people going hungry in front of it.
-      if (preparedFood(g) >= comfort) return true;
-    } else if (foodPotential(g) >= comfort * FOOD_CHAIN_HEADROOM) {
-      // Ingredients look at the whole chain, counting what each will be worth
-      // on a plate, so the farmers and the fishers ease off together and the
-      // cooks easing off does not simply move the pile one step upstream.
-      return true;
-    }
+function foodGlut(g: GameState, res: ResourceId): boolean {
+  if (FOOD_CHAIN_VALUE[res] === undefined) return false;
+  const comfort = foodComfort(g);
+  if (PREPARED_FOODS.includes(res)) {
+    // Cooked food is judged on its own, and *only* on its own. Measuring it
+    // against the whole pipeline instead stops the cooks for having too much
+    // to cook, which is the one job that would have fixed it: seed 12345 came
+    // out of a twenty-three-day run with seventy raw fish, eighty wheat, no
+    // supper at all and nineteen people going hungry in front of it.
+    return preparedFood(g) >= comfort;
   }
-  const cap = storageCapacity(g);
-  if (cap <= 0) return false;
-  return g.stock[res] > cap * 0.35;
+  // Everything else looks along the chain from its own step, counting what each
+  // thing will be worth on a plate. For the farmers and the fishers that is the
+  // whole chain, so they ease off together and the cooks stopping does not
+  // simply move the pile one step upstream. For the miller it is flour and what
+  // flour becomes, and *not* the sheaves in the barn: grinding does not add
+  // food, it moves food along, and a mill closed by the wheat it would have
+  // ground is a mill that can never open again.
+  return foodPotential(g, FOOD_CHAIN_STAGE[res] ?? 0) >= comfort * FOOD_CHAIN_HEADROOM;
 }
 
 /**
- * Says once, quietly, that the stores are full. Work does not stop dead — the
- * kingdom simply gathers no more of what it cannot put anywhere — but without
- * a word the player just sees their woodcutters wander off for no reason.
+ * Says once, quietly, that there is nowhere left to put a particular thing —
+ * and where. Work does not stop dead; the kingdom simply gathers no more of
+ * what it cannot put anywhere, and without a word the player just sees their
+ * woodcutters wander off for no reason.
+ *
+ * Per resource and per building on purpose. "Storage is full" was true of a
+ * kingdom-wide pool and is meaningless now: the useful sentence names the
+ * material and the place, because between them they are the whole of what the
+ * player would have to change.
  */
-function noticeStoreFull(g: GameState): void {
-  if (g.storeFullNotice > 0) return;
-  g.storeFullNotice = 900;
-  toast(g, 'The stores are full — nobody is gathering more for now', '📦', 'warn');
+function noticeFull(g: GameState, res: ResourceId, where: Building | null): void {
+  if ((g.fullNotice[res] ?? 0) > 0) return;
+  g.fullNotice[res] = 900;
+  const what = RESOURCE_META[res].name.toLowerCase();
+  const at = where ? `The ${buildingName(where.def, where.level).toLowerCase()}’s ${what} storage is full` : `Nowhere to put ${what}`;
+  toast(g, `${at} — nobody is gathering more for now`, '📦', 'warn');
 }
 
 export function updateVillagers(g: GameState, dt: number): void {
-  g.storeFullNotice = Math.max(0, g.storeFullNotice - dt);
+  for (const k in g.fullNotice) {
+    const res = k as ResourceId;
+    g.fullNotice[res] = Math.max(0, (g.fullNotice[res] ?? 0) - dt);
+  }
   for (const v of g.villagers) updateVillager(g, v, dt);
   growCrops(g, dt);
   sweepDepletedNodes(g);
@@ -405,16 +421,21 @@ function checkMastery(g: GameState, v: Villager, job?: JobId): void {
 }
 
 function doTake(g: GameState, v: Villager, step: Extract<Step, { t: 'take' }>): void {
+  // Picking up a second thing while already holding a first. Nothing plans it,
+  // but an abandoned plan can leave somebody holding something, and the load
+  // they have has to have somewhere to go before this one is picked up — a
+  // villager's arms are the one place in the kingdom goods could vanish from.
+  const swapping = v.carrying && v.carrying.res !== step.res ? v.carrying : null;
+  const swapTo = swapping ? homeFor(g, swapping.res, v.x, v.y) : null;
+  if (swapping && !swapTo) return;
+
   let got = 0;
   if (step.from === 'store') {
-    got = withdraw(g, step.res, step.qty);
-  } else if (step.from === 'building') {
+    // Always a particular building. The walk to it is already in the plan; if it
+    // has gone away in the meantime this simply comes up empty and the planner
+    // has another think, which is what it does about every other disappointment.
     const b = buildingById(g, step.id ?? 0);
-    if (b) {
-      const have = b.output[step.res] ?? 0;
-      got = Math.min(have, step.qty);
-      b.output[step.res] = have - got;
-    }
+    if (b) got = withdraw(g, b, step.res, step.qty);
   } else {
     const t = tileAt(g, step.x ?? Math.round(v.x), step.y ?? Math.round(v.y));
     if (t) {
@@ -424,9 +445,9 @@ function doTake(g: GameState, v: Villager, step: Extract<Step, { t: 'take' }>): 
   }
   if (got <= 0) return;
   if (v.carrying && v.carrying.res === step.res) v.carrying.qty += got;
-  else if (!v.carrying) v.carrying = { res: step.res, qty: got };
+  else if (!swapping) v.carrying = { res: step.res, qty: got };
   else {
-    deliver(g, v.carrying.res, v.carrying.qty);
+    deliver(g, swapTo!, swapping.res, swapping.qty);
     v.carrying = { res: step.res, qty: got };
   }
 }
@@ -442,20 +463,20 @@ function doGive(g: GameState, v: Villager, step: Extract<Step, { t: 'give' }>): 
   v.carrying.qty -= qty;
   if (v.carrying.qty <= 0) v.carrying = null;
 
-  if (step.to === 'store') {
-    deliver(g, res, qty);
-    return;
-  }
   const b = buildingById(g, step.id ?? 0);
   if (!b) {
     // The building went away mid-walk. Keep hold of the load and re-decide;
-    // handing it to a store is not always possible, and never during founding.
+    // there is no pool to hand it to, and there never was during founding.
     if (v.carrying && v.carrying.res === res) v.carrying.qty += qty;
     else v.carrying = { res, qty };
     return;
   }
   if (step.to === 'site') b.delivered[res] = (b.delivered[res] ?? 0) + qty;
-  else b.input[res] = (b.input[res] ?? 0) + qty;
+  else if (step.to === 'input') b.input[res] = (b.input[res] ?? 0) + qty;
+  // Storage, and this is the one that must never refuse: the planner will not
+  // give a new plan to anybody still holding goods, so a full compartment
+  // turning a delivery away leaves somebody walking to it and back for ever.
+  else deliver(g, b, res, qty);
 }
 
 function doEffect(g: GameState, v: Villager, step: Extract<Step, { t: 'effect' }>): void {
@@ -532,10 +553,14 @@ function doEffect(g: GameState, v: Villager, step: Extract<Step, { t: 'effect' }
       const res = step.res;
       if (!b || !res) break;
       const got = MINE_YIELD[res] ?? 2;
-      b.output[res] = (b.output[res] ?? 0) + got;
+      // Into the miner's arms, at the face, to be carried back to the mine. It
+      // used to appear on a shelf inside the building the miner was standing
+      // in, which was the same number arriving without anybody moving.
+      if (v.carrying && v.carrying.res === res) v.carrying.qty += got;
+      else if (!v.carrying) v.carrying = { res, qty: got };
       // Only stone is counted, and only because the mine's own improvements ask
       // for it. It has to be an accomplishment rather than a stock level: what
-      // is in the store goes down again the moment anybody builds a cabin.
+      // is in storage goes down again the moment anybody builds a cabin.
       if (res === 'stone') g.stats.mined += got;
       if (res === 'ironOre' && !g.unlocked.has('seen:ironOre')) {
         g.unlocked.add('seen:ironOre');
@@ -556,18 +581,18 @@ function doEffect(g: GameState, v: Villager, step: Extract<Step, { t: 'effect' }
       // and the one it started is the one that has to be paid for.
       const recipe = recipeFor(b, step.res);
       if (!recipe) break;
+      if (!hasInputs(b, recipe)) return;
       for (const k in recipe.inputs) {
         const res = k as ResourceId;
-        if ((b.input[res] ?? 0) < (recipe.inputs[res] ?? 0)) return;
-      }
-      for (const k in recipe.inputs) {
-        const res = k as ResourceId;
-        b.input[res] = (b.input[res] ?? 0) - (recipe.inputs[res] ?? 0);
+        spendInput(b, res, recipe.inputs[res] ?? 0);
       }
       for (const k in recipe.outputs) {
         const res = k as ResourceId;
         const made = recipe.outputs[res] ?? 0;
-        b.output[res] = (b.output[res] ?? 0) + made;
+        // Straight into the building's own storage. This is where it lives now:
+        // bread is at the kitchen and bars are at the forge, and nobody carries
+        // either anywhere unless they are about to use it.
+        deliver(g, b, res, made);
         if (res === 'bread') {
           if (g.stats.baked === 0) {
             journal(g, `${v.name} baked the kingdom's first bread.`, '🍞');
@@ -872,13 +897,14 @@ function think(g: GameState, v: Villager): void {
   // put anything down yet, so the wood stays in their arms and pays for the
   // Base Camp directly. The exception ends with the camp.
   if (v.carrying && !isFounder(g, v)) {
-    const store = nearestStore(g, v.x, v.y);
-    if (store) {
-      planWalkTo(g, v, store, [{ t: 'give', to: 'store' }]);
+    const home = homeFor(g, v.carrying.res, v.x, v.y);
+    if (home) {
+      planWalkTo(g, v, home, [{ t: 'give', to: 'store', id: home.id }]);
       if (v.plan.length) return;
     }
-    deliver(g, v.carrying.res, v.carrying.qty);
-    v.carrying = null;
+    // Nowhere in the kingdom with room, or nowhere they can reach. They keep
+    // hold of it rather than setting it down in a field: goods do not leave the
+    // map, and a compartment somewhere will have space again shortly.
   }
 
   if (!buildingById(g, v.home)) assignHome(g, v);
@@ -1065,23 +1091,30 @@ function planSleep(g: GameState, v: Villager): boolean {
 }
 
 /**
- * Supper. They walk to the store, take the one they like if it is there, and
- * take the other one perfectly happily if it is not — a preference is a thing
- * to notice about somebody, not a demand the kitchen has to meet.
+ * Supper, and where it is. Meals live at the kitchen, so this is a walk to the
+ * kitchen — which is most of what makes where the kitchen goes a decision.
+ *
+ * They take the one they like if it is there and the other one perfectly
+ * happily if it is not: a preference is a thing to notice about somebody, not a
+ * demand the kitchen has to meet. Both branches ask the same question of the
+ * same building, so a kingdom living on fish eats exactly as easily as one
+ * living on bread.
  */
-function mealFor(g: GameState, v: Villager): ResourceId | null {
-  if (g.stock[v.favoriteFood] >= 1) return v.favoriteFood;
-  for (const res of PREPARED_FOODS) if (g.stock[res] >= 1) return res;
+function mealFor(g: GameState, v: Villager): { res: ResourceId; at: Building } | null {
+  const own = sourceOf(g, v.favoriteFood, v.x, v.y);
+  if (own) return { res: v.favoriteFood, at: own };
+  for (const res of PREPARED_FOODS) {
+    const at = sourceOf(g, res, v.x, v.y);
+    if (at) return { res, at };
+  }
   return null;
 }
 
 function planEat(g: GameState, v: Villager, extra: boolean): boolean {
-  const store = nearestStore(g, v.x, v.y);
-  if (!store) return false;
   const meal = mealFor(g, v);
   if (!meal) return false;
-  planWalkTo(g, v, store, [
-    { t: 'take', res: meal, qty: 1, from: 'store' },
+  planWalkTo(g, v, meal.at, [
+    { t: 'take', res: meal.res, qty: 1, from: 'store', id: meal.at.id },
     { t: 'act', dur: 7, kind: 'eating' },
     { t: 'effect', kind: 'eat', extra },
   ]);
@@ -1115,11 +1148,12 @@ function planWork(g: GameState, v: Villager): boolean {
   return planGeneralWork(g, v);
 }
 
-function storeLeg(g: GameState, store: Building): Step[] {
-  const def = BUILDINGS[store.def];
+/** The walk home with a load, to the building that keeps this sort of thing. */
+function homeLeg(g: GameState, home: Building): Step[] {
+  const def = BUILDINGS[home.def];
   return [
-    { t: 'move', x: store.x, y: store.y, goals: footprintApproach(g, store.x, store.y, def.w, def.h) },
-    { t: 'give', to: 'store' },
+    { t: 'move', x: home.x, y: home.y, goals: footprintApproach(g, home.x, home.y, def.w, def.h) },
+    { t: 'give', to: 'store', id: home.id },
   ];
 }
 
@@ -1132,12 +1166,14 @@ function storeLeg(g: GameState, store: Building): Step[] {
  * ever running out of stone.
  */
 function planHarvestTrees(g: GameState, v: Villager, workplace: Building): boolean {
-  if (storageFree(g) < 4) {
-    noticeStoreFull(g);
-    return planLeisureFallback(g, v, 'Nowhere to put it.');
+  // The woodpile is the lodge's own, so this is a question about *this*
+  // building rather than about the kingdom: a full lodge is a lodge whose
+  // people go and help elsewhere, and the larder is not involved either way.
+  const home = homeFor(g, 'wood', workplace.x, workplace.y);
+  if (!home || roomIn(home, 'wood') < CHOP_YIELD) {
+    noticeFull(g, 'wood', home ?? workplace);
+    return planGeneralWork(g, v);
   }
-  // Plenty of this already: lend a hand elsewhere rather than filling the barn.
-  if (glutOf(g, 'wood')) return planGeneralWork(g, v);
 
   // The reach drawn on the map when this was placed is the reach used here.
   const reach = rangeOf(workplace.def, workplace.level);
@@ -1155,8 +1191,7 @@ function planHarvestTrees(g: GameState, v: Villager, workplace: Building): boole
     steps.push({ t: 'act', dur: CHOP_SECONDS, kind: 'gathering', xp: 'woodcutter' });
     steps.push({ t: 'take', res: 'wood', qty: CHOP_YIELD, from: 'tile', x: node.x, y: node.y });
   }
-  const store = nearestStore(g, node.x, node.y);
-  if (store) steps.push(...storeLeg(g, store));
+  steps.push(...homeLeg(g, home));
   v.plan = steps;
   return true;
 }
@@ -1179,12 +1214,13 @@ function planHarvestTrees(g: GameState, v: Villager, workplace: Building): boole
  * else instead of standing in the same reeds.
  */
 function planFish(g: GameState, v: Villager, hut: Building): boolean {
-  if (storageFree(g) < 4) {
-    noticeStoreFull(g);
-    return planLeisureFallback(g, v, 'Nowhere to put it.');
+  // Enough meals in the kingdom already, counting everything upstream: go and
+  // be useful elsewhere. This is a judgement about mouths, not about shelf room.
+  if (foodGlut(g, 'fish')) return planGeneralWork(g, v);
+  if (roomIn(hut, 'fish') < FISH_YIELD) {
+    noticeFull(g, 'fish', hut);
+    return planGeneralWork(g, v);
   }
-  // Enough fish about already, or enough supper: go and be useful elsewhere.
-  if (glutOf(g, 'fish')) return planGeneralWork(g, v);
 
   const reach = rangeOf(hut.def, hut.level);
   const c = buildingCentre(hut);
@@ -1211,8 +1247,9 @@ function planFish(g: GameState, v: Villager, hut: Building): boolean {
     });
     steps.push({ t: 'effect', kind: 'catch', x: spot.x, y: spot.y });
   }
-  const store = nearestStore(g, spot.x, spot.y);
-  if (store) steps.push(...storeLeg(g, store));
+  // Back to the hut, which is where the kingdom's fish is kept and where the
+  // cooks come for it.
+  steps.push(...homeLeg(g, hut));
   v.plan = steps;
   return true;
 }
@@ -1249,47 +1286,34 @@ function faceToward(from: { x: number; y: number }, to: { x: number; y: number }
 // The mine
 // ---------------------------------------------------------------------------
 
-/** Everything sitting on a building's output shelf, whatever it is. */
-function shelfTotal(b: Building): number {
-  let n = 0;
-  for (const k in b.output) n += b.output[k as ResourceId] ?? 0;
-  return n;
-}
-
-/** The largest single thing on the shelf, which is what a trip to the store takes. */
-function biggestOnShelf(b: Building): { res: ResourceId; qty: number } | null {
-  let best: { res: ResourceId; qty: number } | null = null;
-  for (const k in b.output) {
-    const res = k as ResourceId;
-    const qty = b.output[res] ?? 0;
-    if (qty > 0 && (!best || qty > best.qty)) best = { res, qty };
-  }
-  return best;
-}
-
 /**
  * What this mine's people are getting out today.
  *
- * A focus is a preference, not an instruction that can fail. If the kingdom
- * already has more of the favoured material than it can sensibly store, the mine
- * quietly works on something else rather than stopping — the same
- * nothing-is-ever-punishing rule the rest of the game runs on. Balanced means
- * "whatever we are shortest of", measured against `BALANCE_TARGET` rather than
- * against each other, because a kingdom wants far more stone than it does ore.
+ * A focus is a preference, not an instruction that can fail. If the favoured
+ * material has nowhere left to go the mine quietly works on something else
+ * rather than stopping — the same nothing-is-ever-punishing rule the rest of
+ * the game runs on. Balanced means "whatever we are shortest of", measured
+ * against `BALANCE_TARGET` rather than against each other, because a kingdom
+ * wants far more stone than it does ore.
+ *
+ * What closes a material off is now this mine's own compartment being full, and
+ * nothing else. Each material has its own, so a Deep Mine with nowhere to put
+ * stone carries on cutting ore — which used to be impossible, because the one
+ * shared pool being full stopped everything at once.
  *
  * Mithril is filtered out unconditionally. The level that would list it cannot
  * be reached, and this is the second lock on that.
  */
 function chooseExtraction(g: GameState, b: Building): ResourceId | null {
   const all: ResourceId[] = extractsOf(b.def, b.level).filter((r) => r !== 'mithrilOre');
-  const open = all.filter((r) => !glutOf(g, r));
+  const open = all.filter((r) => roomIn(b, r) >= (MINE_YIELD[r] ?? 2));
   if (open.length === 0) return null;
   const focus = b.focus;
   if (focus && focus !== 'balanced' && open.includes(focus as ResourceId)) return focus as ResourceId;
   let best = open[0];
   let bestShare = Infinity;
   for (const res of open) {
-    const share = g.stock[res] / (BALANCE_TARGET[res] ?? 100);
+    const share = totalOf(g, res) / (BALANCE_TARGET[res] ?? 100);
     if (share < bestShare) {
       bestShare = share;
       best = res;
@@ -1299,43 +1323,55 @@ function chooseExtraction(g: GameState, b: Building): ResourceId | null {
 }
 
 /**
- * Miners: a stint at the rock face, then the load down to the store.
+ * Miners: out to a face in the rock, a stint at it, and the load carried back
+ * to the mine — which is where everything the mine brings up is kept.
  *
- * There is no node to walk to and nothing to claim, because the seam is the
- * ground the building stands on — the work happens at the mine and the only
- * thing the site decides is how fast, through how much rock is inside its reach.
- * The trip to the store is still a walk somebody makes, so the material still
- * arrives in the kingdom by being carried there.
+ * There is still no node and nothing is consumed: the face is a *place to
+ * stand*, not a resource, and the seam under it does not run out. What the site
+ * decides is only how fast, through how much rock is inside its reach. The walk
+ * exists because the material has to arrive in the kingdom by somebody carrying
+ * it — a miner who never left the footprint was a building that produced stone
+ * out of the air, which is the one thing this economy does not do.
+ *
+ * The face is claimed for the trip so two miners do not stand in the same spot.
+ * A mine hemmed in so completely that no rocky tile in reach can be walked on
+ * falls back to working at the building, which is what every mine used to do.
  */
 function planExtract(g: GameState, v: Villager, mine: Building): boolean {
-  const store = nearestStore(g, mine.x, mine.y);
-  const shelf = shelfTotal(mine);
   const res = chooseExtraction(g, mine);
+  // Every compartment this mine has is full. Go and be useful; the rock keeps.
+  if (!res) {
+    noticeFull(g, extractsOf(mine.def, mine.level)[0] ?? 'stone', mine);
+    return planGeneralWork(g, v);
+  }
 
-  // Clear the shelf when it is worth a trip, or when there is nothing worth
-  // cutting — a full shelf must never be the reason a mine stands still.
-  const load = biggestOnShelf(mine);
-  if (store && load && storageFree(g) > 0 && (shelf >= CARRY_CAPACITY || !res || shelf >= OUTPUT_CAP)) {
+  const c = buildingCentre(mine);
+  const reach = rangeOf(mine.def, mine.level);
+  const rock = rockInRange(g, c.x, c.y, reach);
+  const dur = MINE_SECONDS / richnessMul(rock);
+  const face = findRockFace(g, c.x, c.y, reach);
+
+  if (!face) {
     planWalkTo(g, v, mine, [
-      { t: 'take', res: load.res, qty: Math.min(load.qty, CARRY_CAPACITY), from: 'building', id: mine.id },
-      ...storeLeg(g, store),
+      { t: 'act', dur, kind: 'gathering', xp: 'miner' },
+      { t: 'effect', kind: 'extract', id: mine.id, res },
+      { t: 'give', to: 'store', id: mine.id },
     ]);
     return true;
   }
 
-  if (storageFree(g) < 4) {
-    noticeStoreFull(g);
-    return planLeisureFallback(g, v, 'Nowhere to put it.');
+  claim(g, v, 'node', face.y * g.w + face.x, face.x, face.y);
+  // Two or three goes at the face before walking back, the same shape a
+  // woodcutter's trip has: enough that the walk is worth making, short enough
+  // that somebody can be pulled off to more urgent work between trips.
+  const goes = clamp(Math.floor(CARRY_CAPACITY / (MINE_YIELD[res] ?? 2)), 1, 3);
+  const steps: Step[] = [{ t: 'move', x: face.x, y: face.y, goals: [face] }];
+  for (let i = 0; i < goes; i++) {
+    steps.push({ t: 'act', dur, kind: 'gathering', xp: 'miner' });
+    steps.push({ t: 'effect', kind: 'extract', id: mine.id, res });
   }
-  // Everything this mine can reach is already piled high. Go and be useful.
-  if (!res) return planGeneralWork(g, v);
-
-  const c = buildingCentre(mine);
-  const rock = rockInRange(g, c.x, c.y, rangeOf(mine.def, mine.level));
-  planWalkTo(g, v, mine, [
-    { t: 'act', dur: MINE_SECONDS / richnessMul(rock), kind: 'gathering', xp: 'miner' },
-    { t: 'effect', kind: 'extract', id: mine.id, res },
-  ]);
+  steps.push(...homeLeg(g, mine));
+  v.plan = steps;
   return true;
 }
 
@@ -1375,8 +1411,8 @@ function planGatherNode(
   if (!node) return false;
   const goals = neighbours(g, node.x, node.y);
   if (goals.length === 0) return false;
-  const store = haul ? nearestStore(g, node.x, node.y) : null;
-  if (haul && !store) return false;
+  const home = haul ? homeFor(g, work.res, node.x, node.y) : null;
+  if (haul && !home) return false;
 
   claim(g, v, 'node', node.y * g.w + node.x, node.x, node.y);
   // Never swing at a node for longer than it has left in it, nor for more than
@@ -1389,7 +1425,7 @@ function planGatherNode(
     steps.push({ t: 'act', dur: work.seconds * (slow ? HAND_FELL_MUL : 1), kind: 'gathering', xp });
     steps.push({ t: 'take', res: work.res, qty: work.per, from: 'tile', x: node.x, y: node.y });
   }
-  if (store) steps.push(...storeLeg(g, store));
+  if (home) steps.push(...homeLeg(g, home));
   v.plan = steps;
   return true;
 }
@@ -1428,7 +1464,11 @@ function planFarm(g: GameState, v: Villager, farm: Building): boolean {
     }
   }
 
-  if (ripe >= 0 && storageFree(g) >= 4 && !glutOf(g, 'wheat')) {
+  // Reaping wants somewhere for the sheaves to go — the farm's own barn — and a
+  // kingdom that is not already sitting on more meals than it wants. Sowing is
+  // unconditional either way: a bare plot costs nothing to fill and the wheat
+  // will not be wanted for three minutes yet.
+  if (ripe >= 0 && roomIn(farm, 'wheat') >= HARVEST_YIELD && !foodGlut(g, 'wheat')) {
     const p = farm.plots[ripe];
     p.claimed = v.id;
     claim(g, v, 'plot', farm.id * 100 + ripe);
@@ -1448,8 +1488,9 @@ function planFarm(g: GameState, v: Villager, farm: Building): boolean {
         { t: 'effect', kind: 'reap', id: farm.id, slot: second },
       );
     }
-    const store = nearestStore(g, p.x, p.y);
-    if (store) steps.push(...storeLeg(g, store));
+    // Into the barn, which is where the kingdom's wheat lives and where the
+    // miller comes for it.
+    steps.push(...homeLeg(g, farm));
     v.plan = steps;
     return true;
   }
@@ -1485,14 +1526,34 @@ function recipeFor(b: Building, res?: ResourceId): Recipe | null {
   return list.find((r) => recipeOutput(r) === res) ?? null;
 }
 
-/** Everything for one batch is already on the workshop's own shelves. */
-function hasInputs(b: Building, r: Recipe): boolean {
-  return inputsOf(r).every((i) => (b.input[i.res] ?? 0) >= i.qty);
+/** What a workshop can lay hands on without going anywhere: bench plus its own storage. */
+function onHand(b: Building, res: ResourceId): number {
+  return (b.input[res] ?? 0) + (b.store[res] ?? 0);
 }
 
-/** The shelves plus the store between them could cover one batch. */
+/**
+ * Everything for one batch is already here.
+ *
+ * The storage half is what makes steel easy: iron bars are kept at the forge,
+ * so a smith making steel reaches for one off the stack rather than fetching it
+ * from a building that would have been the forge anyway.
+ */
+function hasInputs(b: Building, r: Recipe): boolean {
+  return inputsOf(r).every((i) => onHand(b, i.res) >= i.qty);
+}
+
+/** Bench first, then the building's own stack. */
+function spendInput(b: Building, res: ResourceId, qty: number): void {
+  const fromBench = Math.min(qty, b.input[res] ?? 0);
+  if (fromBench > 0) b.input[res] = (b.input[res] ?? 0) - fromBench;
+  const rest = qty - fromBench;
+  if (rest > 0) b.store[res] = Math.max(0, (b.store[res] ?? 0) - rest);
+}
+
+/** The kingdom has enough of every ingredient somewhere for one batch. */
 function couldSupply(g: GameState, b: Building, r: Recipe): boolean {
-  return inputsOf(r).every((i) => (b.input[i.res] ?? 0) + g.stock[i.res] >= i.qty);
+  void b;
+  return inputsOf(r).every((i) => totalOf(g, i.res) >= i.qty);
 }
 
 /**
@@ -1506,9 +1567,15 @@ function couldSupply(g: GameState, b: Building, r: Recipe): boolean {
  * the forge waits, which is what a forge with no ore should do.
  */
 function chooseRecipe(g: GameState, b: Building): Recipe | null {
-  const runnable = liveRecipesOf(b.def).filter(
-    (r) => !glutOf(g, recipeOutput(r)) && couldSupply(g, b, r),
-  );
+  const runnable = liveRecipesOf(b.def).filter((r) => {
+    const out = recipeOutput(r);
+    // Two separate reasons to stand down, and they answer different questions:
+    // there is nowhere to put another one, or there are already more meals in
+    // the kingdom than anybody wants. Only the first is about this building.
+    if (roomIn(b, out) < (r.outputs[out] ?? 1)) return false;
+    if (foodGlut(g, out)) return false;
+    return couldSupply(g, b, r);
+  });
   if (runnable.length === 0) return null;
   const focus = b.focus;
   if (focus && focus !== 'balanced') {
@@ -1522,7 +1589,7 @@ function chooseRecipe(g: GameState, b: Building): Recipe | null {
   let bestShare = Infinity;
   for (const r of pool) {
     const out = recipeOutput(r);
-    const share = g.stock[out] / (BALANCE_TARGET[out] ?? 100);
+    const share = totalOf(g, out) / (BALANCE_TARGET[out] ?? 100);
     if (share < bestShare) {
       bestShare = share;
       best = r;
@@ -1531,53 +1598,73 @@ function chooseRecipe(g: GameState, b: Building): Recipe | null {
   return best;
 }
 
-/** What this workshop is short of for a given recipe, and could fetch today. */
-function missingInput(g: GameState, b: Building, r: Recipe): { res: ResourceId; qty: number } | null {
+/**
+ * What this workshop is short of for a given recipe, how much of it to fetch,
+ * and — the new part — which building to fetch it from.
+ *
+ * There is no pool to draw on, so an errand is always a walk to a named place:
+ * the mill goes to the farm for wheat, the kitchen to the mill and the hut, the
+ * forge to the mine. That walk is the fetching half of the economy and is why
+ * where these buildings stand relative to one another now matters.
+ */
+function missingInput(
+  g: GameState,
+  b: Building,
+  r: Recipe,
+): { res: ResourceId; qty: number; from: Building } | null {
   for (const i of inputsOf(r)) {
-    const held = b.input[i.res] ?? 0;
-    if (held >= i.qty) continue;
-    if (g.stock[i.res] <= 0) continue;
-    return { res: i.res, qty: Math.min(CARRY_CAPACITY, g.stock[i.res], Math.max(i.qty, INPUT_CAP) - held) };
+    if (onHand(b, i.res) >= i.qty) continue;
+    const from = sourceOf(g, i.res, b.x, b.y);
+    // Never fetch from yourself: `hasInputs` already counts what is here.
+    if (!from || from.id === b.id) continue;
+    const want = Math.min(
+      CARRY_CAPACITY,
+      from.store[i.res] ?? 0,
+      // Top the bench up rather than fetching exactly one batch, so the walk is
+      // worth making — but never past what the bench holds.
+      Math.max(i.qty - (b.input[i.res] ?? 0), inputRoom(b, i.res)),
+    );
+    if (want <= 0) continue;
+    return { res: i.res, qty: want, from };
   }
   return null;
 }
 
-/** Millers, bakers and smiths: run a batch, clear the shelf, or fetch what they lack. */
+/** The errand `missingInput` describes, as steps. */
+function fetchLeg(g: GameState, b: Building, want: { res: ResourceId; qty: number; from: Building }): Step[] {
+  const fdef = BUILDINGS[want.from.def];
+  return [
+    { t: 'move', x: want.from.x, y: want.from.y, goals: footprintApproach(g, want.from.x, want.from.y, fdef.w, fdef.h) },
+    { t: 'take', res: want.res, qty: want.qty, from: 'store', id: want.from.id },
+    approachSteps(g, b),
+    { t: 'give', to: 'input', id: b.id },
+  ];
+}
+
+/**
+ * Millers, bakers and smiths: run a batch, or go and fetch what they lack.
+ *
+ * There is no third case any more. A workshop used to spend a good deal of its
+ * time carrying its own output away to a barn; now what it makes is already
+ * where it lives, so the only journeys left are the ones that fetch — which is
+ * the half of the walking that was ever telling you anything.
+ *
+ * A workshop is still as capable of burying the kingdom as a woodcutter is, and
+ * `chooseRecipe` is where that is stopped: nowhere to put another loaf, or more
+ * meals in the kingdom than anybody wants, and the cooks go and be useful.
+ */
 function planProduce(g: GameState, v: Villager, b: Building): boolean {
   const def = BUILDINGS[b.def];
   if (liveRecipesOf(b.def).length === 0) return planGeneralWork(g, v);
 
-  const store = nearestStore(g, b.x, b.y);
-  // A workshop is as capable of burying the kingdom as a woodcutter is, and for
-  // a while nothing stopped one: a mill with wheat coming in and no bakery yet
-  // built ground every last sheaf into flour, filled the store with it, and
-  // left everybody else — the miners who would have cut the stone the bakery
-  // was waiting on — with nowhere to put anything down. The rule is the same one
-  // the gatherers follow: past a third of the whole store, go and be useful
-  // elsewhere. `chooseRecipe` is where that happens; clearing the shelf below is
-  // deliberately left running, so a workshop that has already made the stuff
-  // still gets it carried off.
   const recipe = chooseRecipe(g, b);
-  const shelf = shelfTotal(b);
-  const load = biggestOnShelf(b);
-
-  // Clear the output shelf before it jams the workshop.
-  if (
-    store &&
-    load &&
-    storageFree(g) > 0 &&
-    (shelf >= CARRY_CAPACITY || shelf >= OUTPUT_CAP || !recipe || !hasInputs(b, recipe))
-  ) {
-    planWalkTo(g, v, b, [
-      { t: 'take', res: load.res, qty: Math.min(load.qty, CARRY_CAPACITY), from: 'building', id: b.id },
-      ...storeLeg(g, store),
-    ]);
-    return true;
+  if (!recipe) {
+    const out = liveRecipesOf(b.def).map(recipeOutput).find((r) => roomIn(b, r) <= 0);
+    if (out) noticeFull(g, out, b);
+    return planGeneralWork(g, v);
   }
 
-  if (!recipe) return planGeneralWork(g, v);
-
-  if (hasInputs(b, recipe) && shelf < OUTPUT_CAP) {
+  if (hasInputs(b, recipe)) {
     planWalkTo(g, v, b, [
       { t: 'act', dur: recipe.seconds, kind: def.job === 'cook' ? 'cooking' : 'working', xp: def.job },
       { t: 'effect', kind: 'batch', id: b.id, res: recipeOutput(recipe) },
@@ -1585,16 +1672,11 @@ function planProduce(g: GameState, v: Villager, b: Building): boolean {
     return true;
   }
 
-  // Fetch raw materials personally rather than waiting for somebody else to notice.
-  const want = store ? missingInput(g, b, recipe) : null;
-  if (store && want) {
-    const sdef = BUILDINGS[store.def];
-    v.plan = [
-      { t: 'move', x: store.x, y: store.y, goals: footprintApproach(g, store.x, store.y, sdef.w, sdef.h) },
-      { t: 'take', res: want.res, qty: want.qty, from: 'store' },
-      approachSteps(g, b),
-      { t: 'give', to: 'building', id: b.id },
-    ];
+  // Fetch raw materials personally rather than waiting for somebody else to
+  // notice — and from the building that keeps them, which is a real walk.
+  const want = missingInput(g, b, recipe);
+  if (want) {
+    v.plan = fetchLeg(g, b, want);
     return true;
   }
 
@@ -1603,28 +1685,34 @@ function planProduce(g: GameState, v: Villager, b: Building): boolean {
 
 /**
  * Everything nobody else is doing, in rough order of urgency: supply the sites,
- * build them, restock the workshops, clear the finished goods, and only then —
- * and only below the reserve — go and fell a tree.
+ * build them, restock the workshops, and only then — and only below the reserve
+ * — go and fell a tree.
+ *
+ * There used to be a fourth rung, clearing finished goods off a workshop's
+ * shelf into a barn. It is gone because the shelf is the barn: what a building
+ * makes is kept where it was made, so there is nothing to move and nobody to
+ * move it. Nothing replaced it, and the ladder is shorter for it.
  *
  * This is the General Worker's whole trade, and every specialist falls through
  * to it the moment their own work has nothing in it.
  */
 function planGeneralWork(g: GameState, v: Villager): boolean {
-  // 1. Construction sites short of materials.
+  // 1. Construction sites short of materials, fetched from wherever the kingdom
+  //    keeps that material — the lodge for wood, the mine for stone.
   for (const b of g.buildings) {
     if (b.stage !== 'building') continue;
     const missing = missingMaterials(b);
     if (!missing) continue;
     if (isClaimed(g, 'supply', b.id, v.id)) continue;
-    const store = nearestStore(g, b.x, b.y);
-    if (!store) continue;
-    const qty = Math.min(CARRY_CAPACITY, missing.qty, g.stock[missing.res]);
+    const from = sourceOf(g, missing.res, b.x, b.y);
+    if (!from) continue;
+    const qty = Math.min(CARRY_CAPACITY, missing.qty, from.store[missing.res] ?? 0);
     if (qty <= 0) continue;
     claim(g, v, 'supply', b.id);
-    const sdef = BUILDINGS[store.def];
+    const sdef = BUILDINGS[from.def];
     v.plan = [
-      { t: 'move', x: store.x, y: store.y, goals: footprintApproach(g, store.x, store.y, sdef.w, sdef.h) },
-      { t: 'take', res: missing.res, qty, from: 'store' },
+      { t: 'move', x: from.x, y: from.y, goals: footprintApproach(g, from.x, from.y, sdef.w, sdef.h) },
+      { t: 'take', res: missing.res, qty, from: 'store', id: from.id },
       approachSteps(g, b),
       { t: 'give', to: 'site', id: b.id },
     ];
@@ -1655,45 +1743,18 @@ function planGeneralWork(g: GameState, v: Villager): boolean {
     const want = missingInput(g, b, recipe);
     if (!want || want.qty < 2) continue;
     if (isClaimed(g, 'restock', b.id, v.id)) continue;
-    const store = nearestStore(g, b.x, b.y);
-    if (!store) continue;
     claim(g, v, 'restock', b.id);
-    const sdef = BUILDINGS[store.def];
-    v.plan = [
-      { t: 'move', x: store.x, y: store.y, goals: footprintApproach(g, store.x, store.y, sdef.w, sdef.h) },
-      { t: 'take', res: want.res, qty: want.qty, from: 'store' },
-      approachSteps(g, b),
-      { t: 'give', to: 'building', id: b.id },
-    ];
+    v.plan = fetchLeg(g, b, want);
     return true;
   }
 
-  // 4. Anywhere with finished goods piling up — a workshop's shelf or a mine's.
-  for (const b of g.buildings) {
-    if (b.stage !== 'done') continue;
-    if (outputsOf(b.def, b.level).length === 0) continue;
-    const load = biggestOnShelf(b);
-    if (!load || load.qty < 4 || storageFree(g) < 2) continue;
-    if (isClaimed(g, 'collect', b.id, v.id)) continue;
-    const store = nearestStore(g, b.x, b.y);
-    if (!store) continue;
-    claim(g, v, 'collect', b.id);
-    v.plan = [
-      approachSteps(g, b),
-      { t: 'take', res: load.res, qty: Math.min(load.qty, CARRY_CAPACITY), from: 'building', id: b.id },
-      ...storeLeg(g, store),
-    ];
-    return true;
-  }
-
-  // 5. Fell a tree, and only to keep the reserve up. Wood is the only thing
+  // 4. Fell a tree, and only to keep the reserve up. Wood is the only thing
   //    hands alone can fetch — stone comes out of a quarry or it does not come
   //    at all — and this is emergency stock rather than a supply: enough that a
   //    kingdom with no lodge, or a lodge nobody is standing in, can always dig
   //    itself out, and never enough to build an economy on. That is the
   //    woodcutter's job, and it is the reason to have one.
-  if (storageFree(g) < 6) noticeStoreFull(g);
-  else if (g.stock.wood < WOOD_RESERVE && planGatherWood(g, v, 'general')) return true;
+  if (totalOf(g, 'wood') < WOOD_RESERVE && planGatherWood(g, v, 'general')) return true;
 
   return false;
 }
@@ -1759,12 +1820,6 @@ export function planArrivalWelcome(g: GameState, v: Villager): void {
     { t: 'say', text: 'Room for one more?' },
     { t: 'act', dur: rng.range(10, 18), kind: 'watching' },
   ]);
-}
-
-function planLeisureFallback(g: GameState, v: Villager, line: string): boolean {
-  speak(v, line);
-  planLeisure(g, v);
-  return true;
 }
 
 /**

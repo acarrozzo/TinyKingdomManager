@@ -104,7 +104,6 @@ body {
 #ui button,
 #ui .vwrap,
 #ui .res,
-#ui .storage,
 #ui h3,
 #ui .label {
   user-select: none;
@@ -217,18 +216,18 @@ body {
 }
 
 /*
- * While the kingdom is being founded there is no shared store and nothing in
- * it: the founder is carrying the only wood there is. Showing "Store 0/0" and a
- * row of zeroed resources would be describing a pool that does not exist yet,
- * so the store and the chips wait until the Base Camp is finished. What the
- * founder is carrying is said in the goals panel instead, and drawn on the map.
+ * While the kingdom is being founded there is nowhere to keep anything: the
+ * founder is carrying the only wood there is, and the camp's woodpile does not
+ * exist until they have built it. A row of resources reading "0 / 0" would be
+ * describing storage that is not there yet, so the chips wait for the Base
+ * Camp. What the founder is carrying is said in the goals panel instead, and
+ * drawn on the map.
  *
  * The people-and-Vibes pill stays up: one person and one bed is a true thing to
  * say about a kingdom that is still being founded, and it is the pill that
  * answers "when does anybody else turn up".
  */
-#ui.founding .stripwrap,
-#ui.founding .store-pill {
+#ui.founding .stripwrap {
   display: none;
 }
 
@@ -306,6 +305,14 @@ body {
 .res.locked {
   display: none;
 }
+/*
+ * Nowhere left to put this one. The chip is the only place a full compartment
+ * shows without opening anything, and since each resource has its own it is
+ * the only place it *can* show — there is no kingdom-wide meter to turn amber.
+ */
+.res.full .val {
+  color: var(--warn);
+}
 .res + .res::before {
   content: "";
   width: 1px;
@@ -363,27 +370,6 @@ body {
   margin: 0 1px;
 }
 
-.storage {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 12px;
-  color: var(--dim);
-}
-.pill:hover .storage {
-  color: var(--ink);
-}
-/* Said in words as well as in the length of a bar, and only when it matters. */
-.storage .state {
-  display: none;
-}
-.storage .state.on {
-  display: inline;
-  color: var(--warn);
-  font-weight: 600;
-}
-
 /* Hover detail for the top bar. Scoped under #ui so it outranks
    `#ui > * { pointer-events: auto }` — a tooltip that swallows clicks on the
    thing it describes is worse than no tooltip. */
@@ -409,8 +395,6 @@ body {
   pointer-events: none;
 }
 #ui .res:hover .tip,
-#ui .storage:hover .tip,
-#ui .pill:hover .storage .tip,
 #ui .pop-pill:hover .tip {
   display: flex;
 }
@@ -890,7 +874,7 @@ button {
 }
 /* How many of this kind stand, out of how many the commons currently allows.
    Shown whether or not the kingdom is at the ceiling: knowing there is room for
-   one more storehouse is as much a part of planning as being told there is not. */
+   one more cabin is as much a part of planning as being told there is not. */
 .build-item .tally {
   display: inline-block;
   margin-right: 9px;
@@ -2215,14 +2199,15 @@ kbd {
   min-width: 0;
 }
 /*
- * Held upright there is not room for three pills and a clock across 390 pixels,
- * so the chips take a line of their own beneath the two that are each a single
- * number: people-and-Vibes, and the store. Sharing the line meant the strip —
- * the only thing in the row that can shrink — was squeezed down to a couple of
- * pixels while the store pill ran on underneath the clock. Which of the three
- * gives way is not a thing to leave to whichever numbers happen to be longest
- * today. Sideways there is width for all of it, and vertical space is the thing
- * in short supply, so the rule is by width rather than by `.compact`.
+ * Held upright there is not room for the chips and a clock across 390 pixels,
+ * so the chips take a line of their own beneath people-and-Vibes and the hour.
+ * Sharing the line meant the strip — the only thing in the row that can shrink
+ * — was squeezed down to a couple of pixels while the rest ran on underneath.
+ * Which gives way is not a thing to leave to whichever numbers happen to be
+ * longest today, and it matters more now that every chip carries its capacity
+ * as well as its amount. Sideways there is width for all of it, and vertical
+ * space is the thing in short supply, so this is by width rather than
+ * by `.compact`.
  */
 @media (max-width: 560px) {
   #ui.compact .stripwrap {
@@ -2234,7 +2219,6 @@ kbd {
 #ui.compact .res-strip::-webkit-scrollbar {
   display: none;
 }
-#ui.compact .store-pill,
 #ui.compact .clock-pill {
   flex-shrink: 0;
 }
@@ -2249,21 +2233,14 @@ kbd {
 #ui.compact .res .nm {
   display: none;
 }
-#ui.compact .res .val {
-  min-width: 13px;
-}
-#ui.compact .storage {
-  font-size: 11px;
-  gap: 5px;
-}
 /*
- * The bar is the first thing to go on a narrow strip: the two numbers beside
- * it say the same thing more precisely, and what has to survive is the word —
- * "Full" is the difference between a kingdom that has stalled and one that has
- * not, and a red bar alone is not a sentence.
+ * The chips carry "180/250" now, which is wider than "180" was and the reason
+ * the strip scrolls sooner on a phone than it used to. The names are already
+ * hidden here; the pair of numbers is what must not be, since on a small screen
+ * the strip is the only place the room shows at a glance.
  */
-#ui.compact .storage .bar {
-  display: none;
+#ui.compact .res .val {
+  min-width: 30px;
 }
 #ui.compact .clock .t {
   font-size: 12.5px;

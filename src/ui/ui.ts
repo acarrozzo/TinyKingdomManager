@@ -870,7 +870,7 @@ export class UI {
         body = peopleBody(this.game, this.env);
         break;
       case 'stores':
-        title = 'Stores';
+        title = 'Storage';
         body = storesBody(this.game);
         break;
       case 'population':

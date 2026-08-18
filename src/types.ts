@@ -46,6 +46,12 @@ export const RESOURCE_ORDER: ResourceId[] = [
  */
 export const PREPARED_FOODS: ResourceId[] = ['bread', 'cookedFish'];
 
+/**
+ * Every resource at once. There is no kingdom-wide pile any more — goods live in
+ * the buildings that made them — so this is only ever a *snapshot* somebody has
+ * added up: what the aggregate reads on the top bar, and what a harness prints.
+ * Nothing in the simulation stores one.
+ */
 export type Stock = Record<ResourceId, number>;
 
 export function emptyStock(): Stock {
@@ -138,7 +144,6 @@ export type TraitId =
 export type BuildingId =
   | 'commons'
   | 'cabin'
-  | 'storehouse'
   | 'lodge'
   // The mine at every stage of it: Quarry, Iron Mine, Deep Mine, Mithril Mine.
   // One building that grows, so the id stays what it always was.
@@ -157,7 +162,7 @@ export type BuildingId =
   | 'sapling'
   | 'statue';
 
-export type BuildingCategory = 'housing' | 'storage' | 'production' | 'comfort';
+export type BuildingCategory = 'housing' | 'production' | 'comfort';
 
 export interface Recipe {
   inputs: Partial<Record<ResourceId, number>>;
@@ -229,8 +234,20 @@ export interface BuildingDef {
    * have somebody in them to look at.
    */
   sheltered?: boolean;
-  /** Shared storage capacity contributed per level. */
-  storage?: number[];
+  /**
+   * Resources this building is the home of, beyond whatever it extracts or
+   * cooks. Three buildings need it, because what they produce comes off the map
+   * rather than off a recipe: the lodge's wood, the farm's wheat, the hut's
+   * catch. `holdsOf` in `defs.ts` folds it in with the rest.
+   */
+  holds?: ResourceId[];
+  /**
+   * A fixed compartment that has nothing to do with what the building produces
+   * and does not grow when it is improved. The Base Camp's hundred wood is the
+   * only one, and it exists so that the opening — and any kingdom that never
+   * puts anybody on a lodge — has somewhere to put the timber down.
+   */
+  cache?: Partial<Record<ResourceId, number>>;
   /** Job slots per level. */
   slots?: number[];
   job?: JobId;
@@ -293,9 +310,9 @@ export interface BuildingDef {
    */
   unique?: boolean;
   /**
-   * How many may stand at once, indexed by the commons' level. Cabins and
-   * storehouses are not unique, but neither are they unlimited: the count is
-   * one of the things the commons hands over as it grows.
+   * How many may stand at once, indexed by the commons' level. The cabin is the
+   * only kind left with one: it is not unique, but neither is it unlimited, and
+   * the count is one of the things the commons hands over as it grows.
    */
   maxCount?: number[];
   /**
@@ -334,9 +351,19 @@ export interface Building {
   delivered: Partial<Record<ResourceId, number>>;
   /** Villager-seconds of labour applied. */
   labour: number;
-  /** Local input/output buffers for production chains. */
+  /**
+   * Working supplies: ingredients carried in and waiting to be used. Small on
+   * purpose — 50 of each at level one, 100 at level two — because this is a
+   * bench, not a granary. What the building is the *home* of goes in `store`.
+   */
   input: Partial<Record<ResourceId, number>>;
-  output: Partial<Record<ResourceId, number>>;
+  /**
+   * The kingdom's storage, as far as this building is concerned: everything it
+   * is the home of, each resource in its own compartment with its own capacity
+   * (`storesOf`). There is no shared pool behind this — a loaf of bread is at
+   * the kitchen or it is in somebody's arms, and nowhere else.
+   */
+  store: Partial<Record<ResourceId, number>>;
   /** Progress through the current recipe batch, 0..1. */
   progress: number;
   /** Villager ids currently employed here. */
@@ -403,9 +430,10 @@ export type ActivityKind =
 export type Step =
   | { t: 'move'; x: number; y: number; adjacent?: boolean; goals?: { x: number; y: number }[] }
   | { t: 'act'; dur: number; kind: ActivityKind; xp?: JobId; face?: number }
-  | { t: 'take'; res: ResourceId; qty: number; from: 'store' | 'building' | 'tile'; id?: number; x?: number; y?: number }
+  /** `store` and `input` both name a particular building; there is no shared pool. */
+  | { t: 'take'; res: ResourceId; qty: number; from: 'store' | 'tile'; id?: number; x?: number; y?: number }
   /** Without `qty` the whole load goes; with it, the rest stays in their arms. */
-  | { t: 'give'; to: 'store' | 'building' | 'site'; id?: number; qty?: number }
+  | { t: 'give'; to: 'store' | 'input' | 'site'; id?: number; qty?: number }
   | { t: 'labour'; id: number }
   | { t: 'sleep' }
   | { t: 'say'; text: string }
@@ -620,14 +648,19 @@ export interface GameState {
   buildings: Building[];
   villagers: Villager[];
   animals: Animal[];
-  stock: Stock;
   journal: JournalEntry[];
   goals: Goal[];
   unlocked: Set<string>;
   discovered: Set<SpeciesId>;
   toasts: Toast[];
-  /** Transient: cooldown before saying again that the store has no room. */
-  storeFullNotice: number;
+  /**
+   * Transient: per-resource cooldown before saying again that there is nowhere
+   * left to put one. Per resource rather than one flag for the kingdom, because
+   * "storage is full" is no longer a thing that can be true — a full woodpile
+   * says nothing whatever about the larder, and a warning that does not name
+   * the resource and the building is a warning nobody can act on.
+   */
+  fullNotice: Partial<Record<ResourceId, number>>;
   /**
    * The newcomer currently on their way. `progress` is game seconds of walking
    * accumulated so far, and `jitter` is the hidden variation that decides where

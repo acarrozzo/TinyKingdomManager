@@ -12,15 +12,19 @@ import type {
   Villager,
   VillagerAppearance,
 } from '../types';
+import type { Stock } from '../types';
 import { PREPARED_FOODS, RESOURCE_ORDER, emptyStock } from '../types';
 import {
   BUILDINGS,
   DAYS_PER_SEASON,
+  FOOD_CHAIN_STAGE,
   FOOD_CHAIN_VALUE,
   FOOD_COMFORT_FLOOR,
   FOOD_COMFORT_PER_HEAD,
   TRAIT_IDS,
   buildingName,
+  inputCapOf,
+  storesOf,
 } from './defs';
 import { generateMap, tileAt } from '../world/terrain';
 import { makeName } from './names';
@@ -102,7 +106,7 @@ export function makeBuilding(g: GameState, def: BuildingId, x: number, y: number
     delivered: {},
     labour: 0,
     input: {},
-    output: {},
+    store: {},
     progress: 0,
     workers: [],
     residents: [],
@@ -139,13 +143,12 @@ export function newGame(seed = Math.floor(Math.random() * 1e9)): GameState {
     buildings: [],
     villagers: [],
     animals: [],
-    stock: emptyStock(),
     journal: [],
     goals: [],
     unlocked: new Set<string>(),
     discovered: new Set(),
     toasts: [],
-    storeFullNotice: 0,
+    fullNotice: {},
     // Nobody is on the road yet — the first companion starts walking when the
     // camp's second bed exists, not on a clock that was running beforehand.
     arrival: { progress: 0, jitter: rng.range(-1, 1) },
@@ -194,26 +197,132 @@ export function isOperational(b: Building): boolean {
   return b.stage === 'done' || b.upgrading;
 }
 
-/** Total shared storage from every building that provides it and is in service. */
-export function storageCapacity(g: GameState): number {
-  let cap = 0;
-  for (const b of g.buildings) {
-    if (!isOperational(b)) continue;
-    const def = BUILDINGS[b.def];
-    if (def.storage) cap += def.storage[Math.min(b.level, def.storage.length) - 1];
-  }
-  return cap;
+/**
+ * How much of one resource this building holds room for, at the level it is
+ * currently working at. Zero for anything it is not the home of.
+ *
+ * A building being improved keeps the capacity it already had — the same rule
+ * `housingCapacity` follows, and for the same reason: taking a mine's stone
+ * room to nothing halfway through sinking it deeper would strand the stone
+ * somebody is carrying over to pay for the work.
+ */
+export function capacityIn(b: Building, res: ResourceId): number {
+  if (!isOperational(b)) return 0;
+  return storesOf(b.def, b.level)[res] ?? 0;
 }
 
-/** Everything physically stacked in the kingdom's stores — which is everything. */
-export function storageUsed(g: GameState): number {
+/** What is actually in that compartment. */
+export function heldIn(b: Building, res: ResourceId): number {
+  return b.store[res] ?? 0;
+}
+
+/**
+ * Room left in one compartment. Can read zero while a load is still on its way
+ * in and briefly negative-in-effect after it lands, because `deliver` never
+ * refuses; this clamps, so nothing downstream has to think about it.
+ */
+export function roomIn(b: Building, res: ResourceId): number {
+  return Math.max(0, capacityIn(b, res) - heldIn(b, res));
+}
+
+/**
+ * Everything the kingdom physically has of one resource: what is stored, what
+ * is sitting on a workshop bench waiting to be used, and what is in somebody's
+ * arms. All three are real and all three are the kingdom's, so the aggregate
+ * the top bar shows counts the lot — a number that quietly omitted the flour
+ * a cook is carrying would flicker every time somebody picked something up.
+ */
+export function totalOf(g: GameState, res: ResourceId): number {
   let n = 0;
-  for (const res of RESOURCE_ORDER) n += g.stock[res];
+  for (const b of g.buildings) {
+    n += b.store[res] ?? 0;
+    n += b.input[res] ?? 0;
+  }
+  for (const v of g.villagers) if (v.carrying?.res === res) n += v.carrying.qty;
   return n;
 }
 
-export function storageFree(g: GameState): number {
-  return Math.max(0, storageCapacity(g) - storageUsed(g));
+/**
+ * How much of one resource the kingdom has room for — primary storage only,
+ * deliberately. A workshop's bench is a working supply rather than somewhere to
+ * keep things, so counting it here would inflate the headline figure with room
+ * nobody may fill. It is why the aggregate occasionally reads a little over its
+ * capacity, and the hover says why.
+ */
+export function capacityOf(g: GameState, res: ResourceId): number {
+  let n = 0;
+  for (const b of g.buildings) n += capacityIn(b, res);
+  return n;
+}
+
+/** Everything at once, for the top bar, the stores sheet and the harnesses. */
+export function kingdomStock(g: GameState): Stock {
+  const out = emptyStock();
+  for (const res of RESOURCE_ORDER) out[res] = totalOf(g, res);
+  return out;
+}
+
+/**
+ * Where a load of this should be taken, from where the carrier is standing.
+ *
+ * Nearest wins, and nothing else does. There is deliberately no thumb on the
+ * scale for a building that is the *home* of this resource over one that merely
+ * keeps a cache of it, because it turns out not to be needed and to cost
+ * something when it is there: a woodcutter measures this from the lodge, so the
+ * lodge is at no distance at all and wins on its own — which is the whole of
+ * "wood goes to the lodge once there is one", and it happens without any wood
+ * ever being teleported out of the camp to make it true.
+ *
+ * The only thing a preference changes is where a General Worker takes an armful
+ * felled in the middle of the kingdom, and sending them out to the lodge with
+ * it lengthens the one supply line a kingdom with nobody on the lodge has. An
+ * early version weighted a true home by twenty tiles and such a kingdom built
+ * two fewer things over twenty-three days for it. Nearest, honestly, is both
+ * simpler and better.
+ *
+ * Returns null only when the kingdom has nowhere at all with room. A carrier in
+ * that position keeps hold of the load and re-decides, which is the rule that
+ * makes putting something down incapable of failing.
+ */
+export function homeFor(g: GameState, res: ResourceId, x: number, y: number): Building | null {
+  let best: Building | null = null;
+  let bestD = Infinity;
+  for (const b of g.buildings) {
+    if (roomIn(b, res) <= 0) continue;
+    const c = buildingCentre(b);
+    const d = (c.x - x) ** 2 + (c.y - y) ** 2;
+    if (d < bestD) {
+      bestD = d;
+      best = b;
+    }
+  }
+  return best;
+}
+
+/**
+ * Where somebody could go and *get* this, nearest first. The counterpart of
+ * `homeFor`, and the reason every fetch in the game names a building: there is
+ * no pool to draw on, so a smith wanting coal is a smith walking to the mine.
+ */
+export function sourceOf(g: GameState, res: ResourceId, x: number, y: number, least = 1): Building | null {
+  let best: Building | null = null;
+  let bestD = Infinity;
+  for (const b of g.buildings) {
+    if (!isOperational(b)) continue;
+    if ((b.store[res] ?? 0) < least) continue;
+    const c = buildingCentre(b);
+    const d = (c.x - x) ** 2 + (c.y - y) ** 2;
+    if (d < bestD) {
+      bestD = d;
+      best = b;
+    }
+  }
+  return best;
+}
+
+/** How much of an ingredient this workshop keeps on the bench, and how much is left. */
+export function inputRoom(b: Building, res: ResourceId): number {
+  return Math.max(0, inputCapOf(b.def, b.level) - (b.input[res] ?? 0));
 }
 
 /**
@@ -225,15 +334,18 @@ export function storageFree(g: GameState): number {
  */
 export function preparedFood(g: GameState): number {
   let n = 0;
-  for (const res of PREPARED_FOODS) n += g.stock[res];
+  for (const res of PREPARED_FOODS) n += totalOf(g, res);
   return n;
 }
 
 /**
  * How much cooked food the kingdom is comfortable holding. Past this the cooks
- * ease off — the same idea as a woodcutter downing tools in front of a full
- * barn, measured against the mouths there are to feed rather than against the
- * size of the barn, because those are different questions.
+ * ease off.
+ *
+ * This is a *desired reserve* and never a capacity, and now that the kitchen
+ * has a stated capacity of its own the two must not be allowed to blur: the
+ * kitchen holds 250 loaves and a kingdom of six wants forty. The panel labels
+ * them separately for exactly that reason.
  */
 export function foodComfort(g: GameState): number {
   return g.villagers.length * FOOD_COMFORT_PER_HEAD + FOOD_COMFORT_FLOOR;
@@ -244,25 +356,37 @@ export function foodComfort(g: GameState): number {
  * food, raw fish, flour and standing wheat, each counted for what it will end
  * up being worth on a plate.
  *
- * The whole chain looks at this rather than at its own shelf, so easing off
- * happens all the way up it at once. A kingdom that stops cooking and carries
- * on milling has only moved the pile.
+ * `fromStage` is which link is asking. A job counts its own step and everything
+ * after it, never what is waiting behind it: a farmer is judged on the whole
+ * chain, because sowing is what puts new food into it, and a miller only on
+ * flour and what flour becomes, because grinding moves food along rather than
+ * adding any. Without that a full barn closes the mill, and a closed mill is
+ * what keeps the barn full.
  */
-export function foodPotential(g: GameState): number {
+export function foodPotential(g: GameState, fromStage = 0): number {
   let n = 0;
   for (const k in FOOD_CHAIN_VALUE) {
     const res = k as ResourceId;
-    n += g.stock[res] * (FOOD_CHAIN_VALUE[res] ?? 0);
+    if ((FOOD_CHAIN_STAGE[res] ?? 0) < fromStage) continue;
+    n += totalOf(g, res) * (FOOD_CHAIN_VALUE[res] ?? 0);
   }
   return n;
 }
 
-/** Adds to the shared store, clipped by capacity. Returns the amount actually accepted. */
-export function deposit(g: GameState, res: ResourceId, qty: number): number {
+/**
+ * Puts something into a building's storage, clipped by that compartment's room.
+ * Returns what was actually accepted.
+ *
+ * This is the one used where nobody is carrying anything — clearing ground for
+ * a building, giving back half of what a demolition cost. Anything a villager
+ * has in their arms goes through `deliver` instead.
+ */
+export function deposit(g: GameState, b: Building, res: ResourceId, qty: number): number {
+  void g;
   if (qty <= 0) return 0;
-  const room = storageFree(g);
-  const take = Math.min(qty, room);
-  g.stock[res] += take;
+  const take = Math.min(qty, roomIn(b, res));
+  if (take <= 0) return 0;
+  b.store[res] = (b.store[res] ?? 0) + take;
   return take;
 }
 
@@ -271,28 +395,33 @@ export function deposit(g: GameState, res: ResourceId, qty: number): number {
  * this never refuses, and that is the whole point: capacity decides when people
  * stop fetching *more*, never whether something already in someone's arms can
  * be put away. Refusing it deadlocks the kingdom — the planner will not make a
- * new plan for anybody still holding goods, so a full store used to leave a
- * villager walking to the barn and back forever, unable to build anything.
+ * new plan for anybody still holding goods, so a full compartment used to leave
+ * a villager walking to it and back forever, unable to build anything.
  *
- * The store therefore reads slightly over capacity while deliveries land. That
- * is honest: the barn is full and there is still a load on its way in.
+ * A compartment therefore reads slightly over its capacity while deliveries
+ * land. That is honest: the woodpile is full and there is still a load on its
+ * way in, and nothing further is fetched until it is back under.
  */
-export function deliver(g: GameState, res: ResourceId, qty: number): void {
+export function deliver(g: GameState, b: Building, res: ResourceId, qty: number): void {
+  void g;
   if (qty <= 0) return;
-  g.stock[res] += qty;
+  b.store[res] = (b.store[res] ?? 0) + qty;
 }
 
-/** Removes from the shared store. Returns the amount actually withdrawn. */
-export function withdraw(g: GameState, res: ResourceId, qty: number): number {
-  const take = Math.min(qty, g.stock[res]);
-  g.stock[res] -= take;
+/** Takes from a building's storage. Returns the amount actually withdrawn. */
+export function withdraw(g: GameState, b: Building, res: ResourceId, qty: number): number {
+  void g;
+  const take = Math.min(qty, b.store[res] ?? 0);
+  if (take <= 0) return 0;
+  b.store[res] = (b.store[res] ?? 0) - take;
   return take;
 }
 
+/** Whether the kingdom, all its buildings added up, could cover a cost. */
 export function canAfford(g: GameState, cost: Partial<Record<ResourceId, number>>): boolean {
   for (const k in cost) {
     const res = k as ResourceId;
-    if (g.stock[res] < (cost[res] ?? 0)) return false;
+    if (totalOf(g, res) < (cost[res] ?? 0)) return false;
   }
   return true;
 }
@@ -377,22 +506,18 @@ export function buildingCentre(b: Building): { x: number; y: number } {
   return { x: b.x + def.w / 2, y: b.y + def.h / 2 };
 }
 
-/** Nearest usable storage building to a point, or null if the kingdom has none. */
-export function nearestStore(g: GameState, x: number, y: number): Building | null {
-  let best: Building | null = null;
-  let bestD = Infinity;
-  for (const b of g.buildings) {
-    if (!isOperational(b)) continue;
-    const def = BUILDINGS[b.def];
-    if (!def.storage) continue;
-    const c = buildingCentre(b);
-    const d = (c.x - x) ** 2 + (c.y - y) ** 2;
-    if (d < bestD) {
-      bestD = d;
-      best = b;
-    }
+/**
+ * Everything this building is currently holding, in the order the top bar shows
+ * it. Storage and bench together, because both are goods that would be gone if
+ * the building were.
+ */
+export function contentsOf(b: Building): { res: ResourceId; qty: number }[] {
+  const out: { res: ResourceId; qty: number }[] = [];
+  for (const res of RESOURCE_ORDER) {
+    const qty = Math.floor((b.store[res] ?? 0) + (b.input[res] ?? 0));
+    if (qty > 0) out.push({ res, qty });
   }
-  return best;
+  return out;
 }
 
 /**

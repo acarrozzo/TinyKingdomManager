@@ -27,6 +27,8 @@ import {
   focusOptions,
   rangeOf,
   relocateCost,
+  RESOURCE_META,
+  storesOf,
   upgradeCostOf,
   upgradeReqsOf,
 } from './sim/defs';
@@ -34,15 +36,18 @@ import {
   abandonPlan,
   assignJob,
   buildingById,
+  capacityIn,
+  capacityOf,
+  contentsOf,
   deposit,
+  homeFor,
   jobSlots,
   makeBuilding,
   newGame,
   removeBuilding as removeBuildingFromMap,
   seasonForDay,
   setHome as setVillagerHome,
-  storageCapacity,
-  storageUsed,
+  totalOf,
   villagerById,
 } from './sim/state';
 import { completeConstruction, siteNeeds, updateVillagers } from './sim/villager';
@@ -999,7 +1004,7 @@ export class Game {
     const reserved = this.reservedMaterials();
     for (const k in cost) {
       const res = k as ResourceId;
-      if (this.state.stock[res] - (reserved[res] ?? 0) < (cost[res] ?? 0)) return false;
+      if (totalOf(this.state, res) - (reserved[res] ?? 0) < (cost[res] ?? 0)) return false;
     }
     return true;
   }
@@ -1068,19 +1073,19 @@ export class Game {
     return null;
   }
 
-  /** Whether the store can actually cover a cost, in the words the player reads. */
+  /** Whether the kingdom can actually cover a cost, in the words the player reads. */
   private affordProblem(cost: Partial<Record<ResourceId, number>>): string | null {
     const g = this.state;
     const reserved = this.reservedMaterials();
     const short: string[] = [];
     for (const k in cost) {
       const res = k as ResourceId;
-      const free = g.stock[res] - (reserved[res] ?? 0);
+      const free = totalOf(g, res) - (reserved[res] ?? 0);
       const want = cost[res] ?? 0;
       if (free < want) short.push(`${Math.ceil(want - free)} more ${res}`);
     }
     if (!short.length) return null;
-    return `Not enough in store — it needs ${short.length === 2 ? `${short[0]} and ${short[1]}` : short.join(', ')}.`;
+    return `Not enough in storage — it needs ${short.length === 2 ? `${short[0]} and ${short[1]}` : short.join(', ')}.`;
   }
 
   /** How many of a kind stand, and how many may. For the menu and the refusals. */
@@ -1140,9 +1145,9 @@ export class Game {
         // except that a boulder shifted by people with no quarry is a boulder
         // rolled aside and left, not stone. Stone has exactly one source, and
         // building on top of the rock is not a way round it.
-        if (t.prop === 'tree' && t.amount > 0) deposit(g, 'wood', Math.floor(t.amount * 0.4));
+        if (t.prop === 'tree' && t.amount > 0) this.putBack('wood', Math.floor(t.amount * 0.4), x, y);
         if (t.prop === 'boulder' && t.amount > 0 && this.hasQuarry()) {
-          deposit(g, 'stone', Math.floor(t.amount * 0.4));
+          this.putBack('stone', Math.floor(t.amount * 0.4), x, y);
         }
         t.prop = null;
         t.amount = 0;
@@ -1253,9 +1258,9 @@ export class Game {
         t.building = site.id;
         if (d.solid) t.blocked = true;
         // Clearing ground gives back what clearing ground always gives back.
-        if (t.prop === 'tree' && t.amount > 0) deposit(g, 'wood', Math.floor(t.amount * 0.4));
+        if (t.prop === 'tree' && t.amount > 0) this.putBack('wood', Math.floor(t.amount * 0.4), x, y);
         if (t.prop === 'boulder' && t.amount > 0 && this.hasQuarry()) {
-          deposit(g, 'stone', Math.floor(t.amount * 0.4));
+          this.putBack('stone', Math.floor(t.amount * 0.4), x, y);
         }
         t.prop = null;
         t.amount = 0;
@@ -1286,17 +1291,34 @@ export class Game {
     const b = buildingById(this.state, id);
     const site = b?.movingTo ? buildingById(this.state, b.movingTo) : null;
     if (!b || !site) return;
-    // Whatever was carried over goes back into the store rather than into the
-    // ground: nothing in this game is ever taken away for changing your mind.
+    // Whatever was carried over goes back where that sort of thing is kept
+    // rather than into the ground: nothing in this game is ever taken away for
+    // changing your mind.
     for (const k in site.delivered) {
       const res = k as ResourceId;
-      deposit(this.state, res, site.delivered[res] ?? 0);
+      this.putBack(res, site.delivered[res] ?? 0, site.x, site.y);
     }
     removeBuildingFromMap(this.state, site);
     b.movingTo = undefined;
     this.renderer.invalidateGround();
     toast(this.state, `The ${buildingName(b.def, b.level).toLowerCase()} is staying put`, '🧭', 'info');
     this.notify();
+  }
+
+  /**
+   * Puts something into whichever building keeps that sort of thing, nearest to
+   * a point. For the odds and ends nobody is carrying: what clearing ground
+   * turns up, and half of what a demolished building cost.
+   *
+   * Clipped by the compartment, and that is honest rather than lossy — a
+   * kingdom with a full woodpile and a tree in the way of its new cabin leaves
+   * the timber where it falls. Nothing that was already *in* storage can be
+   * lost this way; `askDemolish` refuses to take down a building holding goods.
+   */
+  private putBack(res: ResourceId, qty: number, x: number, y: number): void {
+    if (qty <= 0) return;
+    const home = homeFor(this.state, res, x, y);
+    if (home) deposit(this.state, home, res, qty);
   }
 
   /** True once there is a quarry standing — the kingdom's only source of stone. */
@@ -1324,11 +1346,29 @@ export class Game {
     if (b) this.askDemolish(b.id);
   }
 
+  /**
+   * Why this building is not coming down while it still has things in it, or
+   * null when it has not.
+   *
+   * Storage lives in buildings now, so demolition is the one action that could
+   * destroy goods, and it is not allowed to. Refusing is the only answer that
+   * does not either lose the stock or make it reappear somewhere nobody carried
+   * it to — and it costs the player nothing but time, since spending what is
+   * inside is exactly what they were going to do with it anyway.
+   */
+  holdingProblem(b: Building): string | null {
+    const held = contentsOf(b);
+    if (held.length === 0) return null;
+    const list = held.map(({ res, qty }) => `${qty} ${RESOURCE_META[res].name.toLowerCase()}`);
+    const what = list.length > 1 ? `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}` : list[0];
+    return `The ${buildingName(b.def, b.level).toLowerCase()} still holds ${what}. Nothing here will throw that away — spend it or move it, and this can come down after.`;
+  }
+
   /** Proposes a removal. The interface asks; `confirmDemolish` carries it out. */
   askDemolish(id: number): void {
     const b = buildingById(this.state, id);
     if (!b) return;
-    const kept = protectedBuilding(b);
+    const kept = protectedBuilding(b) ?? this.holdingProblem(b);
     if (kept) {
       this.blockReason = kept;
       this.demolishTarget = 0;
@@ -1389,7 +1429,7 @@ export class Game {
     // Every way of taking a building down comes through here — the demolish
     // tool, and the Remove button on a building's own panel — so the things
     // that stay put are refused in one place.
-    const kept = protectedBuilding(b);
+    const kept = protectedBuilding(b) ?? this.holdingProblem(b);
     if (kept) {
       toast(g, kept, '🔥', 'warn');
       return;
@@ -1399,16 +1439,11 @@ export class Game {
       for (const k in def.cost) {
         const res = k as ResourceId;
         const paid = b.stage === 'done' ? def.cost[res] ?? 0 : b.delivered[res] ?? 0;
-        deposit(g, res, Math.floor(paid * 0.5));
+        this.putBack(res, Math.floor(paid * 0.5), b.x, b.y);
       }
     }
-    // Give back anything sitting in its buffers.
-    for (const bag of [b.input, b.output]) {
-      for (const k in bag) {
-        const res = k as ResourceId;
-        deposit(g, res, bag[res] ?? 0);
-      }
-    }
+    // Nothing to empty out: `holdingProblem` has already refused anything with
+    // stock in it, so a building that gets this far is one somebody has cleared.
 
     removeBuildingFromMap(g, b);
     if (this.selection.kind === 'building' && this.selection.id === b.id) this.selection = { kind: null, id: 0 };
@@ -1598,7 +1633,7 @@ export class Game {
     if (this.upgradeRequirements(b).some((r) => !r.met)) return false;
     const reserved = this.reservedMaterials();
     for (const { res, qty } of this.upgradeCost(b)) {
-      if (this.state.stock[res] - (reserved[res] ?? 0) < qty) return false;
+      if (totalOf(this.state, res) - (reserved[res] ?? 0) < qty) return false;
     }
     return true;
   }
@@ -1657,12 +1692,52 @@ export class Game {
   // Queries used by the interface
   // -------------------------------------------------------------------------
 
-  storageInfo(): { used: number; cap: number } {
-    // Through `storageUsed`, which reads `STORED_RESOURCES`, rather than a list
-    // kept by hand here. The hand-kept one stopped naming everything the moment
-    // ore and coal existed, and a store meter that under-reports by six
-    // materials reads "half full" at the exact moment nobody can gather.
-    return { used: storageUsed(this.state), cap: storageCapacity(this.state) };
+  /**
+   * How much of one resource the kingdom has and how much room it has for it,
+   * with the buildings it is spread across.
+   *
+   * There is no single figure to replace the old store meter with, and that is
+   * the point rather than an omission: "the kingdom is 80% full" was a
+   * meaningful sentence about one shared pool and is meaningless about thirteen
+   * separate compartments. Every question about room is now a question about a
+   * particular resource, so this is what the top bar and the stores sheet ask.
+   */
+  storageInfo(res: ResourceId): {
+    held: number;
+    cap: number;
+    room: number;
+    where: { b: Building; held: number; cap: number }[];
+  } {
+    const g = this.state;
+    const where: { b: Building; held: number; cap: number }[] = [];
+    for (const b of g.buildings) {
+      const cap = capacityIn(b, res);
+      const held = (b.store[res] ?? 0) + (b.input[res] ?? 0);
+      if (cap > 0 || held > 0) where.push({ b, held, cap });
+    }
+    where.sort((p, q) => q.cap - p.cap || q.held - p.held);
+    const held = totalOf(g, res);
+    const cap = capacityOf(g, res);
+    return { held, cap, room: Math.max(0, cap - held), where };
+  }
+
+  /**
+   * What the next improvement of a building would add to one of its
+   * compartments, or null when it would add nothing. The panel shows this
+   * beside the current figure, because "improve it" is the whole answer to
+   * "this is full" and the player should not have to work out by how much.
+   */
+  capacityGain(b: Building, res: ResourceId): number | null {
+    const def = BUILDINGS[b.def];
+    if (b.level >= def.maxLevel) return null;
+    // A step nothing can satisfy is not room the player can go and get. The
+    // Deep Mine's next level is the Mithril Mine, and offering "+2,500 if
+    // improved" against it would be the panel telling somebody to go and do
+    // something the game has no way of letting them do.
+    if (upgradeReqsOf(b.def, b.level).some((r) => r.impossible)) return null;
+    const now = storesOf(b.def, b.level)[res] ?? 0;
+    const then = storesOf(b.def, b.level + 1)[res] ?? 0;
+    return then > now ? then - now : null;
   }
 
   selectedVillager(): Villager | null {

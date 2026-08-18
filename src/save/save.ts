@@ -6,8 +6,8 @@
  * simply re-decide what to do the moment the kingdom loads.
  */
 
-import type { GameState, JobId, SpeciesId, Stock, Villager } from '../types';
-import { RESOURCE_ORDER, emptyStock } from '../types';
+import type { GameState, JobId, ResourceId, SpeciesId, Villager } from '../types';
+import { RESOURCE_ORDER } from '../types';
 import { JOB_META } from '../sim/defs';
 import { buildGoals } from '../sim/goals';
 import { restoreIdCounter } from '../sim/state';
@@ -44,8 +44,16 @@ const SETTINGS_KEY = 'tkm.settings';
  * building and a trade that no longer exist, has no fish or cooked fish in a
  * stock that now has both, and has no record of how rested any of its water is.
  * Older files are refused rather than guessed at.
+ * 9: there is no shared store. Every resource is kept in the building that
+ * produces it, each in its own compartment, and the Storehouse — which existed
+ * only to raise the ceiling on a pool that no longer exists — is gone from the
+ * game. A version 8 file records one pile of goods belonging to the kingdom and
+ * names a building this version cannot build, so there is no honest way to read
+ * it: dividing that pile between buildings would be inventing where things were
+ * kept, and a kingdom whose storehouses vanished would be missing capacity it
+ * was built around. Refused, like every version before it.
  */
-export const SAVE_VERSION = 8;
+export const SAVE_VERSION = 9;
 
 export interface SlotInfo {
   id: string;
@@ -204,7 +212,10 @@ export function serialize(g: GameState): SavePayload {
       delivered: b.delivered,
       labour: b.labour,
       input: b.input,
-      output: b.output,
+      // What the building is the home of. This is the kingdom's whole stock now
+      // — there is nothing kept anywhere else — so a building written back
+      // without it is a barn that opens empty.
+      store: b.store,
       progress: b.progress,
       workers: b.workers,
       residents: b.residents,
@@ -260,7 +271,6 @@ export function serialize(g: GameState): SavePayload {
       seen: a.seen,
       ttl: a.ttl,
     })),
-    stock: g.stock,
     journal: g.journal,
     goalsDone: g.goals.filter((x) => x.done).map((x) => x.id),
     unlocked: [...g.unlocked],
@@ -397,7 +407,7 @@ export function deserialize(raw: unknown): GameState {
       plots: (b.plots ?? []).map((q: any) => ({ ...q, claimed: 0 })),
       delivered: b.delivered ?? {},
       input: b.input ?? {},
-      output: b.output ?? {},
+      store: reviveBag(b.store),
       workers: b.workers ?? [],
       residents: b.residents ?? [],
     })),
@@ -419,13 +429,12 @@ export function deserialize(raw: unknown): GameState {
       hop: 0,
       ttl: a.ttl ?? 600,
     })),
-    stock: reviveStock(p.stock),
     journal: p.journal ?? [],
     goals,
     unlocked: new Set<string>(p.unlocked ?? []),
     discovered: new Set<SpeciesId>(p.discovered ?? []),
     toasts: [],
-    storeFullNotice: 0,
+    fullNotice: {},
     // Both halves of the walk survive the save: the progress so far and the
     // hidden variation this particular arrival was given. Rerolling the
     // variation on load would make closing the tab a way of asking again.
@@ -482,19 +491,20 @@ function clampJitter(saved: unknown): number {
 }
 
 /**
- * Only the resources the kingdom still has are taken across. Spreading the
- * saved object wholesale would carry a retired one — the coin, which had no
- * sink and no reason to exist — back in as a key nothing iterates and the store
- * meter cannot see, which is a stray number waiting to be found years later.
+ * One building's compartments, taking across only the resources the kingdom
+ * still has. Spreading the saved object wholesale would carry a retired one —
+ * the coin, which had no sink and no reason to exist — back in as a key nothing
+ * iterates and no compartment can see, which is a stray number waiting to be
+ * found years later.
  */
-function reviveStock(saved: any): Stock {
-  const stock = emptyStock();
-  if (!saved || typeof saved !== 'object') return stock;
+function reviveBag(saved: any): Partial<Record<ResourceId, number>> {
+  const out: Partial<Record<ResourceId, number>> = {};
+  if (!saved || typeof saved !== 'object') return out;
   for (const res of RESOURCE_ORDER) {
     const n = Number(saved[res]);
-    if (Number.isFinite(n) && n > 0) stock[res] = n;
+    if (Number.isFinite(n) && n > 0) out[res] = n;
   }
-  return stock;
+  return out;
 }
 
 function reviveWildlife(saved: any): GameState['wildlife'] {

@@ -17,7 +17,7 @@
  * outside the window.
  */
 
-import { newGame, bedsFree, housingCapacity } from '../src/sim/state';
+import { newGame, bedsFree, housingCapacity, makeBuilding } from '../src/sim/state';
 import { arrivalEta, arrivalNeed, arrivalWindow, updatePopulation } from '../src/sim/population';
 import { vibesOf } from '../src/sim/vibes';
 import { deserialize, serialize } from '../src/save/save';
@@ -25,6 +25,8 @@ import { updateVillagers } from '../src/sim/villager';
 import { chooseCamp, suggestCamp } from '../src/sim/founding';
 import { updateTerrain } from '../src/world/terrain';
 import { DAY_LENGTH, FOOD_VIBES_NEUTRAL, GAME_MINUTE, VIBE_MAX } from '../src/sim/defs';
+import { rng } from '../src/core/util';
+import type { GameState } from '../src/types';
 
 const seed = Number(process.argv[2] || 7);
 let failures = 0;
@@ -108,11 +110,31 @@ for (const j of [-1, -0.5, 0, 0.5, 1]) {
  * checked: that it is a ramp rather than a switch, and that a hundred Vibes is
  * not a promise of the exact minimum.
  */
+/*
+ * Meals, wherever the kingdom keeps them — which is the kitchen, and there is
+ * no kitchen in a fresh kingdom. So this stands one up and fills it. Vibes read
+ * `preparedFood`, which walks the buildings now rather than a shared pile, so
+ * there is nowhere else a test larder could go.
+ */
+function stockMeals(k: GameState, bread: number, fish: number): void {
+  let kitchen = k.buildings.find((b) => b.def === 'kitchen');
+  if (!kitchen) {
+    // Anywhere at all: nothing here walks to it, and one of these kingdoms has
+    // not been founded yet, so there is no commons to stand it beside.
+    const camp = k.buildings.find((b) => b.def === 'commons');
+    kitchen = makeBuilding(k, 'kitchen', camp ? camp.x : 1, camp ? camp.y - 3 : 1, rng);
+    kitchen.stage = 'done';
+    k.buildings.push(kitchen);
+  }
+  kitchen.store.bread = bread;
+  kitchen.store.cookedFish = fish;
+}
+
 g.arrival.jitter = 0;
 g.stats.cooked = 1;
 const paces: { vibes: number; mins: number }[] = [];
 for (const meals of [0, 1, 2, 4, 8]) {
-  g.stock.bread = meals * g.villagers.length;
+  stockMeals(g, meals * g.villagers.length, 0);
   paces.push({ vibes: vibesOf(g).total, mins: arrivalNeed(g) / GAME_MINUTE });
 }
 console.log(
@@ -136,12 +158,11 @@ ok('the fastest wait is still not the minimum', paces[paces.length - 1].mins > w
     [0, per],
     [per / 2, per / 2],
   ]) {
-    g.stock.bread = bread;
-    g.stock.cookedFish = fish;
+    stockMeals(g, bread, fish);
     scores.push(vibesOf(g).food);
   }
   ok('bread and cooked fish are worth the same', new Set(scores.map((s) => s.toFixed(4))).size === 1);
-  g.stock.cookedFish = 0;
+  stockMeals(g, 0, 0);
 }
 
 // Before the first meal the food chain must cost the player nothing — and
@@ -154,7 +175,7 @@ ok('and so is how everyone is keeping', v.wellbeing === VIBE_MAX.wellbeing);
 {
   const fishy = newGame(seed);
   fishy.stats.cooked = 1;
-  fishy.stock.cookedFish = fishy.villagers.length * 4;
+  stockMeals(fishy, 0, fishy.villagers.length * 4);
   ok('a kingdom that only ever cooks fish still reaches full food Vibes', vibesOf(fishy).food === 30);
 }
 

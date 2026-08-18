@@ -23,9 +23,12 @@ Concretely, that means:
 - **A large part of the sim earns nothing.** Villagers sit on benches, watch
   ducks, and stand about. Do not attach a stat to charming behaviour, and do not
   "optimise away" idle behaviour as wasted CPU. It is the product.
-- **The economy is physical and watchable.** Goods only enter the shared store
-  when somebody has carried them there. Never add a mechanic that teleports
-  resources; if you cannot see it happen on the map, it does not belong.
+- **The economy is physical and watchable.** Goods only reach the building that
+  keeps them when somebody has carried them there. Never add a mechanic that
+  teleports resources; if you cannot see it happen on the map, it does not
+  belong. There is no kingdom-wide pile: every resource lives in the building
+  that produced it, which is what makes "where is my stone" a place you can walk
+  to rather than a number.
 - **Ecology stays mysterious, economy stays transparent.** Costs, recipes and
   job slots are all shown plainly. Wildlife spawn rules are never surfaced as
   numbers — only as observational hints in the wildlife panel.
@@ -91,7 +94,8 @@ Runs the whole kingdom headless with no rendering, playing it roughly the way a
 player would — placing buildings, staffing jobs, reacting to shortages,
 decorating once the food is coming — then prints population against beds, the
 Vibes broken into their three parts, the arrival window and what is on its way,
-storage, every villager's experience, when each species was first noticed,
+storage resource by resource and building by building, every villager's
+experience, when each species was first noticed,
 goals, journal, and consistency checks. The arrivals list at the end is the
 quickest read on pacing: the gap between each line should sit inside the window
 printed at the top.
@@ -99,10 +103,13 @@ printed at the top.
 **This is the check for changes under `sim/` or to `defs.ts`** — one run in the
 600–1000 range is enough, and a second seed only when a number surprises you. It
 is how the economy was balanced and it catches things that look fine in code:
-production chains that silently never run, one resource crowding every other out
-of storage, wildlife arriving far too fast, XP curves that take 40 hours.
+production chains that silently never run, a compartment quietly at its ceiling
+for twenty days, wildlife arriving far too fast, XP curves that take 40 hours.
 
-It also asserts the things that must never be true whatever the balance: stone
+It also asserts the things that must never be true whatever the balance: a
+building holding a resource it is not the home of (goods somewhere nothing will
+ever fetch them from — lost to the kingdom without ever being destroyed), a
+compartment over its stated capacity by more than one round of deliveries, stone
 in a kingdom with no quarry, fish with no fishing hut, cooked food with no
 kitchen, ore before an Iron Mine, coal before a Deep Mine, bars with no forge,
 any mithril at all, water rested past nought or one, and rubble counting down to
@@ -128,10 +135,10 @@ under construction — it used to do both at the foot of one early return, so a
 site the kingdom could not yet pay for froze the whole run: nobody could be put
 on the mine, so no stone was cut, so the site stayed unpaid, for twenty days.
 It **treats wood as payable over time and every other material as needing to be
-in store**: since General Workers stop hand-felling at the reserve, a kingdom is
+in storage**: since General Workers stop hand-felling at the reserve, a kingdom is
 routinely short of a building's full wood cost, and a player in that position
 places the building anyway and lets the site fill a dozen at a time. Requiring
-the whole cost in the barn at once made the run stall at six people with nothing
+the whole cost in storage at once made the run stall at six people with nothing
 to eat — a measurement of the harness rather than of the game. Waiting is still
 right for everything else, because a site the kingdom genuinely cannot pay for
 is the standstill this list was rewritten to avoid.
@@ -139,6 +146,13 @@ And it plays by the interface's own rules, including `needsRock` and
 `nearWater`, so it can no more drop a quarry on a meadow than the player can,
 nor a fishing hut in the middle of a field. It builds *both* branches of the
 food chain, which is the only way the run exercises either of them honestly.
+
+There is a fourth now, and it is the storage half of the game as a player meets
+it: the harness **improves whatever has run out of room**. There is no barn to
+extend any more, so a full woodpile is a reason to improve the *lodge* and a full
+larder a reason to improve the *kitchen*. Without it a compartment sits at its
+ceiling for twenty days with the fix one click away, which is a measurement of
+the harness rather than of the game.
 
 **`SOFT_CAP` is a model of how a player staffs, and it is delicate.** The lodge
 sits second in `PRIORITY` now that wood is gated on a woodcutter, but capped at
@@ -188,7 +202,7 @@ is still a perfectly good mine.
 
 The hut check is the same argument one step gentler. Fishing is optional, so an
 island with poor water is not unplayable the way an island with no rock is —
-what it *is* is an island where half of what the storehouse unlocked turns out
+what it *is* is an island where half of what the first staffed building unlocked turns out
 to be a row that cannot be used, and the player has no way of knowing that is
 the island's fault. It asks for three sites with four good spots each, which
 every seed in ten thousand clears comfortably (21–132 sites). It also reports
@@ -318,7 +332,7 @@ src/
   ui/ui.ts            the shell: what is open, where it goes, what a click means
   ui/context.ts       UIEnv (compact/short/touch), esc/el, activity labels
   ui/daystrip.ts      the day laid flat along the top edge, sun or moon on it
-  ui/hud.ts           top strip — resources, store meter, clock, stores sheet
+  ui/hud.ts           top strip — resources with their own room, clock, storage sheet
   ui/nav.ts           desktop toolbar, phone bottom nav, view pad, More sheet
   ui/goals.ts         goal panel, phone objective chip, full goal sheet
   ui/build.ts         build list, placement bar, tool hints
@@ -405,8 +419,8 @@ kind: 'batch' | 'sow' | 'reap' | 'eat' | 'arrived' | 'settled' }`. That keeps
 steps plain data and consequences exactly aligned with the end of the action that
 caused them.
 
-**The kingdom is founded, not handed over.** A new game has no fire, no store and
-no bed: one person walks up a beach, and the opening asks the player exactly one
+**The kingdom is founded, not handed over.** A new game has no fire, nowhere to
+put anything and no bed: one person walks up a beach, and the opening asks the player exactly one
 question — *where should this kingdom begin?* `sim/founding.ts` owns the stages —
 `arriving`, `choosing`, `settling`, `camp`, `done` — and the plans that carry them
 out live in the planner with everything else.
@@ -420,7 +434,7 @@ wood → builds the Base Camp out of that load, with no second placement at all 
 finishing it ends founding and opens the ordinary economy.
 
 **There is exactly one placement in the opening, and the camp is all of it.** The
-Base Camp *is* the fire, the first store and the first two beds, so it is
+Base Camp *is* the fire, the first woodpile and the first two beds, so it is
 `order: -1` and never appears in the build menu, and nothing else is offered
 until it stands. Asking where the fire goes after asking where the camp goes
 would be asking the same question twice.
@@ -430,7 +444,7 @@ all nine tiles, `CAMP_HALF` / `CAMP_SPAN` in `world/terrain.ts` own the shape, a
 `Founding.x/y` stores the *centre* — the tile the fire ends up on — while
 `Building.x/y` is the top-left corner like every other building. Props inside the
 footprint are cleared when it is placed and yield nothing, because there is no
-store yet to put them in.
+woodpile yet to put them in.
 
 **Nobody idles during the opening.** The founder fells their tree while the
 player is still choosing the ground — the wood is wanted wherever the camp ends
@@ -441,7 +455,7 @@ is never reached before the camp is finished, and `planSurvey` (pacing the
 clearing) covers any wait. Idling is the product *after* the kingdom exists;
 during the opening it reads as a broken game.
 
-**The founder carries the treasury.** There is no store until the camp exists,
+**The founder carries the treasury.** There is nowhere to put anything until the camp exists,
 so `think()` skips its "put down anything carried" rule for the founder while
 founding runs (`isFounder`), gathering runs with `haul` off, and the camp is paid
 straight out of their arms — that is what `qty` on a `give` step is for. Nothing
@@ -457,8 +471,8 @@ deliberate, not as a penalty for not owning an axe yet.
 offers **nothing at all** — the opening's one decision is not a building, and
 everything else would be unaffordable anyway.
 
-**The interface hides the store until there is one.** `#ui.founding` drops the
-resource chips and the store meter rather than showing `Store 0/0` about a pool
+**The interface hides the resources until there is somewhere to keep them.** `#ui.founding` drops the
+resource chips rather than showing `0/0` about storage
 that does not exist, and the goals panel shows one instruction instead of two and
 says what the founder is carrying. The people-and-Vibes pill beside them stays
 up throughout — `1/1` is a true thing to say about a kingdom of one, and it is
@@ -580,36 +594,39 @@ Village Commons and Kingdom Commons by `levelNames`. A `levelNames` def means th
 panel, the toasts, the journal and every "sleeps at the…" line must use
 `buildingName(def, level)` rather than `def.name`; `def.name` is only right in the
 build menu, which is always offering a level-1 one. Both change silhouette per
-level too, because a store that holds ten times as much and looks identical is a
+level too, because a building that holds ten times as much and looks identical is a
 change you cannot see. Costs that a multiplier cannot express — a cabin starts as
 20 wood and later wants stone — go in `upgradeCosts`, an explicit per-step table;
 otherwise `upgradeCostMul` compounds with level.
 
 **The commons is the kingdom's spine, and the only building with a gate on it.**
 `upgradeReqs` on a `BuildingDef` is a per-step list of `{ label, met(g) }` —
-things the kingdom must have *done*, not have in store — and `canUpgrade` refuses
+things the kingdom must have *done*, not have in storage — and `canUpgrade` refuses
 until every one is met. `COMMONS_REQS` in `defs.ts` holds them, and each level
 hands over a tier of the build menu through `unlockCommonsTier` in `goals.ts`,
 called from `completeConstruction`:
 
-| level | asks for | opens | cabins / storehouses |
+| level | asks for | opens | cabins |
 |---|---|---|---|
-| 1 Base Camp | the founding | Cabin, Storehouse, Lodge, Quarry | 1 / 1 |
-| 2 Settled Camp | a cabin, a quarry, three people | Well | 2 / 2 |
-| 3 Village Commons | food cooked in a kitchen of your own, six people, somebody in a trade | Standing Stone | 3 / 3 |
-| 4 Kingdom Commons | *a way of building nobody knows yet* | — | 4 / 4 |
+| 1 Base Camp | the founding | Cabin, Lodge, Quarry | 1 |
+| 2 Settled Camp | a cabin, a quarry, three people | Well | 2 |
+| 3 Village Commons | food cooked in a kitchen of your own, six people, somebody in a trade | Standing Stone | 3 |
+| 4 Kingdom Commons | *a way of building nobody knows yet* | — | 4 |
 
 The food chain is not on that table, because it hangs off **goals** instead —
-40 stone opens the Windmill, a Storehouse opens the Wheat Farm *and* the Fishing
-Hut together, and the first flour or the first fish opens the Kitchen. That is
-the same rule as everywhere else: no level may require something it is itself
-responsible for unlocking, and the Village Commons asks for a cooked meal.
+40 stone opens the Windmill, *giving a resource a home* — a staffed lodge or a
+staffed mine — opens the Wheat Farm *and* the Fishing Hut together, and the
+first flour or the first fish opens the Kitchen. That is the same rule as
+everywhere else: no level may require something it is itself responsible for
+unlocking, and the Village Commons asks for a cooked meal.
 
-The Base Camp hands over all four foundations at once, on purpose: the first
-hour is about deciding where those four go, and a kingdom that can fell trees
-but not break stone is one waiting on permission rather than on itself. What the
-later levels give is mostly *room* — one more cabin and one more storehouse each
-— which is a reward you can act on rather than a new menu entry.
+The Base Camp hands over the three foundations at once, on purpose: the first
+hour is about deciding where those three go, and a kingdom that can fell trees
+but not break stone is one waiting on permission rather than on itself. Each of
+the three is also where the thing it produces will be kept, which is what makes
+siting them the decision the first hour is about. What the later levels give is
+mostly *room* — one more cabin each — which is a reward you can act on rather
+than a new menu entry.
 
 The mine's ladder follows the same two rules, and the second one is why the
 Deep Mine asks for a forge rather than the Iron Mine doing so: the Iron Mine is
@@ -620,15 +637,20 @@ responsible for unlocking** — that is why cooked food gates the Village Common
 rather than the Settled Camp, and why the food chain (Farm, Fishing Hut,
 Windmill, Kitchen) is unlocked by *goals* instead. The Settled Camp asking for a quarry is fine
 precisely because the Base Camp is what opened the quarry. And **every cost must
-fit inside the storage the previous level left behind**: a cost above that line
-is one nobody can ever pay. Hand-gathering no longer sets a second ceiling — the
-wood reserve caps fetching rather than spending, so a cost above it is slow
-rather than impossible — but storage still does. The requirements are written to be things that cannot un-happen,
-because a kingdom is never told it has gone backwards.
+fit inside the storage the kingdom has by then**: a cost above that line is one
+nobody can ever pay. That line used to be the shared pool and is now the
+compartment for the material in question, which makes it far less binding —
+250 of everything from the first building that keeps it — but it still binds in
+one place, and it is the one worth remembering: **wood before a lodge is the
+Base Camp's hundred**. Every reachable cost fits under it; the two that do not
+(a Kingdom Commons at 150, a Mithril Mine at 200) sit behind requirements
+nothing can satisfy. Do not add a wood cost over a hundred to anything a kingdom
+could actually reach without one. The requirements are written to be things that
+cannot un-happen, because a kingdom is never told it has gone backwards.
 
 **Every step of every building shows its whole price before you commit.**
 `improveSection` in `ui/modals.ts` draws it as one checklist and draws it
-*always* — materials with what is free in store against what is wanted,
+*always* — materials with what is free in storage against what is wanted,
 accomplishments ticked off one at a time, what the step hands back, and a plain
 sentence naming everything still outstanding. Not only when the button is live:
 a disabled button is not an explanation, and the thing a player needs to read is
@@ -643,11 +665,12 @@ Village Commons is the end of the current arc; turning the last step on later is
 a one-line change to that predicate.
 
 **Improving a building never takes it out of service** (`isOperational`). Storage,
-housing and `nearestStore` all count a building that is mid-upgrade, at its
-current level. Without that, improving the kingdom's only store drops capacity to
-zero, which leaves nobody able to fetch materials for the work under way — a
-deadlock the headless run hit on the first attempt. The commons makes this
-load-bearing rather than theoretical: it is the only store a young kingdom has.
+housing and every question about where goods live all count a building that is mid-upgrade, at its
+current level. Without that, improving the only building that keeps a material
+drops its room to zero, which leaves nobody able to fetch the materials for the
+work under way — a deadlock the headless run hit on the first attempt. The
+commons makes this load-bearing rather than theoretical: before there is a
+lodge, its hundred wood is the only wood storage a kingdom has.
 
 **The commons earns nothing, and that is most of its job.** It is in
 `LEISURE_BUILDINGS`, and unlike the other spots there people stay half again as
@@ -674,9 +697,21 @@ with no quarry has any stone at all, which is the cheapest way to catch a new
 source being added by accident.
 
 **The mine works the ground it stands on, not the boulders lying on it.** There
-are no nodes involved and nothing to walk out to: `needsRock` on the def makes
-`footprintProblem` refuse any spot that is not on or against rocky terrain, and
-after that the seam is endless. What the site decides is only how *fast* —
+are no nodes involved: `needsRock` on the def makes `footprintProblem` refuse any
+spot that is not on or against rocky terrain, and after that the seam is endless.
+
+There *is* something to walk out to, and it is a place rather than a resource.
+`findRockFace` picks a walkable rocky tile inside `rangeOf` and the miner works
+there and carries the load back; nothing about that tile depletes, and the claim
+on it exists only so two miners do not stand in the same spot. It is there
+because a building whose workers never leave its own two-by-two produces its
+material out of the air, which is the one thing this economy does not do — and
+because now that the mine is also where stone is *kept*, the walk to the face
+and back is the only walking the trade has left. A mine hemmed in so completely
+that no rocky tile in reach can be stood on falls back to working at the
+building, which is what every mine used to do.
+
+What the site decides is only how *fast* —
 `rockInRange` counts the rocky tiles inside `rangeOf`, and `richnessMul` turns
 that into a multiplier between `RICH_MIN` and 1. Thin rock means slow, never
 idle, and the placement bar says so in those words: telling somebody their mine
@@ -705,7 +740,7 @@ it is not: the whole point of the building is that it is one place with one job
 at it.
 
 **There are two ways to feed a kingdom and neither is the real one.** The
-storehouse hands over the **Wheat Farm** and the **Fishing Hut** together, and
+first staffed lodge or mine hands over the **Wheat Farm** and the **Fishing Hut** together, and
 the **Kitchen** opens on the first thing worth cooking out of either — one
 flour, or one fish. So a kingdom that never sows and a kingdom that never casts
 arrive at the same building by different roads, and nothing downstream asks
@@ -716,7 +751,7 @@ which road it was:
 A loaf and a cooked fish fill somebody up identically, are worth identically
 much to Vibes, and count identically toward `stats.cooked`, which is what the
 Village Commons asks for. Villagers have a `favoriteFood` and it is personality
-and nothing else: `mealFor` reaches for theirs if it is in store and takes the
+and nothing else: `mealFor` reaches for theirs if the kitchen has any and takes the
 other quite happily if it is not. **Do not let a preference become a
 requirement** — no building's output, no Vibe and no arrival may ever read it.
 
@@ -765,9 +800,10 @@ connection. Do not wire the wildlife survey into the catch.
   time.
   They grow through improvement rather than duplication, and rather than
   building a second you **move** the one you have.
-- **`maxCount: [...]`** — Cabin and Storehouse, indexed by the commons' level.
-  Not unique, not unlimited; the count is one of the things the commons hands
-  over as it grows.
+- **`maxCount: [...]`** — the Cabin, and only the Cabin, indexed by the commons'
+  level. Not unique, not unlimited; the count is one of the things the commons
+  hands over as it grows. The Storehouse used to be the other one and is gone
+  from the game entirely; see "Deliberately removed".
 - **`maxTotal: n`** — the comforts. A flat ceiling nothing raises, because those
   counts are what hold the decoration half of Vibes to sixty. Nothing is freely
   repeatable any more.
@@ -789,8 +825,11 @@ time, and only steps across in `finishRelocation` when the site is done.
 
 That ordering is the entire point of the feature. Anything that tore the
 building down first would lose the kingdom its only quarry halfway through
-moving the quarry, drop storage below what is already stored, or turf workers
-out of a workplace that does not exist yet.
+moving the quarry, drop a compartment below what is already in it, or turf
+workers out of a workplace that does not exist yet. Everything stored inside
+steps across with the building, because it was never anywhere else — `relocheck`
+asserts it, since a move that quietly emptied the woodpile would look exactly
+like a move that did not until somebody went to build something.
 
 **The record that survives a move is the original, moved.** `finishRelocation`
 changes `b.x/b.y` and deletes the site; the id never changes, so every
@@ -829,33 +868,76 @@ farm plot, or a task so two villagers do not walk to the same one. Always releas
 through `releaseClaim` — it also clears the tile/plot flags. Plot claims are
 keyed `farmId * 100 + slot`.
 
-**Gluts, not jams.** `glutOf()` makes specialists stop when their own resource
-exceeds 35% of storage capacity. Without it, woodcutters fill the barn and the
-food chain starves. This is the mechanism that makes "the kingdom stalls but
-never collapses" actually true.
+**Every resource lives in the building that produces it, and nowhere else.**
+`Building.store` is the whole of the kingdom's stock — `storesOf` in `defs.ts`
+says what each building keeps and how much of it, one compartment per resource
+at the `STORAGE_TIERS` figure for its level. `holdsOf` answers "what is this
+building the home of": what it mines, what it cooks, plus a `holds` list for the
+three whose produce comes off the map rather than off a recipe (the lodge's
+wood, the farm's wheat, the hut's catch). The commons' `cache` is the one
+compartment that has nothing to do with what its building makes.
 
-**Food is glutted against the people who eat it, not against the barn**, and
-that is a different question. `FOOD_CHAIN_VALUE` in `defs.ts` says what each
+Four functions in `state.ts` are the whole interface and everything goes through
+them: `homeFor` (where a load is taken — **nearest wins, full stop**, and the
+lodge gets the wood only because a woodcutter measures it from the lodge),
+`sourceOf` (where somebody goes to fetch), `roomIn`, and `totalOf` / `capacityOf`
+for the aggregates the interface shows. There is no shared pool and no
+`nearestStore`; do not reintroduce either.
+
+**A workshop's bench is not storage, and the gap between them is the design.**
+`Building.input` holds 50 of each ingredient at level one and 100 improved
+(`INPUT_TIERS`), against 250 and 1,000 for the thing it makes. Wheat *lives* at
+the farm; the windmill keeps enough to be getting on with and walks over for
+more. Close that gap and every workshop quietly becomes a second granary for its
+own inputs, and "where does this resource live" stops having an answer. The
+panel labels the two separately for the same reason.
+
+The forge is the one place they touch on purpose: `hasInputs` counts bench plus
+the building's own storage, so a smith making steel reaches for an iron bar off
+the stack rather than fetching one from a building that would have been the
+forge anyway. `spendInput` takes from the bench first and the stack second.
+
+**Nothing is stopped by a number about the whole kingdom any more.** A gatherer
+stops when *the compartment in front of them* is full, which is a question about
+one building, and a full woodpile now says nothing whatever about the larder.
+The old rule — stop past a third of the shared store — is gone with the pool it
+measured, and there is no reason left to bring it back: it existed only to keep
+a woodcutter from crowding the supper out of a pool they were both in.
+
+**Food is the one thing still judged against the kingdom rather than the shelf**,
+and that is a different question. `FOOD_CHAIN_VALUE` in `defs.ts` says what each
 link is worth on a plate — a wheat is a meal, a flour is one and a half, a fish
 is one — and `foodComfort` is what the kingdom is content to hold: five meals a
 head plus a small pantry. Two rules come out of that, and they must stay
 separate:
 
 - **cooked food** (`PREPARED_FOODS`) is judged on `preparedFood(g)` alone;
-- **ingredients** are judged on `foodPotential(g)` against `foodComfort ×
-  FOOD_CHAIN_HEADROOM`, so the farmers, the millers and the fishers all ease off
-  together and the cooks stopping does not just move the pile upstream.
+- **everything else** is judged on `foodPotential(g, stage)` against
+  `foodComfort × FOOD_CHAIN_HEADROOM`, where `FOOD_CHAIN_STAGE` says which link
+  is asking and the count runs from that link *downstream*.
 
-Crossing those two wires is a real bug and it has been made once: measuring the
-*cooks* against the whole pipeline stops them for having too much to cook, which
-is the one job that would have fixed it. Seed 12345 came out of a twenty-three
-day run with seventy raw fish, eighty wheat, no supper at all and nineteen
-people hungry in front of it. `simcheck` now fails a run whose larder is wildly
-out of proportion to its population, in either direction.
+**A job counts its own step and everything after it, never what is waiting
+behind it.** That is the whole rule, and it exists because a link closed by the
+very pile it would clear can never open again. The sources — a farmer sowing, a
+fisher casting — see the whole chain, which is intended and is why they ease off
+together. The miller sees flour and what flour becomes, and *not* the sheaves in
+the barn, because grinding does not add food to the kingdom, it moves food
+along. The cooks see only supper.
+
+Both halves of that have been got wrong once each, and both failures hide.
+Measuring the *cooks* against the whole pipeline stops them for having too much
+to cook: seed 12345 came out of a twenty-three-day run with seventy raw fish,
+eighty wheat, no supper at all and nineteen people hungry in front of it.
+Measuring the *miller* the same way is worse, because it is an absorbing state —
+a hundred and fifty-nine sheaves at the farm were on their own enough to hold
+the chain over its threshold, so the mill stopped, so the sheaves stayed, and
+the run ended with three loaves for twenty people and food Vibes at 8 of 30.
+`simcheck` fails a run whose larder is wildly out of proportion to its
+population, in either direction, which is what caught the second one.
 
 It applies to **workshops as well as gatherers**, and that was missing for a
 long time without showing: a mill with wheat coming in and no kitchen built yet
-ground every last sheaf into flour, filled the store with it, and left the
+ground every last sheaf into flour, filled the shared store with it, and left the
 miners who would have cut the stone the kitchen was waiting on with nowhere to
 put anything down. `chooseRecipe` checks the glut before a workshop starts
 anything, and `planGeneralWork`'s restock step goes through the same function, so
@@ -872,7 +954,7 @@ shares, and the lodge is the only way to have it faster than a trickle.
 
 It is emphatically **not a gate**, and the difference matters. The reserve caps
 *fetching*, never storing or spending: a site takes its materials a dozen at a
-time and the store is topped back up between loads, so a ninety-wood commons is
+time and the wood storage is topped back up between loads, so a ninety-wood commons is
 paid for in seven trips rather than not at all. A kingdom that never staffs a
 lodge still grows — measured, with the lodge taken out of the harness's staffing
 list entirely: on seed 12345 it reaches ten people in twenty-three days, fed,
@@ -904,12 +986,12 @@ which is the same nothing-is-ever-punishing rule as everywhere else. `Focus`
 lives on the `Building`, is saved, and `focusOptions` offers only what this
 building at this level can actually produce.
 
-**Putting a load down never fails.** `deposit()` is clipped by capacity, but
-`deliver()` — what a villager carrying goods actually calls — always accepts the
-lot, so the store can briefly read over its limit while loads land. This is not
-sloppiness, it is the fix for a hard deadlock: `think()` refuses to make a new
-plan for anybody still holding something, so when a full store rejected a
-delivery the villager walked to the barn and back forever and the kingdom could
+**Putting a load down never fails.** `deposit()` is clipped by the compartment,
+but `deliver()` — what a villager carrying goods actually calls — always accepts
+the lot, so a compartment can briefly read over its limit while loads land. This
+is not sloppiness, it is the fix for a hard deadlock: `think()` refuses to make a
+new plan for anybody still holding something, so when a full compartment rejected a
+delivery the villager walked to it and back forever and the kingdom could
 never build again. Capacity governs when people stop *fetching more*
 (`storageFree(g) < 4` in the gathering planners); it must never govern whether
 something already in someone's arms can be set down. `simcheck` now fails on any
@@ -1080,8 +1162,8 @@ cottage into one long purple slab. They are drawn at the middle of the footprint
 rather than where they actually are, which is the doorstep, because the honest
 position would show somebody asleep on the porch — the exact thing going indoors
 was meant to stop. Depth sorting still applies to the whole business, so a
-storehouse standing in front of a cabin hides its sleepers, which is what a
-storehouse standing in front of a cabin does.
+windmill standing in front of a cabin hides its sleepers, which is what a
+windmill standing in front of a cabin does.
 
 ---
 
@@ -1446,10 +1528,11 @@ positioned off a hard-coded 48 and went straight through the resources the day
 the top bar grew a fourth pill; both of its rules read `--top-h` now.
 
 **Below 560 pixels the resource chips take a row of their own**, under the two
-pills that are each a single number — people-and-Vibes, and the store. Three
-pills and a clock do not fit across a phone held upright, and the strip is the
-only one of them that can shrink, so it was squeezed to nothing while the store
-pill ran on underneath the clock. Sideways there is width for all of it and
+pill that is a single number — people-and-Vibes. That pill, the clock and the
+chips do not fit across a phone held upright, and the strip is the only one of
+them that can shrink, so it was squeezed to nothing while the rest ran on
+underneath. It matters more now that every chip carries its capacity as well as
+its amount. Sideways there is width for all of it and
 vertical space is what is short, so that rule is by width rather than by
 `.compact`.
 
@@ -1465,6 +1548,16 @@ cursor has been showing the ghost for as long as the player cared to look.
 both call `askDemolish`, which only sets `Game.demolishTarget`; the question
 appears in the building's own footer if that panel is open and in the bottom bar
 if it is not. It is the one action here that waiting does not undo.
+
+**…and it refuses outright while the building still holds anything.**
+`Game.holdingProblem` names what is inside — "The kitchen still holds 180 bread
+and 90 cooked fish" — and `askDemolish` and `removeBuilding` both consult it.
+Now that storage lives in buildings, demolition is the only thing in the game
+that could destroy goods, and it is not allowed to. Refusing is the only answer
+that neither loses the stock nor makes it reappear somewhere nobody carried it
+to, and it costs the player nothing but time: spending what is inside is what
+they were going to do with it anyway. Relocation is untouched — a move keeps the
+building and everything in it.
 
 **Accessibility lives in `ui/a11y.ts`.** `Focus` moves focus into an opened
 panel, traps `Tab` inside true modals, and hands focus back on close — via a
@@ -1541,9 +1634,12 @@ be replaced.
   *closer* to the centre than the main body's own radius, so they were entirely
   inside it and the "bigger" lake came out 7% smaller than the plain circle it
   replaced.
-- **Bumping `SAVE_VERSION` makes every existing kingdom unopenable.** That is the
-  deliberate policy — files are refused rather than guessed at — but it means the
-  bump is the whole decision, not a detail of one. The message the player gets
+- **Bumping `SAVE_VERSION` makes every existing kingdom unopenable.** It is at 9
+  as of the storage redesign, and that bump was the whole decision rather than a
+  detail of one: a version 8 file records one pile of goods belonging to the
+  kingdom, and splitting it between buildings would be inventing where things
+  had been kept. Refusing rather than guessing is the deliberate policy, and it
+  is the reason the bump is the whole decision. The message the player gets
   lives in `ui.ts`, and must not name a particular update.
 
 ---
@@ -1551,6 +1647,10 @@ be replaced.
 ## Conventions
 
 - Comments explain **why**, not what. Match the density already in the file.
+- **Player-facing copy says "storage", never "store".** Storage capacity, wood
+  storage, the kitchen's storage, storage is full, in storage. Internal names
+  (`b.store`, `storesOf`) are fine and deliberate; the word the player reads is
+  not. There is no building called a store any more, so nothing needs the noun.
 - British-ish spelling in user-facing copy ("favourite", "colour"); code
   identifiers are whatever reads best.
 - No new runtime dependencies without asking. The zero-dependency,
@@ -1586,6 +1686,30 @@ forge's mithril recipe are all written down and none of them is reachable, and
 ---
 
 ## Deliberately removed
+
+**The shared store is gone, and the Storehouse went with it.** There used to be
+one pool of goods belonging to the kingdom, fed by buildings with a `storage`
+number on their def, and a Storehouse whose entire job was to raise its ceiling.
+All of it is deleted: `BuildingDef.storage`, `GameState.stock`, `nearestStore`,
+`storageCapacity`, `storageUsed`, `storageFree`, the store meter in the top bar,
+the Storage build category and the building itself, sprite and all. Every
+resource now lives in the building that produces it, in a compartment of its own.
+
+Do not bring back a building whose purpose is to hold what something else made.
+Not a warehouse, not a granary, not a woodpile, not an annexe: the tiers are set
+generously precisely so that the answer to "there is nowhere to put this" is
+*improve the building that keeps it*, which is a decision about a place on the
+map rather than a decision to build one more box. If playtesting ever shows a
+real late-game need, that is a deliberate reopening of the question and not a
+tidy-up.
+
+The Storehouse also carried a second, quieter job — it shortened the walk,
+because villagers took loads to whichever store was nearest. That is gone with
+it, and it costs something measurable: a kingdom that never staffs a lodge
+builds about a fifth less over twenty-three days than it did, because every
+fetch is now a walk to the one building that keeps the material. It is still
+fed, still at 90 Vibes, still never stuck — but that is the price, and it is the
+thing to look at first if the early game ever feels slow.
 
 **Coins are gone, and the goal reward went with them.** There used to be a
 fourteenth resource that lived outside the storage pool, was paid out by three
@@ -1681,13 +1805,17 @@ Commons · with a bed free somebody always arrives, in 6–9 game-minutes at one
 villager, 18–26 at two or three, 25–35 to seven, 35–50 to fifteen and 50–75
 after that, Vibes deciding where in the window · Vibes are 60 decorations + 30
 food + 10 wellbeing, and the sixteen comforts a kingdom may keep come to exactly
-60 · Master rank is ~10–15 real hours of dedicated work in one trade · storage is a
-single shared pool fed by storage buildings: nothing at all until the Base Camp
-is finished, then 60 / 200 / 450 / 800 as the commons grows, and +250 per
-storehouse · housing is Cabins (2 / 4 / 6 beds) plus the commons' two beds
-outdoors, which never increase · the kingdom keeps as many Cabins and
-Storehouses as the commons has levels, 1 each at Base Camp up to 4 each at
-Kingdom Commons, and exactly one of each principal production building · a lodge
+60 · Master rank is ~10–15 real hours of dedicated work in one trade · **storage
+is per resource and lives in the building that makes it**, 250 of each at level
+one and 1,000 / 2,500 / 5,000 as that building is improved, every resource in a
+compartment of its own — so a mine holds 250 stone as a Quarry and 2,500 each of
+stone, ore and coal as a Deep Mine · workshop benches hold 50 of each
+ingredient, 100 improved · the Base Camp keeps 100 wood and nothing else, at
+every level, which is the whole of the kingdom's storage until a lodge stands ·
+housing is Cabins (2 / 4 / 6 beds) plus the commons' two beds
+outdoors, which never increase · the kingdom keeps as many Cabins as the commons
+has levels, 1 at Base Camp up to 4 at Kingdom Commons, and exactly one of each
+principal production building · a lodge
 or quarry reaches 13 tiles, and the mine's seam 13 / 15 / 17 / 19 as it is sunk
 deeper · a mine works at full pace on 70 rocky tiles inside that reach and at
 0.55× on none, never at nothing · the forge is 1 ore → 1 iron bar with no coal
@@ -1712,9 +1840,19 @@ about 100 tiles of water and shallows, a main body with one or two lobes pushed
 out along the shore rather than out through it, and about one island in two
 hundred has one that meets the sea and becomes a bay.
 
-Per-resource shelf limits — one good never taking more than a share of the
-store — have been discussed and deliberately deferred. Any such limit has to
-clear the early costs (a Storehouse is 25 wood against an opening capacity of
-50) or it recreates the deadlock it was meant to prevent. `WOOD_RESERVE` is the
-nearest thing to one that survived, and only because it caps *fetching* rather
+Per-resource shelf limits used to be the open question here, and the storage
+redesign is the answer to it: every good now has a limit of its own and takes
+nothing from any other. The rule that made the old shared pool workable —
+clearing the early costs, or the limit recreates the deadlock it was meant to
+prevent — still applies and is now about the Base Camp's hundred wood, which is
+the one compartment tight enough to bind on anything (see the commons ladder).
+`WOOD_RESERVE` survives untouched, and only because it caps *fetching* rather
 than storing.
+
+What is genuinely deferred is *extra* storage: a warehouse, a granary, a stone
+yard, an annexe, anything whose job is to hold what another building made. None
+of that exists, none of it is scaffolded, and the tiers above are deliberately
+generous so that the question does not come up until playtesting says it does.
+A run of seven hundred game-minutes reaches day twenty-four with wood, stone,
+ore and coal all sitting at their ceilings and nothing waiting on any of them,
+which is the shape of a kingdom that does not need more room.

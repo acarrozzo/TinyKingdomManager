@@ -740,6 +740,46 @@ export function workSpot(g: GameState, x: number, y: number, tire: number): void
  * would make "thirteen tiles" eighteen at the corners, and this is a figure the
  * placement bar says out loud.
  */
+/**
+ * Somewhere in the rock for a miner to actually stand and swing.
+ *
+ * The mine works the ground rather than a node, so this is not a resource being
+ * claimed — nothing here depletes and nothing runs out. It is only a place to
+ * be, and the reason it exists at all is that a building whose workers never
+ * leave its two-by-two footprint is a building with nothing to watch. Nearest
+ * wins, and a face somebody is already at is skipped so two miners do not stand
+ * in the same spot.
+ *
+ * Null when every rocky tile in reach is built over or unreachable, which the
+ * placement rule makes rare and does not make impossible; the caller falls back
+ * to working at the building, which is what it used to do everywhere.
+ */
+export function findRockFace(
+  g: GameState,
+  cx: number,
+  cy: number,
+  radius: number,
+): { x: number; y: number } | null {
+  let best: { x: number; y: number } | null = null;
+  let bestD = Infinity;
+  const r2 = radius * radius;
+  const x0 = clamp(Math.floor(cx - radius), 0, g.w - 1);
+  const x1 = clamp(Math.ceil(cx + radius), 0, g.w - 1);
+  const y0 = clamp(Math.floor(cy - radius), 0, g.h - 1);
+  const y1 = clamp(Math.ceil(cy + radius), 0, g.h - 1);
+  for (let y = y0; y <= y1; y++)
+    for (let x = x0; x <= x1; x++) {
+      const t = g.tiles[y * g.w + x];
+      if (t.terrain !== 'rocky' || t.claimed) continue;
+      const d2 = (x - cx) ** 2 + (y - cy) ** 2;
+      if (d2 > r2 || d2 >= bestD) continue;
+      if (!isWalkable(g, x, y)) continue;
+      bestD = d2;
+      best = { x, y };
+    }
+  return best;
+}
+
 export function rockInRange(
   g: { tiles: Tile[]; w: number; h: number },
   cx: number,

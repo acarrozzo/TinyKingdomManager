@@ -16,7 +16,7 @@
  * not a personal inventory system: see `think()`, which hands the carried load
  * straight back to the ordinary hauling logic the moment the camp stands.
  *
- * There is only ever one placement. The camp *is* the fire, the store and the
+ * There is only ever one placement. The camp *is* the fire, the woodpile and the
  * first two beds, so asking a second time where to put any of them would be
  * asking the same question twice.
  */

@@ -16,7 +16,7 @@
  * that left, and the map agrees with the building list afterwards.
  */
 
-import { newGame, assignJob, buildingById, makeBuilding, removeBuilding, storageCapacity } from '../src/sim/state';
+import { newGame, assignJob, buildingById, deliver, makeBuilding, removeBuilding, roomIn, totalOf } from '../src/sim/state';
 import { completeConstruction, updateVillagers } from '../src/sim/villager';
 import { updatePopulation } from '../src/sim/population';
 import { updateGoals } from '../src/sim/goals';
@@ -97,14 +97,27 @@ step(400);
 const camp = g.buildings.find((b) => b.def === 'commons')!;
 if (!camp || camp.stage !== 'done') throw new Error('camp never finished');
 
-g.stock.wood = 400;
-g.stock.stone = 400;
+/*
+ * Fill the kingdom up. There is no shared pile to set any more, so this fills
+ * every compartment that will take the material — which for wood before a lodge
+ * exists is the camp's hundred, and afterwards the lodge's own woodpile. The
+ * move itself costs thirty, so a full camp is comfortably enough to pay for it
+ * either way; topping the lodge up afterwards is what lets the harness watch a
+ * *loaded* building move, which is the thing worth checking.
+ */
+function fill(res: 'wood' | 'stone'): void {
+  for (const b of g.buildings) deliver(g, b, res, roomIn(b, res));
+}
+fill('wood');
 const lodgeSpot = freeSpot('lodge', camp);
 const lodge = put('lodge', lodgeSpot.x, lodgeSpot.y);
 completeConstruction(g, lodge);
 lodge.level = 2;
 lodge.name = 'The Old Lodge';
 const built = lodge.built;
+fill('wood');
+// Something in the woodpile, so the move is carrying stock as well as a name.
+const carriedStock = lodge.store.wood ?? 0;
 const worker = g.villagers[0];
 assignJob(g, worker, lodge.id);
 step(20);
@@ -114,7 +127,7 @@ const oldY = lodge.y;
 const target = freeSpot('lodge', { x: camp.x + 8, y: camp.y + 8 }, 3);
 
 // --- start the move --------------------------------------------------------
-const stockBefore = g.stock.wood;
+const stockBefore = totalOf(g, 'wood');
 const site = makeBuilding(g, 'lodge', target.x, target.y, rng);
 site.stage = 'building';
 site.relocOf = lodge.id;
@@ -146,7 +159,7 @@ ok(rl.movingTo === site.id && rs.relocOf === lodge.id, 'a half-finished move sur
 // here is that it finishes correctly, not that it finishes quickly.
 step(3000);
 if (g.buildings.some((b) => b.relocOf)) {
-  console.log(`  note  the move was still under way after 3000s (store cap ${storageCapacity(g)})`);
+  console.log(`  note  the move was still under way after 3000s (${Math.floor(totalOf(g, 'wood'))} wood in the kingdom)`);
 }
 
 ok(!g.buildings.some((b) => b.relocOf), 'the site is gone once the move is done');
@@ -157,12 +170,20 @@ ok(after.level === 2, 'it kept its level');
 ok(after.name === 'The Old Lodge', 'it kept its name');
 ok(after.built === built, 'it kept the day it was built');
 ok(after.workers.includes(worker.id), 'it kept its worker');
+/*
+ * The one thing storage adds to this list, and the reason it belongs here: a
+ * move that lost the woodpile would look exactly like a move that did not,
+ * right up until somebody went to build something. `finishRelocation` keeps the
+ * original record and throws the site away, so the stock comes along for free —
+ * which is precisely the sort of thing that stays true until somebody tidies it.
+ */
+ok((after.store.wood ?? 0) > 0, `it kept what was in it (${Math.floor(after.store.wood ?? 0)} wood of ${Math.floor(carriedStock)})`);
 ok(worker.workplace === after.id, 'the worker still points at it');
 ok(after.stage === 'done' && !after.movingTo, 'it is finished and no longer moving');
 ok(g.buildings.filter((b) => b.def === 'lodge').length === 1, 'there is still exactly one lodge');
 
 const paid = relocateCost('lodge').wood ?? 0;
-ok(g.stock.wood <= stockBefore - paid + 60, `the move was paid for (${paid} wood)`);
+ok(totalOf(g, 'wood') <= stockBefore - paid + 60, `the move was paid for (${paid} wood)`);
 
 // The old ground has to be genuinely free, or it is a hole in the map forever.
 let oldClear = true;

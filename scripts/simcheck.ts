@@ -19,8 +19,10 @@ import {
   foodComfort,
   housingCapacity,
   makeBuilding,
+  capacityOf,
+  contentsOf,
   preparedFood,
-  storageCapacity,
+  totalOf,
 } from '../src/sim/state';
 import { severelyHungry, vibesOf } from '../src/sim/vibes';
 import { arrivalEta, arrivalWindow } from '../src/sim/population';
@@ -37,13 +39,15 @@ import {
   GOOD_SPOT,
   SCHEDULE,
   SPECIES,
+  buildingName,
   rangeOf,
   relocateCost,
+  storesOf,
   upgradeCostOf,
   upgradeReqsOf,
 } from '../src/sim/defs';
 import { rng } from '../src/core/util';
-import type { Building, BuildingId, GameState } from '../src/types';
+import type { Building, BuildingId, GameState, ResourceId } from '../src/types';
 import { RESOURCE_ORDER } from '../src/types';
 import { seasonForDay } from '../src/sim/state';
 import { serialize } from '../src/save/save';
@@ -107,11 +111,6 @@ function findSpot(def: BuildingId, near: { x: number; y: number }, minR = 3, max
   return null;
 }
 
-/** Plays the kingdom the way a player would, reacting to what it needs. */
-function usedStorage(state: GameState): number {
-  return RESOURCE_ORDER.reduce((n, k) => n + state.stock[k], 0);
-}
-
 /** Starts an improvement on the least-improved building of a kind, if allowed. */
 function improve(state: GameState, def: BuildingId): boolean {
   const d = BUILDINGS[def];
@@ -124,7 +123,7 @@ function improve(state: GameState, def: BuildingId): boolean {
     if (upgradeReqsOf(def, b.level).some((r) => !r.met(state))) continue;
     const cost = upgradeCostOf(def, b.level);
     let afford = true;
-    for (const k in cost) if (state.stock[k as 'wood'] < (cost[k as 'wood'] ?? 0)) afford = false;
+    for (const k in cost) if (totalOf(state, k as 'wood') < (cost[k as 'wood'] ?? 0)) afford = false;
     if (!afford) continue;
     b.upgrading = true;
     b.stage = 'building';
@@ -189,7 +188,7 @@ function moveTo(state: GameState, b: Building, x: number, y: number): boolean {
       if (t.terrain === 'water' || t.terrain === 'shallow') return false;
     }
   const cost = relocateCost(b.def);
-  for (const k in cost) if (state.stock[k as 'wood'] < (cost[k as 'wood'] ?? 0)) return false;
+  for (const k in cost) if (totalOf(state, k as 'wood') < (cost[k as 'wood'] ?? 0)) return false;
 
   const site = makeBuilding(state, b.def, x, y, rng);
   site.stage = 'building';
@@ -280,17 +279,14 @@ function autoplay(state: GameState): void {
    * A list in order of preference rather than a single choice, and that is not
    * a tidying-up: the chain used to pick one thing and, if the kingdom could
    * not afford it, do nothing whatever. With stone gated behind a quarry that
-   * became a standstill — a kingdom saving for a bakery it had no stone for
-   * would not build the storehouse that would have let anyone gather any, and
-   * sat at six people for twenty days. A player looks down the list.
+   * became a standstill — a kingdom saving for a kitchen it had no stone for
+   * would not build the mine that would have let anyone cut any, and sat at six
+   * people for twenty days. A player looks down the list.
    */
   const wants: BuildingId[] = [];
   const full = beds - state.villagers.length < 1;
-  const cramped = storageCapacity(state) > 0 && usedStorage(state) > storageCapacity(state) * 0.8;
   if (full && improve(state, 'cabin')) return; // Started; nothing else this tick.
   if (!has('cabin') || full) wants.push('cabin');
-  if (cramped) wants.push('storehouse');
-  if (!has('storehouse')) wants.push('storehouse');
   if (!has('lodge')) wants.push('lodge');
   if (!has('quarry')) wants.push('quarry');
   // Both branches of the food chain, in the order a player meets them: the hut
@@ -314,7 +310,7 @@ function autoplay(state: GameState): void {
   }
   // Grow the commons whenever the kingdom has earned it. This is the spine of
   // the progression now, so the harness leans on it before anything else — a
-  // run that never gets past a Base Camp is a run that never sees a storehouse.
+  // run that never gets past a Base Camp is a run that never sees a Well.
   improve(state, 'commons');
   // And sink the mine deeper whenever the kingdom has earned it. It is the other
   // ladder in the game, and a run that never gets past a Quarry is a run that
@@ -322,17 +318,26 @@ function autoplay(state: GameState): void {
   improve(state, 'quarry');
   considerMove(state);
 
-  // Improving a storehouse is what a player does when they are allowed only so
-  // many of them. Without this the harness asks for a fifth storehouse it can
-  // never have and the kingdom quietly runs out of room instead.
-  if (atBuildLimit(state, 'storehouse') && usedStorage(state) > storageCapacity(state) * 0.75) {
-    improve(state, 'storehouse');
+  /*
+   * Improving whatever has run out of room. This is the storage half of the
+   * game as a player now meets it: there is no barn to extend, so a full
+   * woodpile is a reason to improve the *lodge*, and a full larder a reason to
+   * improve the *kitchen*. Without it the harness would let a compartment sit
+   * at its ceiling for twenty days with the fix one click away.
+   */
+  for (const b of state.buildings) {
+    if (b.stage !== 'done' || b.upgrading) continue;
+    const room = storesOf(b.def, b.level);
+    const tight = (Object.keys(room) as ResourceId[]).some(
+      (res) => (room[res] ?? 0) > 0 && (b.store[res] ?? 0) > (room[res] ?? 0) * 0.85,
+    );
+    if (tight && improve(state, b.def)) break;
   }
 
   for (const def of wants) {
     // Play by the same rules the interface enforces: the menu opens a step at a
     // time, and the kingdom keeps only so many of each kind, so the harness can
-    // no more reach for a fifth storehouse than the player can.
+    // no more reach for a fifth cabin than the player can.
     if (!availableToBuild(state, def) || atBuildLimit(state, def)) continue;
     const cost = BUILDINGS[def].cost;
     let afford = true;
@@ -351,7 +356,7 @@ function autoplay(state: GameState): void {
        * is the standstill this list was rewritten to avoid.
        */
       if (k === 'wood') continue;
-      if (state.stock[k as 'wood'] < (cost[k as 'wood'] ?? 0)) afford = false;
+      if (totalOf(state, k as 'wood') < (cost[k as 'wood'] ?? 0)) afford = false;
     }
     if (!afford) continue;
     // Woodcutters want trees; the mine wants rocky ground under it, which is a
@@ -553,7 +558,31 @@ for (let i = 0; i < totalSteps; i++) {
 const line = (s = '') => console.log(s);
 line(`\n=== ${minutes} game-minutes simulated (${(minutes / 30).toFixed(1)} kingdom days) ===\n`);
 line(`Day ${g.day}, ${g.season} of year ${g.year}   ·   population ${g.villagers.length}`);
-line(`Storage ${Object.entries(g.stock).map(([k, v]) => `${k} ${Math.floor(v)}`).join('  ')}   (cap ${storageCapacity(g)})`);
+/*
+ * Storage, resource by resource and against the room the kingdom has for it.
+ * There is no total to print any more and printing one would be inventing it:
+ * "1,200 of 4,750" across thirteen compartments is a figure nothing in the game
+ * ever computes, and it would hide the only thing worth seeing here, which is
+ * whether any one of them has hit its ceiling.
+ */
+line(
+  'Storage ' +
+    RESOURCE_ORDER.map((res) => {
+      const held = Math.floor(totalOf(g, res));
+      const cap = capacityOf(g, res);
+      if (held === 0 && cap === 0) return '';
+      return `${res} ${held}/${cap || '—'}${cap > 0 && held >= cap ? ' FULL' : ''}`;
+    })
+      .filter(Boolean)
+      .join('  '),
+);
+line(
+  'Kept at  ' +
+    g.buildings
+      .filter((b) => b.stage === 'done' && contentsOf(b).length > 0)
+      .map((b) => `${buildingName(b.def, b.level)}: ${contentsOf(b).map((c) => `${c.qty} ${c.res}`).join(', ')}`)
+      .join('   ·   '),
+);
 line(
   `Stats: built ${g.stats.built}  harvested ${g.stats.harvested}  baked ${g.stats.baked}` +
     `  caught ${g.stats.caught}  cooked ${g.stats.cooked}` +
@@ -571,8 +600,8 @@ line(
   const hut = g.buildings.find((b) => b.def === 'fishhut');
   const rest = hut ? averageRest(hut) : 1;
   line(
-    `\nFood: bread ${Math.floor(g.stock.bread)}  cooked fish ${Math.floor(g.stock.cookedFish)}` +
-      `  ·  raw fish ${Math.floor(g.stock.fish)}  flour ${Math.floor(g.stock.flour)}  wheat ${Math.floor(g.stock.wheat)}`,
+    `\nFood: bread ${Math.floor(totalOf(g, 'bread'))}  cooked fish ${Math.floor(totalOf(g, 'cookedFish'))}` +
+      `  ·  raw fish ${Math.floor(totalOf(g, 'fish'))}  flour ${Math.floor(totalOf(g, 'flour'))}  wheat ${Math.floor(totalOf(g, 'wheat'))}`,
   );
   line(
     `Larder ${(preparedFood(g) / Math.max(1, g.villagers.length)).toFixed(1)} meals a head` +
@@ -684,17 +713,39 @@ for (const a of g.animals) {
     problems.push(`a ${def.name.toLowerCase()} is in the ${t.terrain} at ${Math.round(a.x)},${Math.round(a.y)}`);
   }
 }
-for (const k in g.stock) {
-  const val = g.stock[k as 'wood'];
-  if (val < -0.001) problems.push(`negative ${k}: ${val}`);
-  if (!Number.isFinite(val)) problems.push(`non-finite ${k}`);
+for (const res of RESOURCE_ORDER) {
+  const val = totalOf(g, res);
+  if (val < -0.001) problems.push(`negative ${res}: ${val}`);
+  if (!Number.isFinite(val)) problems.push(`non-finite ${res}`);
 }
-const used = usedStorage(g);
-// A full store may be overshot by whatever was already in people's arms — loads
-// already carried are always allowed to land. Anything beyond that is a leak.
+/*
+ * Every compartment separately, because there is no longer a single ceiling to
+ * check against. A compartment may be overshot by whatever was already in
+ * people's arms when it filled — loads already carried are always allowed to
+ * land, and that is the rule that stops the full-store deadlock. Anything
+ * beyond one full round of deliveries is a leak.
+ */
 const inFlight = g.villagers.length * CARRY_CAPACITY;
-if (used > storageCapacity(g) + inFlight + 1) {
-  problems.push(`storage overflowed: ${Math.round(used)} > ${storageCapacity(g)} (+${inFlight} in flight)`);
+for (const b of g.buildings) {
+  const room = storesOf(b.def, b.level);
+  for (const k in room) {
+    const res = k as ResourceId;
+    const held = b.store[res] ?? 0;
+    if (held > (room[res] ?? 0) + inFlight + 1) {
+      problems.push(
+        `${buildingName(b.def, b.level)} overflowed ${res}: ${Math.round(held)} > ${room[res]} (+${inFlight} in flight)`,
+      );
+    }
+  }
+  // Anything in a compartment the building is not the home of is a leak of a
+  // different kind: something has put goods somewhere nothing will ever fetch
+  // them from, and they are lost to the kingdom without ever being destroyed.
+  for (const k in b.store) {
+    const res = k as ResourceId;
+    if ((b.store[res] ?? 0) > 0 && !(room[res] ?? 0)) {
+      problems.push(`${buildingName(b.def, b.level)} is holding ${Math.round(b.store[res] ?? 0)} ${res}, which it does not keep`);
+    }
+  }
 }
 // The full-store deadlock: the planner will not give a new plan to anybody
 // holding goods, so a carrier who has run out of ideas is stuck for good.
@@ -715,14 +766,14 @@ for (const v of g.villagers) {
 if (!g.buildings.some((b) => b.def === 'fishhut') && g.stats.caught > 0) {
   problems.push(`${g.stats.caught} fish caught in a kingdom with no fishing hut`);
 }
-if (!g.buildings.some((b) => b.def === 'kitchen') && g.stock.cookedFish + g.stock.bread > 0) {
+if (!g.buildings.some((b) => b.def === 'kitchen') && totalOf(g, 'cookedFish') + totalOf(g, 'bread') > 0) {
   problems.push('cooked food in a kingdom with no kitchen');
 }
 // The larder is measured against the people who eat out of it, not the barn.
 // Runaway food is what the whole comfort rule exists to stop, and it is the one
 // balance failure that hides — a kingdom with four hundred loaves looks fine.
 {
-  const meals = g.stock.bread + g.stock.cookedFish;
+  const meals = totalOf(g, 'bread') + totalOf(g, 'cookedFish');
   const roof = foodComfort(g) + g.villagers.length * CARRY_CAPACITY;
   if (meals > roof) {
     problems.push(`${Math.floor(meals)} meals for ${g.villagers.length} people (comfortable is ${Math.round(foodComfort(g))})`);
@@ -741,8 +792,8 @@ for (let i = 0; i < g.tiles.length; i++) {
 // Stone has exactly one source. Any at all in a kingdom with no quarry means
 // something is handing it out — a goal reward, a cleared boulder, a helper with
 // a chisel — and the whole shape of the early game rests on there being none.
-if (!g.buildings.some((b) => b.def === 'quarry') && g.stock.stone > 0) {
-  problems.push(`${Math.floor(g.stock.stone)} stone in a kingdom with no quarry`);
+if (!g.buildings.some((b) => b.def === 'quarry') && totalOf(g, 'stone') > 0) {
+  problems.push(`${Math.floor(totalOf(g, 'stone'))} stone in a kingdom with no quarry`);
 }
 
 /*
@@ -754,16 +805,16 @@ if (!g.buildings.some((b) => b.def === 'quarry') && g.stock.stone > 0) {
 {
   const mine = g.buildings.find((b) => b.def === 'quarry' && b.stage === 'done');
   const depth = mine?.level ?? 0;
-  if (depth < 2 && g.stock.ironOre > 0) problems.push(`${Math.floor(g.stock.ironOre)} iron ore without an Iron Mine`);
-  if (depth < 3 && g.stock.coal > 0) problems.push(`${Math.floor(g.stock.coal)} coal without a Deep Mine`);
-  if (!g.buildings.some((b) => b.def === 'forge') && g.stock.ironBar + g.stock.steelBar > 0) {
+  if (depth < 2 && totalOf(g, 'ironOre') > 0) problems.push(`${Math.floor(totalOf(g, 'ironOre'))} iron ore without an Iron Mine`);
+  if (depth < 3 && totalOf(g, 'coal') > 0) problems.push(`${Math.floor(totalOf(g, 'coal'))} coal without a Deep Mine`);
+  if (!g.buildings.some((b) => b.def === 'forge') && totalOf(g, 'ironBar') + totalOf(g, 'steelBar') > 0) {
     problems.push('bars in a kingdom with no forge');
   }
 }
 
 // Mithril is written down and nothing produces it. If any ever turns up, the
 // level-4 gate or the extraction filter has come undone.
-if (g.stock.mithrilOre > 0 || g.stock.mithrilBar > 0) {
+if (totalOf(g, 'mithrilOre') > 0 || totalOf(g, 'mithrilBar') > 0) {
   problems.push('mithril exists, and it is not supposed to');
 }
 

@@ -49,7 +49,7 @@ export function buildListMarkup(game: Game, env: UIEnv): string {
     /*
      * How many stand, out of how many are allowed. Shown on every limited kind
      * whether or not the kingdom is at the ceiling — knowing there is room for
-     * one more storehouse is as much a part of planning as being told there is
+     * one more cabin is as much a part of planning as being told there is
      * not, and a count that appears only when you are blocked teaches nothing.
      */
     const limit = buildLimit(g, id);
@@ -78,7 +78,7 @@ export function buildListMarkup(game: Game, env: UIEnv): string {
           <span class="cost">${costLine(id)}</span></span>
           <span class="desc">${esc(def.desc)}</span>
           ${tally}${vibes}
-          ${affordable ? '' : `<span class="warnline">Not enough in store yet</span>`}</button>`;
+          ${affordable ? '' : `<span class="warnline">Not enough in storage yet</span>`}</button>`;
     const list = groups.get(def.category) ?? [];
     list.push(html);
     groups.set(def.category, list);
@@ -151,7 +151,7 @@ export function placementBarMarkup(game: Game, env: UIEnv): string {
         icon: '⛏',
         title: `Remove the ${def.name.toLowerCase()}?`,
         state: 'warn',
-        body: 'Half of what it cost comes back to the store. Anyone working or sleeping there will find somewhere else.',
+        body: 'Half of what it cost comes back to wherever that material is kept. Anyone working or sleeping there will find somewhere else.',
         actions: `<button class="btn small danger primary" data-act="confirm-demolish">Remove it</button>
           <button class="btn small" data-act="cancel-place">Cancel</button>`,
       });
@@ -319,7 +319,7 @@ export function toolHintMarkup(game: Game, env: UIEnv): string {
     body:
       game.blockReason ??
       (short
-        ? `Not enough in store right now — it needs ${plainCost(t.def)}.`
+        ? `Not enough in storage right now — it needs ${plainCost(t.def)}.`
         : `${liveRange(game, t.def, 1)}Click a clear spot on the map. Costs ${plainCost(t.def)}; villagers will carry the materials over and build it.`),
     actions: `<button class="btn small" data-act="cancel-tool">Done ${env.touch ? '' : '<kbd>Esc</kbd>'}</button>`,
   });

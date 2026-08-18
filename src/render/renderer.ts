@@ -1044,8 +1044,10 @@ export class Renderer {
   /** Warm light behind the windows of a building someone is using. */
   private drawLitWindows(bd: Building, sprite: BuildingSprite, dx: number, dy: number, alpha = 1): void {
     if (this.darkness < 0.08 || bd.stage !== 'done' || sprite.windows.length === 0) return;
-    const def = BUILDINGS[bd.def];
-    const occupied = bd.residents.length > 0 || bd.workers.length > 0 || !!def.storage;
+    // Somebody is in there. It used to include "or it is a store", for the
+    // storehouse, which had neither residents nor workers and still wanted lit
+    // windows; there is no such building any more.
+    const occupied = bd.residents.length > 0 || bd.workers.length > 0;
     if (!occupied) return;
     const b = this.bctx;
     b.save();
@@ -1437,7 +1439,7 @@ export class Renderer {
         const def = BUILDINGS[bd.def];
         const sprite = getBuildingSprite(bd.def, def.w, def.h, bd.level, g.season, bd.seed, 'done');
         if (sprite.windows.length === 0) continue;
-        if (bd.residents.length === 0 && bd.workers.length === 0 && !def.storage) continue;
+        if (bd.residents.length === 0 && bd.workers.length === 0) continue;
         const leftX = toScreenX(bd.x, bd.y + def.h - 1) - HALF_W - sprite.padX - this.viewX;
         const topY = toScreenY(bd.x, bd.y) - HALF_H - sprite.rise - this.viewY;
         for (const wdw of sprite.windows) {
