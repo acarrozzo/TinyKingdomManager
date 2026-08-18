@@ -204,7 +204,6 @@ export const RESOURCE_META: Record<string, { name: string; icon: string; color: 
   steelBar: { name: 'Steel Bar', icon: '🔗', color: '#c2cbd6' },
   mithrilOre: { name: 'Mithril Ore', icon: '🔷', color: '#7fb6cf' },
   mithrilBar: { name: 'Mithril Bar', icon: '💠', color: '#a8e0f0' },
-  coin: { name: 'Coins', icon: '🪙', color: '#f0c860' },
 };
 
 /** Where each resource comes from and where it goes, for the top-bar hover. */
@@ -260,10 +259,6 @@ export const RESOURCE_INFO: Record<string, { from: string; used: string }> = {
   mithrilBar: {
     from: 'Nowhere yet. The forge would want one mithril ore and four coal, if there were any ore.',
     used: 'Nothing, since there is none of it.',
-  },
-  coin: {
-    from: 'Set aside now and then when the kingdom reaches something.',
-    used: 'Nothing yet. They sit in a tin and wait for a use.',
   },
 };
 
@@ -467,6 +462,7 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     // second cabin of two, and this is what makes that the obvious move.
     maxCount: [1, 2, 3, 4],
     housing: [2, 4, 6],
+    sheltered: true,
     light: [{ x: 1.0, y: 1.35, radius: 36, color: '#ffc06a' }],
     solid: true,
   },

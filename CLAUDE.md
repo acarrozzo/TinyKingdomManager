@@ -479,6 +479,22 @@ version — including pinning somebody at the commons — and sets
 cabin would quietly undo whatever arrangement was just made. The flag clears
 if the house is demolished, or through "let them settle wherever".
 
+**A cabin takes its sleepers in; the commons does not.** `sheltered` on a
+`BuildingDef` says the beds are under a roof, and `sleepingIndoors(g, v)` in
+`state.ts` is the one place that answers "is this person inside" — asleep, at a
+finished home, and that home `sheltered`. The renderer leaves anybody it answers
+for out of the world entirely: no figure, no shadow, no name, no badge. Nothing
+in the sim moves, so "Here now" still counts them and the roster still says
+where they sleep; they walk to the door exactly as before and stop being drawn
+when they get there.
+
+Two halves of that are deliberate. The commons is **not** `sheltered`, because
+its two beds are bedrolls by the fire and a young kingdom whose only night-time
+inhabitants vanished would look abandoned rather than asleep. And going indoors
+is a *rendering* fact rather than a position: putting somebody on a tile under a
+solid building would mean pathing out of a blocked tile in the morning, for a
+picture the hover fade already gives.
+
 **Beds are the population cap, and there is no other one.** `housingCapacity`
 is the whole of it — two beds at the commons at every level, two, four or six in
 a Cabin — and `bedsFree` is what `updatePopulation` asks. There is no hidden
@@ -512,6 +528,22 @@ countdown, and never the jitter.
 returns before it touches anything while founding runs, so the first companion
 sets off when the Base Camp's second bed exists and not from a clock that was
 already running. During founding the top bar reads `1/1` rather than `1/0`.
+
+**Somebody who has just walked in is marked until they have been looked at.**
+`met` on a `Villager` is false from `makeVillager` and set by `Game.meet` — the
+only thing that clears it is that person's card being opened, from the map or
+from the roster, and nothing about time passing does. It is saved, and an older
+kingdom opens with everybody met (`met: v.met ?? true`), because a settled
+village greeting its own twenty residents as strangers is a worse failure than
+missing one real newcomer.
+
+It says the same thing in three places at once and they clear together: a star
+beside them on the map, a `new` tag on their row in People, and a count on the
+People button (`NavState.newcomers`). The founder is the one exception, set met
+in `newGame` — the opening is three minutes of watching that one person, and a
+mark saying somebody new has turned up would be telling the player what they are
+already doing. It is a mark and never a toast or a modal: a kingdom that
+interrupts you to introduce someone is a kingdom you stop leaving running.
 
 **Vibes are how nice the place is, out of a hundred, and they do exactly one
 thing.** `sim/vibes.ts` is the only place that reckons them, out of three parts:
@@ -997,6 +1029,60 @@ little by `darkness` so it does not become the brightest thing at night. It is
 still pixel art in the world buffer, unlike the names and speech bubbles, which
 are screen-space text drawn after upscaling.
 
+**Two more marks go on after the lighting, and they are a different kind of
+thing.** `drawAttention()` draws a workplace with nobody at it (`wantsWorker`,
+the trade's own tool on a ringed plate) and somebody nobody has looked at yet
+(`!v.met`, a star beside their head). Both are *asks* rather than descriptions,
+so they stand down in clean view — `showMarks` on `RenderOptions`, which is
+`!cleanMode` and deliberately not the activity-badge setting: turning off "what
+everybody is doing" is not the same as turning off "this lodge is standing
+idle". They pulse on one shared phase, because two of them out of step read as
+an animation and one slow rise and fall across the kingdom reads as the place
+waiting.
+
+`wantsWorker` is **nobody at all**, never "short-handed". A quarry with one
+miner of three is a quarry that works, and a mark on every unfilled slot would
+be a mark on nearly every building nearly all the time.
+
+**Hovering a building fades it, and shows who is asleep inside.** A building
+fades at `HOVER_FADE` when the cursor is on **either** its art or its ground,
+and several may fade at once because each one answers for itself — there is no
+arbitration step, and there must not be. The two rules exist because they answer
+two different questions:
+
+- **the art** — `spriteHit` tests a painted pixel of the building's sprite,
+  through an alpha mask read out of the cached canvas once and kept with it.
+  This is the one the player means: in this projection a roof is drawn over the
+  tiles *behind* the building, so asking the ground what the cursor is on gets
+  the wrong answer for every pixel above the footprint — hovering a cabin's roof
+  used to fade a bench two tiles away. It is pixel-accurate rather than a
+  bounding box because a roof overhang leaves a wedge of empty canvas beside the
+  wall below it, and fading a building while the cursor is on the grass in that
+  wedge is worse than not fading at all.
+- **the ground** — the footprint tile under the cursor, which is what a *click*
+  still selects. Clicking deliberately did not move to the sprite: the tiles
+  behind a roof are only reachable through it, and picking by art would strand
+  them for good. So the building a click would open has to be among the ones
+  that go translucent, or the fade would highlight one thing and the click open
+  another.
+
+`RenderOptions.hoverPx` carries the cursor in world pixels for the first rule;
+`hover` stays the tile, for the second and for everything else.
+
+The indoor sleepers go on **over** the faded wall at `INDOOR_ALPHA`, not under
+it. Under it was the prettier idea — people showing through the wall — but a
+wall at two thirds leaves a third of a villager, which at this size is nothing
+at all; ghosted on top reads as seeing into the house, and solid would read as
+somebody asleep on the roof. They are laid out on a lattice in **tile** space
+and then projected, so the beds stagger the way a floor seen from this angle
+does; spacing them along the screen's x-axis instead turned six people in a
+cottage into one long purple slab. They are drawn at the middle of the footprint
+rather than where they actually are, which is the doorstep, because the honest
+position would show somebody asleep on the porch — the exact thing going indoors
+was meant to stop. Depth sorting still applies to the whole business, so a
+storehouse standing in front of a cabin hides its sleepers, which is what a
+storehouse standing in front of a cabin does.
+
 ---
 
 ## The time of day, drawn three times
@@ -1209,11 +1295,21 @@ buttons disable at each end of the ladder and say the current level.
 campsite marker on the cursor while founding is at `choosing` and takes it off
 the moment the ground is picked; `cancelTool()` deliberately re-arms it rather
 than clearing it, and its hint has no Done button, because at that moment it is
-the only thing the player can do. It is also the only placement in the game that
-lets go of the tool afterwards — every other one stays armed, since laying out a
-row of houses should not mean going back to the menu five times. The marker
-shades all nine tiles rather than the one under the cursor, because the cursor is
-the camp's centre and the footprint is the thing worth seeing.
+the only thing the player can do. The marker shades all nine tiles rather than
+the one under the cursor, because the cursor is the camp's centre and the
+footprint is the thing worth seeing.
+
+**A build tool lets go exactly when there can be no more of that kind.**
+`place()` asks `atBuildLimit` after the building is standing: a Quarry, a
+Kitchen, a Forge or the last Cabin the commons allows all drop the cursor, and a
+lantern with seven of its eight placed stays armed. Both halves matter. Most of
+the kingdom is unique or capped at one per commons level, so staying armed left
+the player holding something the very next click could only refuse, with the row
+it came from greyed out behind it; but the comforts genuinely are laid out in
+rows, and going back to the menu eight times to plant eight lanterns is the
+irritation the armed tool was for in the first place. `atBuildLimit` is the one
+rule for both, so a change to how many of something the kingdom may keep changes
+this with it and nothing has to be remembered.
 
 **Speed lives in Settings → Viewing**, not on the map, along with `space` and
 `1`/`2`/`3`. **Removing a building lives at the foot of the build panel**, not in
@@ -1474,22 +1570,38 @@ land expansion into new chunks · daily / weekly goals · achievements and the
 wider collections · villager requests
 
 The scaffolding they hang off already exists — journal, discovery set, unlock
-keys, per-building job slots, the goal list, the coin resource. Adding one of
-these is mostly new data in `defs.ts` plus a system module, not surgery.
+keys, per-building job slots, the goal list. Adding one of these is mostly new
+data in `defs.ts` plus a system module, not surgery. A currency is not part of
+that scaffolding any more; see "Deliberately removed".
 
 Also unbuilt and worth knowing: there is currently no Carpenter, Scholar,
 Merchant or Animal Keeper profession — the `keeper` job id used to exist with
 nothing using it and has been removed, so adding animal care means adding the
-trade *and* the building it stands in — and `coin` has no sink beyond a single
-goal reward. **Iron and steel
-bars have no sink either** — the chain is the content for now, exactly as the
-coin is. Mithril is a step further out: the resources, the Mithril Mine and the
+trade *and* the building it stands in. **Iron and steel
+bars have no sink** — the chain is the content for now. Mithril is a step
+further out: the resources, the Mithril Mine and the
 forge's mithril recipe are all written down and none of them is reachable, and
 `simcheck` fails the run if any mithril ever exists.
 
 ---
 
 ## Deliberately removed
+
+**Coins are gone, and the goal reward went with them.** There used to be a
+fourteenth resource that lived outside the storage pool, was paid out by three
+goals, and bought nothing whatever — `STORED_RESOURCES` existed solely to
+exclude it, and `deposit` had a branch for it. All of that is deleted:
+`RESOURCE_ORDER` is now the whole list and everything on it is stored, and
+`Goal` has no `reward` field at all. The three goals that paid wood lost it in
+the same pass, which cost the kingdom forty wood spread across the first hour
+and moved the twentieth arrival by two game-minutes in a 700-minute run — worth
+saying out loud because rewards were never displayed anywhere, so no player ever
+knew they had been given anything. That is also the argument against bringing
+them back: a pile appearing in the barn that nobody carried there is the one
+thing the economy is not allowed to do. A save carrying coins still opens —
+`reviveStock` takes only the resources that still exist and drops the rest,
+rather than spreading the saved object wholesale and quietly reviving a key
+nothing iterates.
 
 **Deadfall is gone, and is not coming back.** There used to be six piles of
 fallen branches near the middle of every island — free wood, no axe needed —

@@ -32,6 +32,17 @@ export interface NavState {
   buildActive: boolean;
   modal: ModalKind;
   clean: boolean;
+  /** People nobody has looked at yet; a count beside the roster's own button. */
+  newcomers: number;
+}
+
+/**
+ * The tally on the People button. A count rather than a dot, because "three
+ * people you have not met" is a different afternoon from "one", and it is left
+ * off entirely at nought rather than shown as a zero.
+ */
+function pip(n: number): string {
+  return n > 0 ? `<span class="navpip">${n}</span>` : '';
 }
 
 /** The desktop toolbar: everything at once, because there is room for it. */
@@ -49,7 +60,14 @@ export function toolbarMarkup(nav: NavState): string {
   return [
     b('toggle-build', '🔨 Build', nav.buildOpen, 'Buildings you can place (B)', true, 'primary'),
     `<span class="divider" aria-hidden="true"></span>`,
-    b('modal-people', '👥', nav.modal === 'people', 'People and jobs (P)'),
+    b(
+      'modal-people',
+      `👥${pip(nav.newcomers)}`,
+      nav.modal === 'people',
+      nav.newcomers > 0
+        ? `People and jobs (P) — ${nav.newcomers} nobody has met yet`
+        : 'People and jobs (P)',
+    ),
     b('modal-journal', '📖', nav.modal === 'journal', 'Kingdom journal (J)'),
     b('modal-wildlife', '🔭', nav.modal === 'wildlife', 'Wildlife seen'),
     b('modal-settings', '⚙️', nav.modal === 'settings', 'Kingdoms and settings'),
@@ -70,7 +88,13 @@ export function bottomNavMarkup(nav: NavState): string {
   // something to the kingdom, and reads that way even when it is not the open one.
   return `<nav class="bottomnav" aria-label="Main">
     ${item('toggle-build', '🔨', 'Build', nav.buildActive, 'Build — place a building', nav.buildOpen, 'primary')}
-    ${item('modal-people', '👥', 'People', nav.modal === 'people', 'People and jobs')}
+    ${item(
+      'modal-people',
+      `👥${pip(nav.newcomers)}`,
+      'People',
+      nav.modal === 'people',
+      nav.newcomers > 0 ? `People and jobs — ${nav.newcomers} nobody has met yet` : 'People and jobs',
+    )}
     ${item('modal-journal', '📖', 'Journal', nav.modal === 'journal', 'Kingdom journal')}
     ${item('modal-wildlife', '🔭', 'Wildlife', nav.modal === 'wildlife', 'Wildlife seen')}
     ${item('modal-more', '⋯', 'More', nav.modal === 'more' || nav.modal === 'settings', 'More — settings and clean view')}

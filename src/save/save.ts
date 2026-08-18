@@ -6,8 +6,8 @@
  * simply re-decide what to do the moment the kingdom loads.
  */
 
-import type { GameState, JobId, SpeciesId, Villager } from '../types';
-import { emptyStock } from '../types';
+import type { GameState, JobId, SpeciesId, Stock, Villager } from '../types';
+import { RESOURCE_ORDER, emptyStock } from '../types';
 import { JOB_META } from '../sim/defs';
 import { buildGoals } from '../sim/goals';
 import { restoreIdCounter } from '../sim/state';
@@ -241,6 +241,7 @@ export function serialize(g: GameState): SavePayload {
       favorite: v.favorite,
       favoriteFood: v.favoriteFood,
       arrived: v.arrived,
+      met: v.met,
       history: v.history,
       wakeOffset: v.wakeOffset,
       sleepOffset: v.sleepOffset,
@@ -418,7 +419,7 @@ export function deserialize(raw: unknown): GameState {
       hop: 0,
       ttl: a.ttl ?? 600,
     })),
-    stock: { ...emptyStock(), ...(p.stock ?? {}) },
+    stock: reviveStock(p.stock),
     journal: p.journal ?? [],
     goals,
     unlocked: new Set<string>(p.unlocked ?? []),
@@ -480,6 +481,22 @@ function clampJitter(saved: unknown): number {
   return Number.isFinite(j) ? clamp(j, -1, 1) : rng.range(-1, 1);
 }
 
+/**
+ * Only the resources the kingdom still has are taken across. Spreading the
+ * saved object wholesale would carry a retired one — the coin, which had no
+ * sink and no reason to exist — back in as a key nothing iterates and the store
+ * meter cannot see, which is a stray number waiting to be found years later.
+ */
+function reviveStock(saved: any): Stock {
+  const stock = emptyStock();
+  if (!saved || typeof saved !== 'object') return stock;
+  for (const res of RESOURCE_ORDER) {
+    const n = Number(saved[res]);
+    if (Number.isFinite(n) && n > 0) stock[res] = n;
+  }
+  return stock;
+}
+
 function reviveWildlife(saved: any): GameState['wildlife'] {
   const fresh = newWildlifeTimers();
   if (!saved || typeof saved !== 'object') return fresh;
@@ -537,6 +554,10 @@ function reviveVillager(v: any): Villager {
     favorite: !!v.favorite,
     favoriteFood: v.favoriteFood === 'cookedFish' ? 'cookedFish' : 'bread',
     arrived: v.arrived ?? 1,
+    // A kingdom saved before newcomers were marked opens with everyone already
+    // met. The alternative is a settled village of twenty greeting its own
+    // residents as strangers, which is worse than missing one real newcomer.
+    met: v.met ?? true,
     history: v.history ?? [],
     wakeOffset: v.wakeOffset ?? 0,
     sleepOffset: v.sleepOffset ?? 0,

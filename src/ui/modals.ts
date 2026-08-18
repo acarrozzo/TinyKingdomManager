@@ -802,6 +802,14 @@ export function peopleBody(game: Game, env: UIEnv): string {
   const g = game.state;
   const people = g.villagers.slice().sort((a, b) => a.arrived - b.arrived || a.id - b.id);
 
+  /**
+   * Somebody who has never had their card opened. It sits beside the name in
+   * both shapes of the roster, and it is the same fact the mark on the map and
+   * the count on the People button are showing — opening the card clears all
+   * three at once.
+   */
+  const isNew = (v: Villager) => (v.met ? '' : ' <span class="newtag">new</span>');
+
   const summary = () => {
     const unposted = g.villagers.filter((v) => v.workplace === 0).length;
     const openSlots = g.buildings
@@ -826,7 +834,7 @@ export function peopleBody(game: Game, env: UIEnv): string {
         return `<div class="pcard">
           <button class="who" data-act="select-villager" data-id="${v.id}">
             <canvas class="pic" data-pic="villager" data-id="${v.id}" aria-hidden="true"></canvas>
-            <span class="tx"><span class="nm">${v.favorite ? '★ ' : ''}${esc(v.name)}${v.id === g.founderId ? ' <span class="muted tiny">founder</span>' : ''}</span>
+            <span class="tx"><span class="nm">${v.favorite ? '★ ' : ''}${esc(v.name)}${v.id === g.founderId ? ' <span class="muted tiny">founder</span>' : ''}${isNew(v)}</span>
               <span class="ac">${esc(activityLabel(v))}${b ? ` · <span style="color:${RANK_COLOR[b.rank]}">${b.rank} ${esc(b.job)}</span>` : ''}</span></span>
             <span class="go" aria-hidden="true">›</span>
           </button>
@@ -845,7 +853,7 @@ export function peopleBody(game: Game, env: UIEnv): string {
     .map((v) => {
       const b = best(v);
       return `<div class="people-row">
-        <button class="link plain" data-act="select-villager" data-id="${v.id}">${v.favorite ? '★ ' : ''}${esc(v.name)}${v.id === g.founderId ? ' <span class="muted tiny">founder</span>' : ''}</button>
+        <button class="link plain" data-act="select-villager" data-id="${v.id}">${v.favorite ? '★ ' : ''}${esc(v.name)}${v.id === g.founderId ? ' <span class="muted tiny">founder</span>' : ''}${isNew(v)}</button>
         <select data-act="assign" data-id="${v.id}" aria-label="Job for ${esc(v.name)}">${jobOptionsFor(game, v)}</select>
         <span class="tiny" style="color:${b ? RANK_COLOR[b.rank] : 'var(--faint)'}">${b ? `${b.rank} ${esc(b.job)}` : '—'}</span>
         <button class="btn small" data-act="follow-villager" data-id="${v.id}">Watch</button>

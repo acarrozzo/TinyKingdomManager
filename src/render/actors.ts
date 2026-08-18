@@ -4,7 +4,7 @@
  * person can have their own skin, hair, shirt and hat without a sprite cache.
  */
 
-import type { Animal, GameState, Villager } from '../types';
+import type { Animal, GameState, JobId, Villager } from '../types';
 import { BUILDINGS, SPECIES } from '../sim/defs';
 import { RESOURCE_META } from '../sim/defs';
 import { preparedFood } from '../sim/state';
@@ -387,29 +387,34 @@ const GLYPH_COLORS: Record<string, [string, string]> = {
   star: ['#ffd77a', '#ffd77a'],
 };
 
+/** The tool that stands for a trade, wherever a trade wants a picture. */
+function toolGlyph(job: JobId | undefined): string | null {
+  switch (job) {
+    case 'woodcutter':
+      return 'axe';
+    case 'miner':
+      return 'pick';
+    case 'smith':
+      return 'hammer';
+    case 'farmer':
+      return 'wheat';
+    case 'miller':
+      return 'sails';
+    case 'cook':
+      return 'bread';
+    case 'fisher':
+      return 'fish';
+    default:
+      return null;
+  }
+}
+
 /** Villagers work at a building, so the tool they are holding comes from it. */
 function jobGlyph(g: GameState, v: Villager, fallback: string): string {
   if (!v.workplace) return fallback;
   for (const b of g.buildings) {
     if (b.id !== v.workplace) continue;
-    switch (BUILDINGS[b.def].job) {
-      case 'woodcutter':
-        return 'axe';
-      case 'miner':
-        return 'pick';
-      case 'smith':
-        return 'hammer';
-      case 'farmer':
-        return 'wheat';
-      case 'miller':
-        return 'sails';
-      case 'cook':
-        return 'bread';
-      case 'fisher':
-        return 'fish';
-      default:
-        return fallback;
-    }
+    return toolGlyph(BUILDINGS[b.def].job) ?? fallback;
   }
   return fallback;
 }
@@ -481,6 +486,67 @@ export function drawActivityIcon(ctx: Ctx, g: GameState, v: Villager, sx: number
       px(ctx, left + 1 + c, top + 1 + r, ch === 'X' ? primary : secondary);
     }
   }
+}
+
+/**
+ * Somebody nobody has looked at yet. A star to their left, clear of the
+ * activity badge above them and the hunger pip to their right, so a newcomer
+ * hauling their first crate carries all three without them piling up.
+ */
+export function drawNewcomerMark(ctx: Ctx, sx: number, sy: number, pulse: number): void {
+  const left = Math.round(sx) - 13;
+  const top = Math.round(sy) - 29;
+
+  ctx.save();
+  ctx.globalAlpha = 0.65 + pulse * 0.35;
+  ctx.fillStyle = 'rgba(24,20,16,0.42)';
+  ctx.fillRect(left, top + 1, 7, 5);
+  ctx.fillRect(left + 1, top, 5, 7);
+  for (let r = 0; r < 5; r++) {
+    const row = NEW_STAR[r];
+    for (let c = 0; c < row.length; c++) {
+      if (row[c] === '.') continue;
+      px(ctx, left + 1 + c, top + 1 + r, row[c] === 'X' ? '#ffe6a8' : '#e8b661');
+    }
+  }
+  ctx.restore();
+}
+
+const NEW_STAR = ['..#..', '.#X#.', '#XXX#', '.#X#.', '..#..'];
+
+/**
+ * A workplace asking for somebody. The trade's own tool on a lit plate, with a
+ * ring round it that breathes slowly — slowly on purpose: a lodge with nobody
+ * cutting at it is not an emergency, and this game has none. It is drawn after
+ * the lighting pass like the villagers' badges, because a building standing
+ * idle is exactly the thing worth noticing at dusk.
+ */
+export function drawHiringIcon(ctx: Ctx, job: JobId | undefined, sx: number, sy: number, pulse: number): void {
+  const rows = GLYPHS[toolGlyph(job) ?? 'hammer'];
+  const left = Math.round(sx) - 4;
+  const top = Math.round(sy) - 5;
+
+  ctx.save();
+  ctx.globalAlpha = 0.7 + pulse * 0.3;
+  // The ring is what carries the asking; the plate underneath is the same dark
+  // one every other badge uses, so the two kinds sit together on screen.
+  ctx.fillStyle = '#ffd77a';
+  ctx.fillRect(left - 1, top, 11, 9);
+  ctx.fillRect(left, top - 1, 9, 11);
+  ctx.fillStyle = 'rgba(24,20,16,0.72)';
+  ctx.fillRect(left, top + 1, 9, 7);
+  ctx.fillRect(left + 1, top, 7, 9);
+
+  const [main, shadeColor] = GLYPH_COLORS[toolGlyph(job) ?? 'hammer'];
+  for (let r = 0; r < rows.length; r++) {
+    const row = rows[r];
+    for (let c = 0; c < row.length; c++) {
+      const ch = row[c];
+      if (ch === '.') continue;
+      px(ctx, left + 1 + c, top + 1 + r, ch === 'X' ? main : shadeColor);
+    }
+  }
+  ctx.restore();
 }
 
 /** Tiny per-villager status pip: hungry, tired, or nothing at all. */

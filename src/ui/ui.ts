@@ -463,6 +463,7 @@ export class UI {
       buildActive: this.buildOpen || kind === 'build' || kind === 'demolish',
       modal: this.modal,
       clean: this.game.cleanMode,
+      newcomers: this.game.newcomers(),
     };
   }
 

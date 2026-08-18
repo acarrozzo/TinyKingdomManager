@@ -1363,6 +1363,39 @@ button.tag {
   border-color: rgba(232, 182, 97, 0.42);
   color: var(--accent);
 }
+
+/* How many people nobody has looked at yet, beside the roster's own icon. It
+   rides the icon rather than the corner of the button: the phone's buttons are
+   a column with a label under them, and a corner badge would sit on the word. */
+.navpip {
+  display: inline-block;
+  min-width: 15px;
+  margin-left: 2px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #221c14;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 15px;
+  text-align: center;
+  vertical-align: top;
+}
+/* The same fact in the roster: which of these names is the new one. */
+.newtag {
+  display: inline-block;
+  margin-left: 5px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--accent-dim);
+  border: 1px solid rgba(232, 182, 97, 0.35);
+  color: var(--accent);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
 /* Build leads the five. Four of them are places to look at the kingdom and one
    of them changes it, and a thumb should be able to tell which without reading. */
 .navbtn.primary {

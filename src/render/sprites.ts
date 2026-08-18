@@ -397,10 +397,40 @@ export interface BuildingSprite {
   windows: { x: number; y: number; w: number; h: number; dy: number[] }[];
   /** Where a moving part attaches, in sprite-local pixels (windmill sails). */
   anchor: { x: number; y: number } | null;
+  /**
+   * One bit per pixel of the sprite: painted, or the transparent air around the
+   * art. Built the first time anything asks and then kept with the sprite, since
+   * the sprite is cached and the mask is only true of that one baking.
+   */
+  mask?: Uint8Array;
 }
 
 const buildingCache = new Map<string, BuildingSprite>();
 const PAD = 7;
+
+/**
+ * Whether a sprite actually paints the pixel at `lx, ly` in its own
+ * coordinates. This is what "the cursor is on that building" means: a roof
+ * overhang leaves a wedge of empty canvas beside the wall below it, and a
+ * bounding box would claim the grass in that wedge belongs to the building.
+ *
+ * The mask is read out of the canvas once and kept. `clearBuildingCache` throws
+ * the sprite and its mask away together, which is what a season change wants.
+ */
+export function spriteHit(s: BuildingSprite, lx: number, ly: number): boolean {
+  const w = s.canvas.width;
+  const h = s.canvas.height;
+  if (lx < 0 || ly < 0 || lx >= w || ly >= h) return false;
+  if (!s.mask) {
+    const px = ctxOf(s.canvas).getImageData(0, 0, w, h).data;
+    const mask = new Uint8Array(w * h);
+    // Anything but nearly-clear counts. The art has no soft edges, so this is
+    // a threshold in name only — it is there for the odd shadow at low alpha.
+    for (let i = 0; i < mask.length; i++) mask[i] = px[i * 4 + 3] > 24 ? 1 : 0;
+    s.mask = mask;
+  }
+  return s.mask[ly * w + lx] === 1;
+}
 
 export function clearBuildingCache(): void {
   buildingCache.clear();

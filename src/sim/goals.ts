@@ -18,7 +18,6 @@
 import type { BuildingId, GameState, Goal } from '../types';
 import { BUILDINGS, RESOURCE_META, extractsOf } from './defs';
 import { journal, toast } from './journal';
-import { deposit } from './state';
 import { rankOf } from './defs';
 import { foundingDone } from './founding';
 
@@ -185,7 +184,6 @@ export function buildGoals(): Goal[] {
       desc: 'Somewhere dry to sleep. Pick a spot from the Build menu and place it; you can improve it later rather than replacing it.',
       done: false,
       check: (g) => has(g, 'cabin'),
-      reward: { wood: 10 },
     },
     {
       id: 'store',
@@ -204,7 +202,6 @@ export function buildGoals(): Goal[] {
       desc: 'Build the lodge in or beside a wood — the ring on the map is how far its woodcutters will go — then assign a villager to it.',
       done: false,
       check: (g) => staffed(g, 'lodge'),
-      reward: { wood: 20 },
     },
     {
       id: 'stone',
@@ -234,7 +231,6 @@ export function buildGoals(): Goal[] {
       desc: 'The short way to feed the kingdom. It wants dry land beside water — the lake or the coast, both work — and one person on it. The ring drawn while you place it marks the spots worth casting into.',
       done: false,
       check: (g) => has(g, 'fishhut'),
-      reward: { wood: 10 },
     },
     {
       id: 'catch',
@@ -264,7 +260,6 @@ export function buildGoals(): Goal[] {
       desc: 'The Kitchen turns two flour into three loaves. Villagers eat it when they are hungry, and some of them prefer it to fish.',
       done: false,
       check: (g) => g.stats.baked >= 1,
-      reward: { coin: 25 },
     },
     {
       id: 'cookfish',
@@ -272,7 +267,6 @@ export function buildGoals(): Goal[] {
       desc: 'The same Kitchen, the same cooks, the other recipe. A cooked fish fills somebody up exactly as well as a loaf does.',
       done: false,
       check: (g) => g.stock.cookedFish >= 1 || g.unlocked.has('seen:cookedFish'),
-      reward: { coin: 25 },
     },
     {
       id: 'pop6',
@@ -301,7 +295,6 @@ export function buildGoals(): Goal[] {
       desc: 'One iron ore makes one iron bar, and that part wants no coal whatever. Coal comes later, and only for steel.',
       done: false,
       check: (g) => g.stats.smelted >= 5,
-      reward: { coin: 25 },
     },
     {
       id: 'steel',
@@ -349,12 +342,6 @@ export function updateGoals(g: GameState): void {
     if (!goal.check(g)) continue;
     goal.done = true;
     if (goal.unlocks) for (const key of [goal.unlocks].flat()) unlock(g, key);
-    if (goal.reward) {
-      for (const k in goal.reward) {
-        const res = k as keyof typeof goal.reward;
-        deposit(g, res, goal.reward[res] ?? 0);
-      }
-    }
     toast(g, goal.title, '✓', 'good');
     journal(g, goal.title, '✓');
   }

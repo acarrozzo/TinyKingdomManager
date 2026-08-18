@@ -6,7 +6,7 @@
  */
 
 import type { GameState, ResourceId } from '../types';
-import { RESOURCE_ORDER, STORED_RESOURCES } from '../types';
+import { RESOURCE_ORDER } from '../types';
 import { GAME_MINUTE, RESOURCE_INFO, RESOURCE_META, VIBE_MAX } from '../sim/defs';
 import { bedSources, bedsFree, housingCapacity, preparedFood } from '../sim/state';
 import { arrivalEta } from '../sim/population';
@@ -302,7 +302,7 @@ function resourceTip(game: Game, res: ResourceId): string {
   const info = RESOURCE_INFO[res];
   const store = game.storageInfo();
   const amount = Math.floor(g.stock[res]);
-  const share = res === 'coin' || store.cap <= 0 ? null : Math.round((g.stock[res] / store.cap) * 100);
+  const share = store.cap <= 0 ? null : Math.round((g.stock[res] / store.cap) * 100);
 
   return `<span class="tip-head"><span class="tip-ic">${meta.icon}</span>${esc(meta.name)}
       <b>${fmt(amount)}</b></span>
@@ -315,7 +315,7 @@ function resourceTip(game: Game, res: ResourceId): string {
 function storageTip(game: Game): string {
   const g = game.state;
   const store = game.storageInfo();
-  const rows = STORED_RESOURCES.filter((res) => g.stock[res] > 0)
+  const rows = RESOURCE_ORDER.filter((res) => g.stock[res] > 0)
     .sort((a, b) => g.stock[b] - g.stock[a])
     .map(
       (res) =>
@@ -349,7 +349,7 @@ export function storesBody(game: Game): string {
   const rows = RESOURCE_ORDER.filter((res) => everSeen(game, res) || g.stock[res] > 0 || res === 'wood' || res === 'stone')
     .map((res) => {
       const info = RESOURCE_INFO[res];
-      const share = res === 'coin' || store.cap <= 0 ? null : Math.round((g.stock[res] / store.cap) * 100);
+      const share = store.cap <= 0 ? null : Math.round((g.stock[res] / store.cap) * 100);
       return `<div class="storerow">
         <div class="sr-top"><span class="nm">${RESOURCE_META[res].icon} ${esc(RESOURCE_META[res].name)}</span>
           <span class="amt">${fmt(Math.floor(g.stock[res]))}${share === null ? '' : `<span class="muted tiny"> · ${share}% of the store</span>`}</span></div>
@@ -404,8 +404,6 @@ function everSeen(game: Game, res: ResourceId): boolean {
     case 'mithrilOre':
     case 'mithrilBar':
       return false;
-    case 'coin':
-      return g.stock.coin > 0;
     default:
       return true;
   }

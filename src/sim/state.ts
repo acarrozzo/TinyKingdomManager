@@ -12,7 +12,7 @@ import type {
   Villager,
   VillagerAppearance,
 } from '../types';
-import { PREPARED_FOODS, STORED_RESOURCES, emptyStock } from '../types';
+import { PREPARED_FOODS, RESOURCE_ORDER, emptyStock } from '../types';
 import {
   BUILDINGS,
   DAYS_PER_SEASON,
@@ -64,6 +64,9 @@ export function makeVillager(g: GameState, r: RNG, x: number, y: number, name?: 
     // when their own is not in store. It is worth nothing to anyone.
     favoriteFood: r.pick(PREPARED_FOODS),
     arrived: g.day,
+    // Nobody has been looked at yet. The founder is the exception and says so
+    // for itself in `newGame`: the opening is entirely about watching them.
+    met: false,
     history: [],
     // Their own small shift on the day's outer ends, and a little extra wobble
     // on bedtime. Both are clamped where they are read, so an old kingdom whose
@@ -165,6 +168,9 @@ export function newGame(seed = Math.floor(Math.random() * 1e9)): GameState {
   const founder = makeVillager(g, r, map.arrival.x, map.arrival.y);
   founder.favorite = true;
   founder.activity = 'arriving';
+  // The opening is three minutes of watching this one person, so they need no
+  // mark saying somebody new has turned up. Everybody after them does.
+  founder.met = true;
   founder.history.push({ day: 1, text: 'Walked up the beach with nothing at all.' });
   g.villagers.push(founder);
   g.founderId = founder.id;
@@ -199,10 +205,10 @@ export function storageCapacity(g: GameState): number {
   return cap;
 }
 
-/** Everything physically stacked in the kingdom's stores (coins excluded). */
+/** Everything physically stacked in the kingdom's stores — which is everything. */
 export function storageUsed(g: GameState): number {
   let n = 0;
-  for (const res of STORED_RESOURCES) n += g.stock[res];
+  for (const res of RESOURCE_ORDER) n += g.stock[res];
   return n;
 }
 
@@ -254,10 +260,6 @@ export function foodPotential(g: GameState): number {
 /** Adds to the shared store, clipped by capacity. Returns the amount actually accepted. */
 export function deposit(g: GameState, res: ResourceId, qty: number): number {
   if (qty <= 0) return 0;
-  if (res === 'coin') {
-    g.stock.coin += qty;
-    return qty;
-  }
   const room = storageFree(g);
   const take = Math.min(qty, room);
   g.stock[res] += take;
@@ -303,6 +305,20 @@ export function buildingById(g: GameState, id: number): Building | null {
   if (!id) return null;
   for (const b of g.buildings) if (b.id === id) return b;
   return null;
+}
+
+/**
+ * The building somebody is asleep inside, or null. Sleeping is not on its own
+ * enough to be indoors: the commons' beds are bedrolls by the fire and stay in
+ * view, and anybody with no bed at all rests where they stand. Only a
+ * `sheltered` home takes its residents in — which is what lets the renderer
+ * leave them out of the world and show them through the walls on hover instead.
+ */
+export function sleepingIndoors(g: GameState, v: Villager): Building | null {
+  if (v.activity !== 'sleeping') return null;
+  const home = buildingById(g, v.home);
+  if (!home || !BUILDINGS[home.def].sheltered || home.stage !== 'done') return null;
+  return home;
 }
 
 export function villagerById(g: GameState, id: number): Villager | null {
@@ -438,6 +454,19 @@ export function jobSlots(b: Building): number {
   const def = BUILDINGS[b.def];
   if (!def.slots) return 0;
   return def.slots[Math.min(b.level, def.slots.length) - 1];
+}
+
+/**
+ * A finished workplace with a trade and nobody whatever at it. Deliberately not
+ * "short-handed": a quarry with one miner of three is a quarry that works, and
+ * marking every unfilled slot would put a mark on nearly every building nearly
+ * all the time, which is a mark nobody reads. Nobody at all is the one case
+ * where the building is standing there doing nothing and the player is the only
+ * one who can change it.
+ */
+export function wantsWorker(b: Building): boolean {
+  if (b.stage !== 'done' || !BUILDINGS[b.def].job) return false;
+  return jobSlots(b) > 0 && b.workers.length === 0;
 }
 
 /** Assigns a villager to a workplace, clearing any previous post. Pass 0 to make them a General Worker. */

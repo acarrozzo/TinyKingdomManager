@@ -44,7 +44,7 @@ import {
 } from '../src/sim/defs';
 import { rng } from '../src/core/util';
 import type { Building, BuildingId, GameState } from '../src/types';
-import { STORED_RESOURCES } from '../src/types';
+import { RESOURCE_ORDER } from '../src/types';
 import { seasonForDay } from '../src/sim/state';
 import { serialize } from '../src/save/save';
 import { writeFileSync } from 'node:fs';
@@ -109,7 +109,7 @@ function findSpot(def: BuildingId, near: { x: number; y: number }, minR = 3, max
 
 /** Plays the kingdom the way a player would, reacting to what it needs. */
 function usedStorage(state: GameState): number {
-  return STORED_RESOURCES.reduce((n, k) => n + state.stock[k], 0);
+  return RESOURCE_ORDER.reduce((n, k) => n + state.stock[k], 0);
 }
 
 /** Starts an improvement on the least-improved building of a kind, if allowed. */

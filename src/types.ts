@@ -19,8 +19,7 @@ export type ResourceId =
   | 'ironBar'
   | 'steelBar'
   | 'mithrilOre'
-  | 'mithrilBar'
-  | 'coin';
+  | 'mithrilBar';
 
 /** Roughly the order a kingdom meets them in, which is the order the strip shows. */
 export const RESOURCE_ORDER: ResourceId[] = [
@@ -37,11 +36,7 @@ export const RESOURCE_ORDER: ResourceId[] = [
   'steelBar',
   'mithrilOre',
   'mithrilBar',
-  'coin',
 ];
-
-/** Coins live outside the physical storage pool — they are carried, not stacked in a barn. */
-export const STORED_RESOURCES: ResourceId[] = RESOURCE_ORDER.filter((r) => r !== 'coin');
 
 /**
  * What a hungry villager will actually eat. Both come out of the same kitchen
@@ -68,7 +63,6 @@ export function emptyStock(): Stock {
     steelBar: 0,
     mithrilOre: 0,
     mithrilBar: 0,
-    coin: 0,
   };
 }
 
@@ -228,6 +222,13 @@ export interface BuildingDef {
   how: string;
   /** Sleeping capacity per level. */
   housing?: number[];
+  /**
+   * Its beds are under a roof, so whoever sleeps here goes in at bedtime and is
+   * not drawn again until they wake. The commons' two beds are bedrolls in the
+   * open and deliberately are not this — a young kingdom's nights should still
+   * have somebody in them to look at.
+   */
+  sheltered?: boolean;
   /** Shared storage capacity contributed per level. */
   storage?: number[];
   /** Job slots per level. */
@@ -454,6 +455,13 @@ export interface Villager {
   favoriteFood: ResourceId;
   /** Game-day the villager joined the kingdom. */
   arrived: number;
+  /**
+   * Whether the player has ever opened this person's card. Somebody walks in
+   * every few minutes and it is far too easy for them to become a number in the
+   * top bar, so until they have been looked at once they carry a mark on the
+   * map and a tag in the roster. Cleared by looking, and never set again.
+   */
+  met: boolean;
   history: { day: number; text: string }[];
   /** Personal schedule jitter in day fractions. */
   wakeOffset: number;
@@ -559,8 +567,12 @@ export interface Goal {
   hidden?: boolean;
   /** Evaluated each second. */
   check: (g: GameState) => boolean;
-  reward?: Partial<Record<ResourceId, number>>;
-  /** Build-menu keys this goal opens up. The menu reveals itself a step at a time. */
+  /**
+   * Build-menu keys this goal opens up. The menu reveals itself a step at a
+   * time, and that is the whole of what finishing a goal hands over: there is
+   * no material reward, because goods that appear in the barn are goods nobody
+   * carried there.
+   */
   unlocks?: string | string[];
 }
 

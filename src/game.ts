@@ -55,7 +55,7 @@ import {
 } from './sim/founding';
 import { updateWildlife, rebuildHabitat } from './sim/wildlife';
 import { updatePopulation } from './sim/population';
-import { updateGoals, availableToBuild, buildLimit } from './sim/goals';
+import { updateGoals, availableToBuild, atBuildLimit, buildLimit } from './sim/goals';
 import { journal, toast, updateToasts } from './sim/journal';
 import {
   fishQuality,
@@ -113,6 +113,13 @@ export class Game {
   tool: Tool = { kind: 'none' };
   selection: Selection = { kind: null, id: 0 };
   hover: { x: number; y: number } | null = null;
+  /**
+   * The same cursor, in world pixels rather than tiles. The tile answers what
+   * ground is under the pointer; this answers what *art* is, which is a
+   * different question the moment a roof is drawn over the tiles behind it —
+   * and it is the one the hover fade asks.
+   */
+  hoverPx: { x: number; y: number } | null = null;
   /**
    * Set while the cursor is on the sun or the moon, so the interface can put a
    * word to what it is. Read every frame rather than pushed through `notify()`:
@@ -450,9 +457,11 @@ export class Game {
       showBubbles: this.settings.showBubbles,
       showNames: this.settings.showNames && !this.cleanMode,
       showActivity: this.settings.showActivity && !this.cleanMode,
+      showMarks: !this.cleanMode,
       showGrid: this.tool.kind === 'build' || this.tool.kind === 'camp' || this.tool.kind === 'relocate',
       selection: this.selection,
       hover: this.hover,
+      hoverPx: this.hoverPx,
       ghost: null,
       marker: null,
       range: null,
@@ -651,6 +660,7 @@ export class Game {
       const dy = e.clientY - this.lastPointer.y;
       const was = this.hover;
       this.hover = this.tileUnder(e.clientX, e.clientY);
+      this.hoverPx = this.worldUnder(e.clientX, e.clientY);
       // There is no hover on a touchscreen, only a drag that has not finished.
       // A finger passing over the sun would otherwise leave the tip up.
       this.skyHover = e.pointerType === 'touch' ? null : this.skyUnder(e.clientX, e.clientY);
@@ -694,6 +704,7 @@ export class Game {
 
     canvas.addEventListener('pointerleave', () => {
       this.hover = null;
+      this.hoverPx = null;
       this.skyHover = null;
     });
 
@@ -780,6 +791,7 @@ export class Game {
         this.notify();
       }
       this.hover = this.tileUnder(e.clientX, e.clientY);
+      this.hoverPx = this.worldUnder(e.clientX, e.clientY);
       return;
     }
 
@@ -795,6 +807,7 @@ export class Game {
       this.notify();
     }
     this.hover = this.tileUnder(e.clientX, e.clientY);
+    this.hoverPx = this.worldUnder(e.clientX, e.clientY);
   }
 
   /** True when the tile under the cursor changes what the placement hint says. */
@@ -879,6 +892,7 @@ export class Game {
     }
     const hit = this.pickEntity(cssX, cssY);
     this.selection = hit;
+    this.meet(hit);
     // Clicking anything that is not a person or an animal breaks the follow.
     if (hit.kind !== 'villager' && hit.kind !== 'animal') this.camera.stopFollowing();
     audio.tick();
@@ -1148,9 +1162,13 @@ export class Game {
 
     audio.thud(1.2, 0.05);
     this.selection = { kind: 'building', id: b.id };
-    // The tool stays armed: laying out a row of houses should not mean going
-    // back to the menu five times. The campsite is the one placement that lets
-    // go afterwards, and it is not built through here.
+    // The tool stays armed for anything there is room to build again — laying
+    // out a row of lanterns should not mean going back to the menu eight times.
+    // It lets go the moment there can be no more of that kind, which is most of
+    // them: a cursor still holding a quarry the kingdom is not allowed a second
+    // of can do nothing but refuse, and the row it came from is greyed out
+    // behind it. The campsite lets go too, and is not built through here.
+    if (atBuildLimit(g, def)) this.cancelTool();
     this.notify();
     return true;
   }
@@ -1431,7 +1449,25 @@ export class Game {
 
   select(kind: Selection['kind'], id: number): void {
     this.selection = { kind, id };
+    this.meet(this.selection);
     this.notify();
+  }
+
+  /**
+   * Opening somebody's card is the whole of the acknowledgement a newcomer's
+   * mark is waiting for — from the map, from the roster, from anywhere. It is
+   * deliberately not cleared by time passing or by the toast going away: the
+   * point is that somebody has actually been looked at.
+   */
+  private meet(sel: Selection): void {
+    if (sel.kind !== 'villager') return;
+    const v = villagerById(this.state, sel.id);
+    if (v) v.met = true;
+  }
+
+  /** How many people nobody has looked at yet, for the roster's own tally. */
+  newcomers(): number {
+    return this.state.villagers.filter((v) => !v.met).length;
   }
 
   follow(kind: 'villager' | 'animal', id: number): void {

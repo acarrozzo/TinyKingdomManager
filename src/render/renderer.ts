@@ -8,8 +8,9 @@
  */
 
 import { clamp, hash2 } from '../core/util';
-import type { Building, GameState, PropId, Season, TerrainId, Villager } from '../types';
+import type { Building, BuildingDef, GameState, JobId, PropId, Season, TerrainId, Villager } from '../types';
 import { BUILDINGS, GOOD_SPOT } from '../sim/defs';
+import { sleepingIndoors, wantsWorker } from '../sim/state';
 import { HALF_H, HALF_W, TILE_H, TILE_W, toGridX, toGridY, toScreenX, toScreenY } from '../world/iso';
 import { CAMP_HALF, CAMP_SPAN, fishQuality } from '../world/terrain';
 import { Camera } from './camera';
@@ -26,19 +27,44 @@ import {
   getBuildingSprite,
   getCropSprite,
   mkCanvas,
+  spriteHit,
   type PropSheet,
   type TerrainSheet,
 } from './sprites';
-import { drawActivityIcon, drawAnimal, drawAnimalTag, drawMood, drawVillager } from './actors';
+import {
+  drawActivityIcon,
+  drawAnimal,
+  drawAnimalTag,
+  drawHiringIcon,
+  drawMood,
+  drawNewcomerMark,
+  drawVillager,
+} from './actors';
 
 export interface RenderOptions {
   showBubbles: boolean;
   showNames: boolean;
   /** Badges over villagers saying what they are doing. */
   showActivity: boolean;
+  /**
+   * The two marks that ask something of the player rather than describing the
+   * world: a workplace with nobody at it, and somebody nobody has met. They
+   * stand down in clean view, where the point is to watch and be asked nothing,
+   * and they are deliberately not tied to the activity-badge setting — turning
+   * off "what everyone is doing" is not the same as turning off "this lodge is
+   * standing idle".
+   */
+  showMarks: boolean;
   showGrid: boolean;
   selection: { kind: 'villager' | 'animal' | 'building' | 'tile' | null; id: number; x?: number; y?: number };
   hover: { x: number; y: number } | null;
+  /**
+   * The cursor in world pixels. Buildings fade from this rather than from the
+   * tile, because in this projection a roof is drawn over the tiles *behind*
+   * the building it belongs to — asking the ground what the cursor is on gets
+   * the wrong answer for every pixel of art above the footprint.
+   */
+  hoverPx: { x: number; y: number } | null;
   /** Active build ghost, if the player is placing something. */
   ghost: { def: keyof typeof BUILDINGS; x: number; y: number; valid: boolean } | null;
   /** The campsite marker, during founding only. */
@@ -117,6 +143,19 @@ const STAR_COUNT = 220;
 const OCEAN_W = 512;
 const OCEAN_H = 256;
 
+/**
+ * How much of a building is left when the cursor is on it. Enough to see what
+ * is inside, behind and above it, and enough that the building is still plainly
+ * standing there — a wall you can see through is the point, an outline is not.
+ */
+const HOVER_FADE = 0.65;
+/**
+ * How solid somebody asleep indoors is drawn, over the faded wall in front of
+ * them. Short of full, so they read as a person glimpsed through a wall rather
+ * than as a person lying on top of it.
+ */
+const INDOOR_ALPHA = 0.82;
+
 interface Drawable {
   depth: number;
   order: number;
@@ -134,6 +173,13 @@ interface Badge {
   sx: number;
   sy: number;
   v: Villager;
+}
+
+/** A workplace with nobody at it, waiting on the pass that draws over the dark. */
+interface Hiring {
+  job: JobId | undefined;
+  sx: number;
+  sy: number;
 }
 
 export class Renderer {
@@ -175,6 +221,9 @@ export class Renderer {
   private offY = 0;
   private labels: Label[] = [];
   private badges: Badge[] = [];
+  private hiring: Hiring[] = [];
+  /** People the player has not looked at yet, marked over the dark like the rest. */
+  private newcomers: { sx: number; sy: number }[] = [];
   /** Shadow shapes reused across one frame; see `streak`. */
   private stamps = new Map<string, { c: HTMLCanvasElement; ax: number; ay: number }>();
   private time = 0;
@@ -300,6 +349,8 @@ export class Renderer {
 
     this.labels.length = 0;
     this.badges.length = 0;
+    this.hiring.length = 0;
+    this.newcomers.length = 0;
     this.drawWorld(g, opts);
     // Over the world and under the tools: what is being placed has to stay
     // readable even at the far rim, where the haze is at its strongest.
@@ -307,6 +358,7 @@ export class Renderer {
     this.drawPlacement(g, opts);
     this.applyLighting(g);
     this.drawBadges(g);
+    this.drawAttention();
     this.drawWeather(g);
 
     // Blit the world buffer, upscaled with hard pixel edges.
@@ -627,6 +679,9 @@ export class Renderer {
 
     for (const v of g.villagers) {
       if (v.x < minX - 3 || v.x > maxX + 3 || v.y < minY - 3 || v.y > maxY + 3) continue;
+      // Somebody asleep in a cabin casts nothing: they are indoors, and a
+      // shadow lying on the grass beside the door is the giveaway.
+      if (sleepingIndoors(g, v)) continue;
       this.stamp(sun, 4, 13, toScreenX(v.x, v.y), toScreenY(v.x, v.y));
     }
     for (const a of g.animals) {
@@ -752,6 +807,41 @@ export class Renderer {
 
     const sel = opts.selection;
 
+    /**
+     * Anybody asleep in a cabin is inside it, so they are left out of the world
+     * altogether and put back only through the walls of whatever the cursor is
+     * on. Collected up front because the building's own draw is what shows
+     * them, and that happens before the villager pass would have reached them.
+     */
+    const indoors = new Map<number, Villager[]>();
+    for (const v of g.villagers) {
+      const home = sleepingIndoors(g, v);
+      if (!home) continue;
+      const beds = indoors.get(home.id);
+      if (beds) beds.push(v);
+      else indoors.set(home.id, [v]);
+    }
+
+    /*
+     * What the cursor is on, for the fade. Two rules, and a building matching
+     * either one fades — so several may fade at once, which is the honest
+     * answer when a roof overlaps the one behind it and the cursor is on both.
+     *
+     *   the art  — any painted pixel of a building's sprite (`spriteHit`)
+     *   the ground — the footprint tile under the cursor, as clicking uses
+     *
+     * The second is kept because clicking still goes by the tile: point at a
+     * roof and the click lands on whatever is behind it, so the building that
+     * click would select has to be one of the ones that go translucent.
+     */
+    const hoverTile =
+      opts.hover && opts.hover.x >= 0 && opts.hover.x < g.w && opts.hover.y >= 0 && opts.hover.y < g.h
+        ? g.tiles[opts.hover.y * g.w + opts.hover.x]
+        : null;
+    const groundId = hoverTile?.building ?? 0;
+    const hx = opts.hoverPx ? opts.hoverPx.x - this.viewX : null;
+    const hy = opts.hoverPx ? opts.hoverPx.y - this.viewY : 0;
+
     // Props.
     for (let y = minY; y <= maxY; y++) {
       for (let x = minX; x <= maxX; x++) {
@@ -803,16 +893,38 @@ export class Renderer {
       const openPlan = def.plots || bd.def === 'commons';
       const depth = openPlan ? bd.x + bd.y : bd.x + def.w - 1 + (bd.y + def.h - 1);
       const isSelected = sel.kind === 'building' && sel.id === bd.id;
+      const faded =
+        bd.id === groundId || (hx !== null && spriteHit(sprite, Math.floor(hx) - dx, Math.floor(hy) - dy));
+      const asleep = indoors.get(bd.id) ?? [];
 
       list.push({
         depth: depth - 0.01,
         order: 0,
         draw: () => {
+          if (faded) {
+            b.save();
+            b.globalAlpha = HOVER_FADE;
+          }
           b.drawImage(sprite.canvas, dx, dy);
-          this.drawLitWindows(bd, sprite, dx, dy);
+          this.drawLitWindows(bd, sprite, dx, dy, faded ? HOVER_FADE : 1);
           if (bd.def === 'mill' && bd.stage === 'done' && sprite.anchor) this.drawMillSails(bd, dx + sprite.anchor.x, dy + sprite.anchor.y);
           if (bd.stage === 'building') this.drawSiteProgress(bd, dx, dy, sprite.canvas.width, sprite.canvas.height);
+          if (faded) b.restore();
+          // Whoever is asleep in there, over the faded wall rather than under
+          // it. Under it was the first attempt and it was the prettier idea —
+          // people showing *through* the wall — but a wall at two thirds leaves
+          // a third of a villager, which at this size is nothing at all. Ghosted
+          // on top reads as seeing into the house; drawn solid it would read as
+          // somebody asleep on the roof.
+          if (faded && asleep.length > 0) this.drawIndoors(bd, def, asleep);
+          // The outline is the answer to "which one is selected" and is no use
+          // faded, so it goes on at full strength whatever the cursor is doing.
           if (isSelected) this.outlineFootprint(bd.x, bd.y, def.w, def.h, '#ffd77a');
+          // Collected rather than drawn: it goes on after the lighting, so a
+          // lodge nobody is working stays legible through the evening.
+          if (opts.showMarks && wantsWorker(bd)) {
+            this.hiring.push({ job: def.job, sx: dx + sprite.canvas.width / 2, sy: dy - 3 });
+          }
         },
       });
     }
@@ -846,6 +958,9 @@ export class Renderer {
     // Villagers.
     for (const v of g.villagers) {
       if (v.x < minX - 3 || v.x > maxX + 3 || v.y < minY - 3 || v.y > maxY + 3) continue;
+      // Indoors: no figure, no name, no badge over the doorstep. The lit
+      // windows are what say the cabin has somebody in it.
+      if (sleepingIndoors(g, v)) continue;
       const wx = toScreenX(v.x, v.y);
       const wy = toScreenY(v.x, v.y);
       const selected = sel.kind === 'villager' && sel.id === v.id;
@@ -862,6 +977,10 @@ export class Renderer {
       if (opts.showBubbles && v.say) this.labels.push({ sx, sy: sy - 26, text: v.say.text, kind: 'bubble' });
       // A badge under a speech bubble is just clutter, so the bubble wins.
       else if (opts.showActivity) this.badges.push({ sx, sy, v });
+      // Not part of that choice: somebody new is worth pointing out whether or
+      // not they happen to be saying something, and it is drawn after the
+      // lighting for the same reason the badges are.
+      if (opts.showMarks && !v.met) this.newcomers.push({ sx, sy });
       if (opts.showNames && (selected || v.favorite)) {
         this.labels.push({ sx, sy: sy + 6, text: v.name, kind: 'name' });
       }
@@ -887,15 +1006,50 @@ export class Renderer {
     return { x: toGridX(wx, wy), y: toGridY(wx, wy) };
   }
 
+  /**
+   * The people asleep inside a building the cursor is on, laid out over its
+   * floor rather than where they are actually standing — which is the doorstep,
+   * and putting them there would show somebody asleep on the porch, the very
+   * thing going indoors was meant to stop.
+   *
+   * The lattice is in *tile* space and then projected, which matters more than
+   * it sounds: a room seen from this angle is a diamond, so beds spread over it
+   * stagger down and across the way the floor does. The first attempt spaced
+   * them along the screen's x-axis instead and six people in a cottage came out
+   * as one long purple slab.
+   */
+  private drawIndoors(bd: Building, def: BuildingDef, asleep: Villager[]): void {
+    const cols = Math.max(1, Math.round(Math.sqrt(asleep.length)));
+    const rows = Math.ceil(asleep.length / cols);
+    const spots = asleep.map((v, i) => ({
+      v,
+      fx: bd.x - 0.5 + (((i % cols) + 0.5) / cols) * def.w,
+      fy: bd.y - 0.5 + ((Math.floor(i / cols) + 0.5) / rows) * def.h,
+    }));
+    // Nearer beds over farther ones, the same sort the world pass runs on
+    // everything else standing on the ground.
+    spots.sort((p, q) => p.fx + p.fy - (q.fx + q.fy));
+
+    const b = this.bctx;
+    b.save();
+    b.globalAlpha = INDOOR_ALPHA;
+    for (const s of spots) {
+      const sx = Math.round(toScreenX(s.fx, s.fy) - this.viewX);
+      const sy = Math.round(toScreenY(s.fx, s.fy) - this.viewY);
+      drawVillager(b, s.v, sx, sy, false, s.v.favorite);
+    }
+    b.restore();
+  }
+
   /** Warm light behind the windows of a building someone is using. */
-  private drawLitWindows(bd: Building, sprite: BuildingSprite, dx: number, dy: number): void {
+  private drawLitWindows(bd: Building, sprite: BuildingSprite, dx: number, dy: number, alpha = 1): void {
     if (this.darkness < 0.08 || bd.stage !== 'done' || sprite.windows.length === 0) return;
     const def = BUILDINGS[bd.def];
     const occupied = bd.residents.length > 0 || bd.workers.length > 0 || !!def.storage;
     if (!occupied) return;
     const b = this.bctx;
     b.save();
-    b.globalAlpha = Math.min(1, this.darkness * 1.5);
+    b.globalAlpha = Math.min(1, this.darkness * 1.5) * alpha;
     b.fillStyle = '#ffce7a';
     // Column by column: the panes are parallelograms in the wall, so a single
     // rectangle would light a shape the frame around it does not have.
@@ -1373,6 +1527,23 @@ export class Renderer {
     // brightest thing in a sleeping kingdom.
     this.bctx.globalAlpha = 1 - this.darkness * 0.3;
     for (const badge of this.badges) drawActivityIcon(this.bctx, g, badge.v, badge.sx, badge.sy);
+    this.bctx.globalAlpha = 1;
+  }
+
+  /**
+   * The two marks that are asking for the player rather than describing the
+   * world: a workplace with nobody at it, and somebody who has just arrived and
+   * not been looked at. Both go on after the lighting for the same reason the
+   * activity badges do, and both breathe on one shared phase — two of them
+   * pulsing out of step read as an animation, where one slow rise and fall
+   * across the whole kingdom reads as the place waiting.
+   */
+  private drawAttention(): void {
+    if (this.hiring.length === 0 && this.newcomers.length === 0) return;
+    const pulse = 0.5 + Math.sin(this.time * 1.6) * 0.5;
+    this.bctx.globalAlpha = 1 - this.darkness * 0.25;
+    for (const h of this.hiring) drawHiringIcon(this.bctx, h.job, h.sx, h.sy, pulse);
+    for (const n of this.newcomers) drawNewcomerMark(this.bctx, n.sx, n.sy, pulse);
     this.bctx.globalAlpha = 1;
   }
 
