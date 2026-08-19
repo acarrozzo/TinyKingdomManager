@@ -46,7 +46,8 @@ export function drawVillager(
     v.activity === 'gathering' ||
     v.activity === 'building' ||
     v.activity === 'harvesting' ||
-    v.activity === 'planting';
+    v.activity === 'planting' ||
+    v.activity === 'tending';
 
   // Gait: a two-frame leg swap plus a one-pixel body bob.
   const stride = moving ? Math.floor(v.phase * 6) % 2 : 0;
@@ -136,7 +137,7 @@ export function drawVillager(
     if (v.activity === 'gathering' || v.activity === 'building') {
       px(ctx, tx, ty, '#6b4a2f', 1, 5);
       px(ctx, tx - 1, ty - 1, '#b9bcc2', 3, 2);
-    } else if (v.activity === 'harvesting' || v.activity === 'planting') {
+    } else if (v.activity === 'harvesting' || v.activity === 'planting' || v.activity === 'tending') {
       px(ctx, tx, ty, '#6b4a2f', 1, 4);
       px(ctx, tx, ty - 1, '#c8ccd2', 2, 1);
     }
@@ -435,6 +436,7 @@ function activityGlyph(g: GameState, v: Villager): string | null {
     case 'building':
       return 'hammer';
     case 'planting':
+    case 'tending':
       return 'sprout';
     case 'harvesting':
       return 'wheat';

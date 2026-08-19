@@ -865,7 +865,9 @@ export class Renderer {
       if (bd.stage !== 'done' || bd.plots.length === 0) continue;
       for (const p of bd.plots) {
         if (p.x < minX - 2 || p.x > maxX + 2 || p.y < minY - 2 || p.y > maxY + 2) continue;
-        const stage = p.state === 'empty' ? 0 : p.state === 'ripe' ? 4 : 1 + Math.floor(p.growth * 2.99);
+        // Four stages of green between bare earth and the cut, so a plot two
+        // minutes from ripe looks two minutes from ripe.
+        const stage = p.state === 'empty' ? 0 : p.state === 'ripe' ? 5 : 1 + Math.floor(p.growth * 3.99);
         const sprite = getCropSprite(stage, g.season);
         const wx = toScreenX(p.x, p.y) - HALF_W;
         const wy = toScreenY(p.x, p.y) + HALF_H - sprite.height;

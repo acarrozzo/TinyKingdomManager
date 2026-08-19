@@ -36,7 +36,7 @@ import {
 } from '../sim/defs';
 import { buildingById, homeCapacity, jobSlots, sourceOf, totalOf, villagerById, xpOf } from '../sim/state';
 import { buildLimit, commonsGrants, mineGrants } from '../sim/goals';
-import { labourNeeded, siteNeeds } from '../sim/villager';
+import { foodGlut, labourNeeded, siteNeeds } from '../sim/villager';
 import { protectedBuilding } from '../sim/founding';
 import { fmtDuration } from '../core/util';
 import type { Game } from '../game';
@@ -482,9 +482,14 @@ function buildingWork(game: Game, b: Building): string {
       <div class="tiny muted" style="margin-top:7px;line-height:1.55">${
         b.workers.length === 0
           ? 'With no farmer the plots still creep along, at about a third the pace, but nothing gets sown or gathered in.'
-          : g.season === 'winter'
-            ? 'Wheat is slow in winter. It will pick up again in spring.'
-            : 'Farmers reap what is ripe before sowing anything bare.'
+          : // Bare ground while the kingdom is comfortable is a decision rather
+            // than a stall, and the panel is the only place that can say so —
+            // otherwise a fallow field reads as a farm that has stopped working.
+            bare > 0 && foodGlut(g, 'wheat')
+            ? 'There is plenty to eat, so only part of the field is being kept under seed. What is standing will still be brought in, and the rest goes back under the plough when the larder wants it.'
+            : g.season === 'winter'
+              ? 'Wheat is slow in winter. It will pick up again in spring.'
+              : 'Farmers reap what is ripe, sow what is bare, and hoe whatever is coming on.'
       }</div></div>`;
   }
 

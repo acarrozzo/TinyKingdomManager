@@ -1533,7 +1533,13 @@ function addWindow(
 
 const cropCache = new Map<string, HTMLCanvasElement>();
 
-/** Wheat plot at a given growth stage, 0 (bare earth) to 4 (ready). */
+/**
+ * Wheat plot at a given growth stage, 0 (bare earth) to 5 (ready to cut).
+ *
+ * Gold is reserved for stage 5 and nothing else. Stage 4 is the turn — wheat
+ * going off green — because a field that read as ripe two stages early made a
+ * farmer walking past it look like somebody ignoring a harvest.
+ */
 export function getCropSprite(stage: number, season: Season): HTMLCanvasElement {
   const key = `${stage}|${season}`;
   let c = cropCache.get(key);
@@ -1555,10 +1561,16 @@ export function getCropSprite(stage: number, season: Season): HTMLCanvasElement 
 
   if (stage > 0) {
     const winter = season === 'winter';
-    const green = winter ? '#8fa08c' : stage >= 3 ? '#c9a94e' : '#7fa34c';
-    const tipCol = winter ? '#c8cfc6' : stage >= 3 ? '#e6c964' : '#96bb5c';
+    const ripe = stage >= 5;
+    const turning = stage === 4;
+    const stalk = winter ? '#8fa08c' : ripe ? '#c9a94e' : turning ? '#a8b054' : '#7fa34c';
+    const tipCol = winter ? '#c8cfc6' : ripe ? '#e6c964' : turning ? '#c3c26a' : '#96bb5c';
     const height = 2 + stage * 2;
-    for (let i = 0; i < 9; i++) {
+    // A field fills in as it comes on rather than only growing taller: the same
+    // hashed positions in the same order, so nothing that is already standing
+    // ever moves, and the later stages simply have more of it.
+    const stalks = 5 + stage * 2;
+    for (let i = 0; i < stalks; i++) {
       const hx = hash2(i * 3, i, 55);
       const hy = hash2(i, i * 5, 57);
       const y = 3 + Math.floor(hy * 10);
@@ -1566,8 +1578,11 @@ export function getCropSprite(stage: number, season: Season): HTMLCanvasElement 
       if (width < 8) continue;
       const x = Math.floor(x0 + 3 + hx * (width - 6));
       const yy = baseY - HALF_H * 2 + y;
-      px(ctx, x, yy - height, green, 1, height);
-      if (stage >= 3) px(ctx, x, yy - height - 1, tipCol, 1, 2);
+      px(ctx, x, yy - height, stalk, 1, height);
+      // Ears only once there are ears: heavy heads are the ripe field's tell,
+      // and the turn gets a paler tip a stage before them.
+      if (stage >= 4) px(ctx, x, yy - height - 1, tipCol, 1, 2);
+      if (ripe) px(ctx, x + (i % 2 === 0 ? 1 : -1), yy - height, tipCol, 1, 1);
     }
   }
   cropCache.set(key, c);

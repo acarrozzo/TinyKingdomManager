@@ -236,7 +236,7 @@ export function buildGoals(): Goal[] {
     {
       id: 'farm',
       title: 'Sow a Wheat Farm',
-      desc: 'A farm needs open ground and a farmer. Wheat takes time to ripen. The long way to feed the kingdom, and the one that keeps up once there are a lot of you.',
+      desc: 'A farm needs a broad piece of open ground — five tiles by five — and a farmer. Wheat takes time to ripen. The long way to feed the kingdom, and the one that keeps up once there are a lot of you.',
       done: false,
       check: (g) => totalOf(g, 'wheat') >= 10,
     },

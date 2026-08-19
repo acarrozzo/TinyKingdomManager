@@ -98,10 +98,36 @@ import {
 const BASE_SPEED = 1.15; // tiles per second on plain grass
 const CHOP_SECONDS = 4.5;
 const CHOP_YIELD = 3;
-const PLANT_SECONDS = 3.5;
-const HARVEST_SECONDS = 3.5;
-const HARVEST_YIELD = 3;
-const PLOT_GROW_SECONDS = 200;
+// Field work is deliberately unhurried. A farmer bent over one plot for six
+// seconds reads as somebody working a field; the same job in three was a flicker
+// nobody ever caught sight of.
+const PLANT_SECONDS = 6;
+const HARVEST_SECONDS = 6;
+const TEND_SECONDS = 5;
+// A plot is a small, slow thing now rather than a big, fast one. The kingdom's
+// appetite for wheat is the fixed quantity here — twenty people eat about a
+// third of a sheaf a minute — so how much of the field is green at any moment is
+// entirely a matter of how long one plot takes and how little it gives. Three
+// wheat every three minutes meant two dozen plots could feed the kingdom on two
+// of them, and the other twenty-two stood bare. One every quarter of an hour
+// keeps a quarter of the field under crop and farmers walking about in it.
+const HARVEST_YIELD = 1;
+/** Sheaves a farmer will gather before walking them to the barn. */
+const HARVEST_TRIP = 4;
+const PLOT_GROW_SECONDS = 1500;
+/**
+ * The share of the field that stays under seed whatever the larder says.
+ *
+ * A farm is not a tap. Left purely to the larder it sowed everything at once and
+ * then stood wholly bare for two thirds of the day, which is not what a working
+ * farm looks like from a second monitor. A quarter of the plots kept going comes
+ * to roughly a quarter of a sheaf a minute — under what the kingdom eats, so it
+ * cannot out-produce the appetite it is feeding or crowd the fishing out, and it
+ * means there is always something green in the ground and a reason to be in it.
+ */
+const ALWAYS_SOWN = 1 / 4;
+/** What one bout of hoeing is worth, as a fraction of a plot's whole growth. */
+const TEND_GROWTH = 0.02;
 
 /** Seasons change how fast wheat comes on. Winter is slow, never fatal. */
 const SEASON_GROWTH: Record<string, number> = { spring: 1.1, summer: 1.3, autumn: 0.9, winter: 0.35 };
@@ -124,7 +150,7 @@ const SEASON_GROWTH: Record<string, number> = { spring: 1.1, summer: 1.3, autumn
  * with forty has not. It is a desired reserve rather than a ceiling, and the
  * kitchen's panel is careful to say so.
  */
-function foodGlut(g: GameState, res: ResourceId): boolean {
+export function foodGlut(g: GameState, res: ResourceId): boolean {
   if (FOOD_CHAIN_VALUE[res] === undefined) return false;
   const comfort = foodComfort(g);
   if (PREPARED_FOODS.includes(res)) {
@@ -509,6 +535,16 @@ function doEffect(g: GameState, v: Villager, step: Extract<Step, { t: 'effect' }
       if (p && p.state === 'empty') {
         p.state = 'growing';
         p.growth = 0;
+      }
+      if (p) p.claimed = 0;
+      break;
+    }
+    case 'tend': {
+      const b = buildingById(g, step.id ?? 0);
+      const p = b?.plots[step.slot ?? -1];
+      if (p && p.state === 'growing') {
+        p.growth = Math.min(1, p.growth + TEND_GROWTH);
+        if (p.growth >= 1) p.state = 'ripe';
       }
       if (p) p.claimed = 0;
       break;
@@ -1502,12 +1538,16 @@ function neighbours(g: GameState, x: number, y: number): { x: number; y: number 
   return out;
 }
 
-/** Farmers reap ripe plots first, then sow empty ones. */
+/** Farmers reap ripe plots first, then sow empty ones, then hoe what is growing. */
 function planFarm(g: GameState, v: Villager, farm: Building): boolean {
   let ripe = -1;
   let empty = -1;
+  let green = -1;
+  let fallow = -1;
   let ripeD = Infinity;
   let emptyD = Infinity;
+  let fallowD = Infinity;
+  let greenGrowth = Infinity;
   for (let i = 0; i < farm.plots.length; i++) {
     const p = farm.plots[i];
     if (p.claimed && p.claimed !== v.id) continue;
@@ -1518,15 +1558,35 @@ function planFarm(g: GameState, v: Villager, farm: Building): boolean {
     } else if (p.state === 'empty' && d < emptyD) {
       empty = i;
       emptyD = d;
+    } else if (p.state === 'growing' && p.growth < greenGrowth) {
+      // The furthest behind rather than the nearest, so the field gets worked
+      // round evenly instead of one corner being hoed all afternoon. Hoeing
+      // moves a plot up the order, so this rotates by itself and wants no
+      // remembered "last tended" on the plot.
+      green = i;
+      greenGrowth = p.growth;
+    }
+    // Ground that has been reaped and not sown again is still ground somebody
+    // walks over with a hoe, and while the larder is full it is most of the
+    // field. Nearest wins here: there is nothing to be even-handed about.
+    if (p.state === 'empty' && d < fallowD) {
+      fallow = i;
+      fallowD = d;
     }
   }
 
-  // Reaping wants somewhere for the sheaves to go — the farm's own barn, or a
-  // storehouse once that is full — and a kingdom that is not already sitting on
-  // more meals than it wants. Sowing is unconditional either way: a bare plot
-  // costs nothing to fill and the wheat will not be wanted for three minutes yet.
+  // Reaping wants one thing: somewhere for the sheaves to go — the farm's own
+  // barn, or a storehouse once that is full.
+  //
+  // It deliberately does *not* ask whether the kingdom has enough to eat. A
+  // comfortable larder used to stop the harvest, and what that looked like on
+  // the map was two dozen plots standing gold for a day and a half with an empty
+  // barn behind them and farmers walking past. Wheat is not supper; it is two
+  // buildings away from supper, and the mill and the kitchen already stop
+  // themselves. Standing grain that nobody will cut is the one shortage-shaped
+  // thing in the game that reads as a fault rather than as waiting.
   const drop = dropFor(g, 'wheat', farm.x, farm.y, HARVEST_YIELD);
-  if (ripe >= 0 && drop && !foodGlut(g, 'wheat')) {
+  if (ripe >= 0 && drop) {
     const p = farm.plots[ripe];
     p.claimed = v.id;
     claim(g, v, 'plot', farm.id * 100 + ripe);
@@ -1535,15 +1595,20 @@ function planFarm(g: GameState, v: Villager, farm: Building): boolean {
       { t: 'act', dur: HARVEST_SECONDS, kind: 'harvesting', xp: 'farmer' },
       { t: 'effect', kind: 'reap', id: farm.id, slot: ripe },
     ];
-    // Chain a neighbouring harvest so farmers are not forever walking to store.
-    const second = farm.plots.findIndex((q, i) => i !== ripe && q.state === 'ripe' && !q.claimed);
-    if (second >= 0) {
-      const q = farm.plots[second];
+    // Chain the other ripe plots into the same trip so farmers are not forever
+    // walking to store, and so a load is worth carrying: a plot gives one sheaf,
+    // and a walk to the barn for one sheaf is a farmer running errands.
+    let load = HARVEST_YIELD;
+    for (let i = 0; i < farm.plots.length && load + HARVEST_YIELD <= HARVEST_TRIP; i++) {
+      const q = farm.plots[i];
+      if (i === ripe || q.state !== 'ripe' || q.claimed) continue;
+      if (roomIn(drop, 'wheat') < load + HARVEST_YIELD) break;
       q.claimed = v.id;
+      load += HARVEST_YIELD;
       steps.push(
         { t: 'move', x: q.x, y: q.y },
         { t: 'act', dur: HARVEST_SECONDS, kind: 'harvesting', xp: 'farmer' },
-        { t: 'effect', kind: 'reap', id: farm.id, slot: second },
+        { t: 'effect', kind: 'reap', id: farm.id, slot: i },
       );
     }
     // Into the barn, which is where the kingdom's wheat lives and where the
@@ -1553,7 +1618,18 @@ function planFarm(g: GameState, v: Villager, farm: Building): boolean {
     return true;
   }
 
-  if (empty >= 0) {
+  // Sowing is where the throttle belongs instead, and it is the farm's whole
+  // output: past the quarter that is always kept going, a comfortable kingdom
+  // puts no more ground under seed. That winds the farm down over a harvest
+  // rather than freezing it mid-harvest — what is standing still comes in, the
+  // rest lies fallow, and it goes back under seed when the larder wants it.
+  //
+  // The gate has to stay, because the field is far larger than the kingdom's
+  // appetite and a farm running flat out leaves the fishers with nothing worth
+  // catching. What fills a farmer's day instead is below.
+  const underCrop = farm.plots.reduce((n, p) => n + (p.state === 'empty' ? 0 : 1), 0);
+  const keptGoing = Math.round(farm.plots.length * ALWAYS_SOWN);
+  if (empty >= 0 && (underCrop < keptGoing || !foodGlut(g, 'wheat'))) {
     const p = farm.plots[empty];
     p.claimed = v.id;
     claim(g, v, 'plot', farm.id * 100 + empty);
@@ -1565,7 +1641,37 @@ function planFarm(g: GameState, v: Villager, farm: Building): boolean {
     return true;
   }
 
-  return planGeneralWork(g, v);
+  // Nothing to cut and nothing to sow, and a field is still a field. Hoeing is
+  // the rest of a farmer's day and the reason they stay in it rather than
+  // walking off to carry planks every time the larder is comfortable, and
+  // standing wheat comes on a little faster for it.
+  if (green >= 0) return planTend(g, v, farm, green);
+
+  // A field with nothing whatever growing in it is another matter: that is a
+  // farm between crops, and somebody standing in it has no more of a job than
+  // anyone else. Real work elsewhere comes first, exactly as it does for every
+  // other trade with an empty day.
+  if (planGeneralWork(g, v)) return true;
+
+  // And if there is none of that either, the fallow ground gets turned over.
+  // This yields nothing at all — the tend effect only moves a growing plot
+  // along — which is the point: it is what a farmer does with a quiet afternoon,
+  // not a way round the throttle above.
+  if (fallow >= 0) return planTend(g, v, farm, fallow);
+  return false;
+}
+
+/** One bout of hoeing at a particular plot, growing or bare. */
+function planTend(g: GameState, v: Villager, farm: Building, slot: number): boolean {
+  const p = farm.plots[slot];
+  p.claimed = v.id;
+  claim(g, v, 'plot', farm.id * 100 + slot);
+  v.plan = [
+    { t: 'move', x: p.x, y: p.y },
+    { t: 'act', dur: TEND_SECONDS, kind: 'tending', xp: 'farmer' },
+    { t: 'effect', kind: 'tend', id: farm.id, slot },
+  ];
+  return true;
 }
 
 // ---------------------------------------------------------------------------

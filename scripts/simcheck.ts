@@ -538,7 +538,17 @@ const PHASES = [
   { name: 'evening break (21:00–23:30)', from: SCHEDULE.workEnd, to: SCHEDULE.bed },
 ];
 /** Doing the kingdom's work, as against being somewhere pleasant. */
-const PRODUCTIVE = new Set(['working', 'hauling', 'building', 'gathering', 'planting', 'harvesting', 'cooking', 'fishing']);
+const PRODUCTIVE = new Set([
+  'working',
+  'hauling',
+  'building',
+  'gathering',
+  'planting',
+  'tending',
+  'harvesting',
+  'cooking',
+  'fishing',
+]);
 const routine = PHASES.map(() => ({ asleep: 0, productive: 0, eating: 0, about: 0, walking: 0 }));
 /** Which stretch of the day a moment falls in. Night is the wrap-around, so it is the default. */
 const phaseOf = (t: number): number => {

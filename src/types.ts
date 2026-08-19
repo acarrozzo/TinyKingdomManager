@@ -430,6 +430,7 @@ export type ActivityKind =
   | 'building'
   | 'gathering'
   | 'planting'
+  | 'tending'
   | 'harvesting'
   | 'eating'
   | 'cooking'
@@ -454,7 +455,7 @@ export type Step =
   /** Deferred consequence, applied the instant the preceding action finishes. */
   | {
       t: 'effect';
-      kind: 'eat' | 'sow' | 'reap' | 'batch' | 'extract' | 'catch' | 'arrived' | 'settled';
+      kind: 'eat' | 'sow' | 'tend' | 'reap' | 'batch' | 'extract' | 'catch' | 'arrived' | 'settled';
       id?: number;
       slot?: number;
       /** Which material this stint at the rock face was for, or which recipe ran. */

@@ -97,6 +97,8 @@ export function activityLabel(v: Villager): string {
       return 'Building';
     case 'planting':
       return 'Sowing';
+    case 'tending':
+      return 'Tending the fields';
     case 'harvesting':
       return 'Harvesting';
     case 'eating':
