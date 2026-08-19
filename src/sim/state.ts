@@ -209,7 +209,7 @@ export function isOperational(b: Building): boolean {
  */
 export function capacityIn(b: Building, res: ResourceId): number {
   if (!isOperational(b)) return 0;
-  return storesOf(b.def, b.level)[res] ?? 0;
+  return storesOf(b.def, b.level, b.cacheRetired)[res] ?? 0;
 }
 
 /** What is actually in that compartment. */
@@ -244,9 +244,12 @@ export function overflowRoomIn(b: Building, res: ResourceId): number {
 /**
  * Everything the kingdom physically has of one resource: what is stored, what
  * is sitting on a workshop bench waiting to be used, and what is in somebody's
- * arms. All three are real and all three are the kingdom's, so the aggregate
- * the top bar shows counts the lot — a number that quietly omitted the flour
- * a cook is carrying would flicker every time somebody picked something up.
+ * arms. All three are real and all three are the kingdom's, so every question
+ * the *simulation* asks — can this be afforded, is there enough bread, has the
+ * goal been met — counts the lot. A cost that stopped being affordable because
+ * somebody picked the wood up would be a kingdom arguing with itself.
+ *
+ * It is deliberately not what the top bar shows. See `storedOf`.
  */
 export function totalOf(g: GameState, res: ResourceId): number {
   let n = 0;
@@ -259,11 +262,41 @@ export function totalOf(g: GameState, res: ResourceId): number {
 }
 
 /**
+ * What is actually *in storage* — the compartments, and nothing else.
+ *
+ * This is the headline figure, and splitting it out of `totalOf` is what makes
+ * the capacity beside it honest. Bench supplies and armfuls are counted against
+ * no capacity anywhere, so folding them into the number above a "/ 250" produced
+ * a reading that could sit over its own ceiling for no reason the player could
+ * see. Stored against capacity is one comparison between two like things; the
+ * rest of what the kingdom owns is broken out in the hover.
+ */
+export function storedOf(g: GameState, res: ResourceId): number {
+  let n = 0;
+  for (const b of g.buildings) n += b.store[res] ?? 0;
+  return n;
+}
+
+/** What is sitting on workshop benches, fetched and waiting to be used up. */
+export function benchOf(g: GameState, res: ResourceId): number {
+  let n = 0;
+  for (const b of g.buildings) n += b.input[res] ?? 0;
+  return n;
+}
+
+/** What is in somebody's arms this instant, on its way to or from somewhere. */
+export function carriedOf(g: GameState, res: ResourceId): number {
+  let n = 0;
+  for (const v of g.villagers) if (v.carrying?.res === res) n += v.carrying.qty;
+  return n;
+}
+
+/**
  * How much of one resource the kingdom has room for — primary storage only,
  * deliberately. A workshop's bench is a working supply rather than somewhere to
- * keep things, so counting it here would inflate the headline figure with room
- * nobody may fill. It is why the aggregate occasionally reads a little over its
- * capacity, and the hover says why.
+ * keep things, so counting it here would inflate the figure with room nobody may
+ * fill. Its partner is `storedOf`, which counts the same compartments this
+ * measures: what is in them, against how much they hold.
  */
 export function capacityOf(g: GameState, res: ResourceId): number {
   let n = 0;

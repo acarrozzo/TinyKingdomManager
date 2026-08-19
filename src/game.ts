@@ -36,9 +36,11 @@ import {
 import {
   abandonPlan,
   assignJob,
+  benchOf,
   buildingById,
   capacityIn,
   capacityOf,
+  carriedOf,
   contentsOf,
   deposit,
   homeFor,
@@ -48,6 +50,7 @@ import {
   removeBuilding as removeBuildingFromMap,
   seasonForDay,
   setHome as setVillagerHome,
+  storedOf,
   totalOf,
   villagerById,
 } from './sim/state';
@@ -1377,11 +1380,32 @@ export class Game {
     return `The ${buildingName(b.def, b.level).toLowerCase()} still holds ${what}. Nothing here will throw that away — spend it or move it, and this can come down after.`;
   }
 
+  /**
+   * Why taking this down would leave the kingdom with nowhere at all to put
+   * wood, or null when it would not.
+   *
+   * Wood is the one material General Workers can still fetch by hand, so it is
+   * the one whose home going missing is a trap rather than a pause: a kingdom
+   * with no woodpile has people who can fell a tree and nowhere to set the
+   * armful down, and no way to build the lodge that would fix it, because that
+   * costs wood it cannot hold. Every other resource comes out of a building, so
+   * losing the building stops the supply and the shortage stays a shortage.
+   *
+   * Before the camp's cache retires this can never fire — the camp is a woodpile
+   * — which is exactly the pairing it is here to keep honest.
+   */
+  private lastWoodStoreProblem(b: Building): string | null {
+    if (capacityIn(b, 'wood') <= 0) return null;
+    const others = this.state.buildings.some((o) => o.id !== b.id && capacityIn(o, 'wood') > 0);
+    if (others) return null;
+    return `The ${buildingName(b.def, b.level).toLowerCase()} is the only place the kingdom keeps wood, and there would be nowhere to put another armful. Build somewhere else to keep it first — a storehouse will do — and this can come down after.`;
+  }
+
   /** Proposes a removal. The interface asks; `confirmDemolish` carries it out. */
   askDemolish(id: number): void {
     const b = buildingById(this.state, id);
     if (!b) return;
-    const kept = protectedBuilding(b) ?? this.holdingProblem(b);
+    const kept = protectedBuilding(b) ?? this.holdingProblem(b) ?? this.lastWoodStoreProblem(b);
     if (kept) {
       this.blockReason = kept;
       this.demolishTarget = 0;
@@ -1714,24 +1738,36 @@ export class Game {
    * meaningful sentence about one shared pool and is meaningless about thirteen
    * separate compartments. Every question about room is now a question about a
    * particular resource, so this is what the top bar and the stores sheet ask.
+   *
+   * Four figures rather than one, because "how much wood is there" has four
+   * honest answers and running them together made the capacity beside them a
+   * lie. `stored` is in the compartments and is the only one `cap` applies to;
+   * `bench` and `carried` are real, owned and countable but answer to no ceiling
+   * anywhere; `owned` is the lot, and is what the simulation spends.
    */
   storageInfo(res: ResourceId): {
-    held: number;
+    stored: number;
+    bench: number;
+    carried: number;
+    owned: number;
     cap: number;
     room: number;
-    where: { b: Building; held: number; cap: number }[];
+    where: { b: Building; stored: number; bench: number; cap: number }[];
   } {
     const g = this.state;
-    const where: { b: Building; held: number; cap: number }[] = [];
+    const where: { b: Building; stored: number; bench: number; cap: number }[] = [];
     for (const b of g.buildings) {
       const cap = capacityIn(b, res);
-      const held = (b.store[res] ?? 0) + (b.input[res] ?? 0);
-      if (cap > 0 || held > 0) where.push({ b, held, cap });
+      const stored = b.store[res] ?? 0;
+      const bench = b.input[res] ?? 0;
+      if (cap > 0 || stored > 0 || bench > 0) where.push({ b, stored, bench, cap });
     }
-    where.sort((p, q) => q.cap - p.cap || q.held - p.held);
-    const held = totalOf(g, res);
+    where.sort((p, q) => q.cap - p.cap || q.stored - p.stored);
+    const stored = storedOf(g, res);
+    const bench = benchOf(g, res);
+    const carried = carriedOf(g, res);
     const cap = capacityOf(g, res);
-    return { held, cap, room: Math.max(0, cap - held), where };
+    return { stored, bench, carried, owned: stored + bench + carried, cap, room: Math.max(0, cap - stored), where };
   }
 
   /**
@@ -1748,8 +1784,8 @@ export class Game {
     // improved" against it would be the panel telling somebody to go and do
     // something the game has no way of letting them do.
     if (upgradeReqsOf(b.def, b.level).some((r) => r.impossible)) return null;
-    const now = storesOf(b.def, b.level)[res] ?? 0;
-    const then = storesOf(b.def, b.level + 1)[res] ?? 0;
+    const now = storesOf(b.def, b.level, b.cacheRetired)[res] ?? 0;
+    const then = storesOf(b.def, b.level + 1, b.cacheRetired)[res] ?? 0;
     return then > now ? then - now : null;
   }
 

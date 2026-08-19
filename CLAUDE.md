@@ -54,6 +54,7 @@ Match the check to the change. Do not run every harness for every edit.
 | World generation | Typecheck and `npm run worldcheck` |
 | Building relocation | Typecheck and `npm run reloccheck` |
 | Population, Vibes or beds | Typecheck and `npm run popcheck` |
+| Storage capacity, the camp woodpile or storage copy | Typecheck and `npm run woodcheck` |
 | Saving, loading or persistent fields | Typecheck and `npm run roundtrip` |
 | Visuals, layout or input | Typecheck and relevant screenshots |
 | Broad refactor or finished feature | `npm run build` plus the affected harnesses |
@@ -132,6 +133,24 @@ It verifies that:
 - a full kingdom freezes arrival progress instead of losing it;
 - arrivals survive saving and loading;
 - Vibes move an arrival within its window rather than outside it.
+
+### The camp woodpile
+
+```bash
+npm run woodcheck
+```
+
+Use this for storage capacity, `Building.cacheRetired`, the clearing rung of the helper ladder, and any change to where wood lives.
+
+The ordinary simulation cannot cover this. Its kingdom spends wood as fast as it earns it, so by the time its Lodge finishes the camp is down to single figures and the transfer is over before it starts. This sets up the interesting case deliberately: a full camp, a Lodge, and nothing else to spend it on.
+
+It verifies that:
+
+- the camp holds its founding wood and accepts wood while it is the only woodpile;
+- the cache retires the instant the Lodge completes, and the camp stops accepting wood;
+- nothing moves or vanishes at that moment — the kingdom owns exactly what it owned a tick earlier;
+- somebody is actually seen carrying the wood, and all of it reaches the Lodge;
+- the retirement survives a save, and losing the Lodge later does not restore the cache.
 
 ### Saving
 
@@ -219,6 +238,7 @@ scripts/
   worldcheck.ts
   relocheck.ts
   popcheck.ts
+  woodcheck.ts
   roundtrip.ts
   shot.mjs
 ```
@@ -466,6 +486,40 @@ The Forge may consume its own stored bars as recipe inputs after checking its in
 
 A full compartment stops new collection for that compartment only. It must not stop unrelated production elsewhere.
 
+The Storehouse is an ordinary building that is the home of every resource. It needs no special case anywhere: `holdsOf` folds its `holds` list in with what a building produces, and `homeFor` is nearest-wins. It exists to shorten the walk, not to raise a ceiling. Siting one is a decision about distance.
+
+### Stored, owned, and what the player is shown
+
+Four figures, and they are not interchangeable:
+
+- `storedOf` — in the compartments. The only one `capacityOf` applies to.
+- `benchOf` — on workshop benches.
+- `carriedOf` — in somebody’s arms.
+- `totalOf` — the sum of all three.
+
+The **simulation** spends `totalOf`: affordability, food throttling and goals all count everything the kingdom physically owns. A cost that stopped being affordable because somebody picked the wood up would be a kingdom arguing with itself.
+
+The **interface** headlines `storedOf`, because that is the figure a capacity can honestly sit beside. Never print `totalOf` against `capacityOf`.
+
+Where the parts are broken out for the player, show exact numbers rather than abbreviated ones. The point of that block is that the parts add up, and “2.5k + 36 + 14 = 2.5k” reads as a game that cannot count.
+
+### The Base Camp woodpile retires
+
+The commons’ `cache` of 100 wood is founding scaffolding, not storage.
+
+- When the first Lodge completes, `Building.cacheRetired` is set on the commons, permanently and saved.
+- `storesOf(def, level, retired)` then drops the cache, so `capacityIn` reads zero and the camp stops accepting wood.
+- Nothing is moved by the retirement. The wood already banked stays there until General Workers physically carry it to the Lodge — the clearing rung of the helper ladder, which fires on any compartment with goods and no room, however its room went away.
+- It is one-way. A kingdom that later loses its Lodge does not get the cache back, which is why the interface refuses to demolish the last building with wood capacity.
+
+Wood capacity is therefore a plain 250, then 1,000, once a Lodge stands. Verified by `npm run woodcheck`.
+
+### Storage exposition
+
+The model is explained once, in the intro card. After that it is demonstrated.
+
+Do not add prose to a panel restating that resources live where they are produced. The rows in that panel already say it with numbers, and the carrying is visible on the map.
+
 ### Food throttling
 
 Food is judged against the needs of the whole kingdom, but each job must consider the correct portion of the chain.
@@ -691,6 +745,19 @@ Everything attached to the bottom edge belongs in the shared `.dock` layout. Pos
 
 Resource chips may wrap to their own row on narrow screens. This decision is based on width, not merely compact mode.
 
+### The resource strip
+
+A chip carries one number: how much of that resource is in storage. No capacity, no ratio, no meter.
+
+Room is a state rather than an arithmetic problem at this level, so it is shown as two marks:
+
+- nearly full at 90% of capacity, subtle;
+- full, stronger.
+
+They are worth telling apart. One is a nudge with time to act on it; the other means production of that resource has stopped. Folding them together makes every warning read as an emergency.
+
+Exact capacity, the per-building breakdown, and the stored/bench/carried/owned split belong in the hover, the stores sheet and the building’s own panel — the places with room to be precise.
+
 ### Live panels
 
 Building panels update several times per second.
@@ -784,7 +851,6 @@ These are resolved design decisions, not missing work.
 | Removed mechanic | Current rule |
 |---|---|
 | Shared kingdom storage | Every resource lives in the building responsible for it |
-| Storehouse and generic warehouses | Improve the building that keeps the resource |
 | Coins and goal payouts | No currency or invisible material rewards |
 | Deadfall | The founder cuts an ordinary renewable tree |
 | Hand-mining | Stone and ores require the mine |
@@ -796,13 +862,11 @@ These are resolved design decisions, not missing work.
 | Arrival chance rolls | A free bed guarantees an arrival within a window |
 | Player-built roads and paths | Natural terrain affects movement; players cannot buy faster routes |
 | Reachable Kingdom Commons and Mithril Mine | Their final levels remain visible but deliberately unreachable |
-| Extra storage buildings | Existing building tiers are intended to provide enough capacity |
 
 Do not reintroduce one of these as a tidy-up or convenience. Reopening one is a product decision.
 
 In particular:
 
-- Never create a building whose only purpose is holding another building’s output.
 - Never make a resource appear as a reward when nobody carried it.
 - Never make arrivals randomly fail after the player has provided a bed.
 - Never make surface stone renewable or allow General Workers to mine it.
@@ -828,7 +892,7 @@ Exact tuning belongs in `defs.ts`. These figures describe the current shape of t
 | Cabins allowed | One per Commons level |
 | Arrival pacing | Guaranteed within a population-based window when a bed is free |
 | Vibes | 60 decoration + 30 food + 10 wellbeing |
-| Base Camp storage | 100 wood |
+| Base Camp storage | 100 wood, retired once a Lodge opens |
 | Produced-resource storage | Separate compartment per resource |
 | Workshop inputs | Small working buffers, separate from permanent storage |
 | Production buildings | One of each principal building |

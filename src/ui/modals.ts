@@ -344,17 +344,18 @@ function recipeRow(r: Recipe, active: boolean): string {
  * Showing 24 flour at the kitchen next to 180 bread without saying which is
  * which is how somebody concludes the kitchen is where flour lives.
  */
-/** "bread and cooked fish", not "bread, cooked fish". Sentences, not lists. */
-function plainList(items: string[]): string {
-  if (items.length < 2) return items[0] ?? '';
-  return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
-}
-
 function storageSection(game: Game, b: Building): string {
-  const held = storesOf(b.def, b.level);
+  const held = storesOf(b.def, b.level, b.cacheRetired);
   const keeps = (Object.keys(held) as ResourceId[]).filter((res) => (held[res] ?? 0) > 0);
   const bench = (Object.keys(b.input) as ResourceId[]).filter((res) => (b.input[res] ?? 0) > 0);
-  if (keeps.length === 0 && bench.length === 0) return '';
+  // A closed compartment with goods still in it: the camp's founding woodpile,
+  // between the lodge opening and the last armful being carried over. It has no
+  // room and is not in `keeps`, but there is plainly wood in there and the panel
+  // that pretended otherwise would be the one place the player looked.
+  const leaving = (Object.keys(b.store) as ResourceId[]).filter(
+    (res) => (b.store[res] ?? 0) > 0 && !(held[res] ?? 0),
+  );
+  if (keeps.length === 0 && bench.length === 0 && leaving.length === 0) return '';
 
   const benchCap = inputCapOf(b.def, b.level);
   const row = (res: ResourceId, qty: number, cap: number, gain: number | null) => {
@@ -381,26 +382,38 @@ function storageSection(game: Game, b: Building): string {
   const spare = keeps.length - shown.length;
   const cap = held[keeps[0]] ?? 0;
 
+  /*
+   * The trailing paragraph that used to close this section — "this is where the
+   * kingdom keeps wood, anyone who needs some walks here for it" — has gone. The
+   * rows above it are that sentence, with numbers, and the walk is a thing the
+   * player can watch happening on the map. It is said once during the opening
+   * and then demonstrated, rather than reprinted under every building.
+   */
   return `<div class="bsec"><div class="bh">Kept here</div>
     ${shown.map((res) => row(res, b.store[res] ?? 0, held[res] ?? 0, game.capacityGain(b, res))).join('') ||
-      `<div class="tiny muted">${many ? 'Empty, and ready for anything.' : 'Nothing is kept here.'}</div>`}
+      (leaving.length ? '' : `<div class="tiny muted">${many ? 'Empty, and ready for anything.' : 'Nothing is kept here.'}</div>`)}
     ${
       spare > 0
         ? `<div class="tiny muted" style="margin-top:8px">Empty shelves for everything else besides — ${cap} of each.</div>`
         : ''
     }
     ${
-      bench.length
-        ? `<div class="tiny muted" style="margin:10px 0 5px">On the bench — working supplies, fetched as they are used</div>
-           ${bench.map((res) => row(res, b.input[res] ?? 0, benchCap, null)).join('')}`
+      leaving.length
+        ? `<div class="tiny muted" style="margin:10px 0 5px">Closed, and being carried out</div>
+           ${leaving
+             .map(
+               (res) => `<div class="kv"><span class="k">${RESOURCE_META[res].icon} ${esc(RESOURCE_META[res].name)}</span>
+                 <span class="v">${Math.floor(b.store[res] ?? 0)}</span></div>`,
+             )
+             .join('')}
+           <div class="tiny muted" style="margin-top:6px;line-height:1.55">The lodge keeps the kingdom's wood now.
+             General Workers are walking what is left here across, an armful at a time.</div>`
         : ''
     }
     ${
-      keeps.length
-        ? `<div class="tiny muted" style="margin-top:8px;line-height:1.55">This is where the kingdom keeps
-            ${many ? 'anything at all — whatever is nearest to hand when somebody has a load to put down' : plainList(keeps.map((res) => RESOURCE_META[res].name.toLowerCase()))}. Anyone who needs some walks here for it${
-              game.canRelocate(b) ? ', and moving the building takes everything in it along' : ''
-            }.</div>`
+      bench.length
+        ? `<div class="tiny muted" style="margin:10px 0 5px">On the bench — working supplies, fetched as they are used</div>
+           ${bench.map((res) => row(res, b.input[res] ?? 0, benchCap, null)).join('')}`
         : ''
     }</div>`;
 }

@@ -306,10 +306,33 @@ body {
   display: none;
 }
 /*
- * Nowhere left to put this one. The chip is the only place a full compartment
- * shows without opening anything, and since each resource has its own it is
- * the only place it *can* show — there is no kingdom-wide meter to turn amber.
+ * The two things the strip says about room, now that it no longer prints a
+ * capacity. The chip is the only place either shows without opening anything,
+ * and since each resource has its own compartment it is the only place either
+ * *can* show — there is no kingdom-wide meter to turn amber.
+ *
+ * Nearly full is deliberately almost nothing: a faint dot after the number and
+ * the figure warmed a shade off white. It has to survive being ignored, because
+ * on a working kingdom two or three chips carry it most of the time and the
+ * correct response to it is often to carry on. Full is the louder one, and it
+ * is louder by being the colour the rest of the interface already uses for
+ * "this has stopped".
  */
+.res.near .val {
+  color: var(--accent);
+}
+.res.near .val::after,
+.res.full .val::after {
+  content: "";
+  display: inline-block;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  margin-left: 3px;
+  vertical-align: 0.32em;
+  background: currentColor;
+  opacity: 0.75;
+}
 .res.full .val {
   color: var(--warn);
 }
@@ -1914,8 +1937,43 @@ button.tag {
   font-variant-numeric: tabular-nums;
   font-weight: 600;
 }
+/* The same two states the chips carry, so the sheet and the strip agree. */
+.storerow.near .amt {
+  color: var(--accent);
+}
+.storerow.full .amt {
+  color: var(--warn);
+}
 .storerow b {
   color: var(--dim);
+  font-weight: 600;
+}
+
+/*
+ * The stored / bench / carried / owned split, in the hover and in the sheet.
+ *
+ * It is set below the where-rows rather than beside them because it answers a
+ * different question: those say where the kingdom's storage is, this says how
+ * much of what it owns is in storage at all. The total is ruled off, since the
+ * point of showing the parts is that they add up to something the headline
+ * deliberately is not.
+ */
+.tip-sub {
+  display: block;
+  margin: 7px 0 2px;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.tip-row.sub > span:first-child {
+  padding-left: 9px;
+  color: var(--dim);
+}
+.tip-row.total {
+  margin-top: 3px;
+  padding-top: 3px;
+  border-top: 1px solid var(--edge);
   font-weight: 600;
 }
 

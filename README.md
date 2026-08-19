@@ -37,13 +37,24 @@ map on foot by someone you can click on.
 site with corner posts; villagers haul the materials over, then put in the
 labour, then it stands up. You can watch the whole thing.
 
-**Storage is physical.** Goods only exist in the shared store once somebody has
-carried them to a storage building — and for the first minute of a new kingdom
-there is no such building at all, so the founder simply carries what they have
-gathered until the chest is built. Where you put your storehouses decides how
-much of the day your workers spend walking. A full store stops people gathering more; it never stops
-someone putting down what they are already holding, so the meter can read a
-little over its limit while the last loads come in.
+**Storage is physical, and it belongs to places.** There is no shared pile.
+Every resource lives in the building responsible for it — wood at the lodge,
+stone at the mine, supper at the kitchen — each in its own compartment, and it
+only gets there because somebody carried it. Anyone who needs some walks there
+for it, so where you site a building decides how much of the day your workers
+spend walking. A storehouse takes any resource at all, which is what makes one
+out by the work worth building.
+
+For the first minute of a new kingdom there is nowhere to put anything, so the
+founder simply carries what they gather until the Base Camp stands. The camp
+then holds a hundred wood — enough for anything a kingdom without a woodcutter
+can reach. The day a Woodcutter's Lodge opens, that founding woodpile closes and
+whatever is banked in it is carried across to the lodge, load by load. Nothing
+teleports; you can watch it happen.
+
+A full compartment stops people gathering more of that one thing, and nothing
+else. It never stops someone putting down what they are already holding, so a
+figure can read a little over its limit while the last loads come in.
 
 **Jobs and experience.** Helper, Woodcutter, Miner, Farmer, Miller, Baker, Smith.
 Experience accrues per profession, only from doing the work, and is kept
@@ -88,8 +99,12 @@ into an undifferentiated orange field.
 **Everything is inspectable.** Click a person, an animal, a building — or bare
 ground, which tells you what the terrain is, what is standing on it, how much is
 left in it, and what you have seen living on ground like that. A small badge
-over each villager's head says what they are doing at that moment, and hovering
-a resource in the top bar says where it comes from and what it is for.
+over each villager's head says what they are doing at that moment. The top bar
+carries one number per resource — how much is in storage — with a quiet mark
+when a compartment is nearly full and a louder one when it is. Hovering a
+resource opens the detail: which buildings are holding it and how much room each
+has left, how much is stored against how much is on workshop benches or in
+somebody's arms, and where the resource comes from and what it is for.
 
 **Clean viewing mode** (`H`). Hides the entire interface except a small time and
 season chip. This is the point of the whole thing.

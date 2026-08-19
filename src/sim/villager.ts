@@ -51,7 +51,6 @@ import {
   assignHome,
   buildingById,
   buildingCentre,
-  capacityIn,
   claim,
   deliver,
   dropFor,
@@ -715,6 +714,15 @@ export function completeConstruction(g: GameState, b: Building): void {
     }
   }
 
+  // A lodge is a woodpile, so the camp stops being one. Its hundred wood was
+  // always founding scaffolding — somewhere to put timber down before anywhere
+  // proper existed — and leaving it open afterwards split the kingdom's wood
+  // across two places for good, so the ceiling beside it could never be a plain
+  // 250. Nothing is moved from here: the camp simply stops taking wood, and the
+  // General Workers walk what is already in it over to the lodge (rung 4 of the
+  // helper ladder). It is one-way, which is why it is a field rather than a
+  // question asked of the map — see `Building.cacheRetired`.
+  if (b.def === 'lodge' && !wasUpgrade) retireWoodCache(g);
   // Each level of the commons hands the kingdom its next tier of buildings.
   // Doing it here rather than from a goal keeps the two in step: the goal that
   // congratulates you on a Settled Camp and the storehouse it lets you build
@@ -737,6 +745,34 @@ export function completeConstruction(g: GameState, b: Building): void {
       v.home = b.id;
     }
   }
+}
+
+/**
+ * Close the Base Camp's founding woodpile, for good.
+ *
+ * Nothing is destroyed and nothing is moved by this — the wood already in the
+ * camp stays exactly where it is, and stays the kingdom's, until somebody walks
+ * it to the lodge. All that changes is that the camp will not take any *more*:
+ * `capacityIn` reads zero, so `homeFor` stops routing loads here and `roomIn`
+ * puts the compartment into the same "over its ceiling" state that sends a
+ * General Worker to clear it. The physical carry falls out of a rung the ladder
+ * already had.
+ *
+ * It says so in the journal because a hundred wood appearing to move house is
+ * exactly the sort of thing a player notices and mistrusts.
+ */
+function retireWoodCache(g: GameState): void {
+  const camp = g.buildings.find((b) => b.def === 'commons');
+  if (!camp || camp.cacheRetired) return;
+  camp.cacheRetired = true;
+  const left = Math.floor(camp.store.wood ?? 0);
+  journal(
+    g,
+    left > 0
+      ? `The lodge took over the woodpile. The ${left} wood banked at the camp is being carried across.`
+      : 'The lodge took over the woodpile. The camp keeps no wood of its own now.',
+    '🪵',
+  );
 }
 
 /**
@@ -1791,11 +1827,17 @@ function planGeneralWork(g: GameState, v: Villager): boolean {
    *    ordinary kingdom it never runs at all and goods stay where they were
    *    made. That is the point: it is a pressure valve, not a logistics layer,
    *    and a kingdom with room everywhere should look exactly as it did before.
+   *
+   *    A compartment whose ceiling has gone to *nothing* counts, and that is not
+   *    a special case bolted on: a shelf with no room left is a shelf with no
+   *    room left, whether it filled up or was closed. It is the whole of how the
+   *    Base Camp's founding wood walks to the lodge once one opens — physically,
+   *    an armful at a time, by somebody the player can watch doing it.
    */
   for (const b of g.buildings) {
     if (b.stage !== 'done') continue;
     const full = (Object.keys(b.store) as ResourceId[]).find(
-      (res) => capacityIn(b, res) > 0 && roomIn(b, res) <= 0 && (b.store[res] ?? 0) > 0,
+      (res) => roomIn(b, res) <= 0 && (b.store[res] ?? 0) > 0,
     );
     if (!full) continue;
     if (isClaimed(g, 'clear', b.id, v.id)) continue;

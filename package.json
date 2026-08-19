@@ -13,6 +13,7 @@
     "worldcheck": "tsx scripts/worldcheck.ts",
     "reloccheck": "tsx scripts/relocheck.ts",
     "popcheck": "tsx scripts/popcheck.ts",
+    "woodcheck": "tsx scripts/woodcheck.ts",
     "roundtrip": "tsx scripts/roundtrip.ts",
     "shot": "node scripts/shot.mjs"
   },

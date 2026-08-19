@@ -15,13 +15,16 @@ import {
   assignJob,
   bedSources,
   bedsFree,
+  benchOf,
   buildingById,
+  carriedOf,
   foodComfort,
   housingCapacity,
   makeBuilding,
   capacityOf,
   contentsOf,
   preparedFood,
+  storedOf,
   totalOf,
 } from '../src/sim/state';
 import { severelyHungry, vibesOf } from '../src/sim/vibes';
@@ -341,7 +344,7 @@ function autoplay(state: GameState): void {
    */
   for (const b of state.buildings) {
     if (b.stage !== 'done' || b.upgrading) continue;
-    const room = storesOf(b.def, b.level);
+    const room = storesOf(b.def, b.level, b.cacheRetired);
     const tight = (Object.keys(room) as ResourceId[]).some(
       (res) => (room[res] ?? 0) > 0 && (b.store[res] ?? 0) > (room[res] ?? 0) * 0.85,
     );
@@ -598,11 +601,16 @@ line(`Day ${g.day}, ${g.season} of year ${g.year}   ·   population ${g.villager
  * "1,200 of 4,750" across thirteen compartments is a figure nothing in the game
  * ever computes, and it would hide the only thing worth seeing here, which is
  * whether any one of them has hit its ceiling.
+ *
+ * What is *stored*, against capacity, since capacity is a fact about
+ * compartments and bench supplies and armfuls answer to none of it. The
+ * difference between this and what the kingdom owns is printed on its own line
+ * below, where it is a fact rather than a distortion.
  */
 line(
   'Storage ' +
     RESOURCE_ORDER.map((res) => {
-      const held = Math.floor(totalOf(g, res));
+      const held = Math.floor(storedOf(g, res));
       const cap = capacityOf(g, res);
       if (held === 0 && cap === 0) return '';
       return `${res} ${held}/${cap || '—'}${cap > 0 && held >= cap ? ' FULL' : ''}`;
@@ -610,6 +618,19 @@ line(
       .filter(Boolean)
       .join('  '),
 );
+/*
+ * …and what is not in a compartment: on a bench waiting to be used, or in
+ * somebody's arms. Small, and it should stay small — a kingdom with a great deal
+ * in circulation is one whose carriers are walking further than they should.
+ */
+const loose = RESOURCE_ORDER.map((res) => {
+  const bench = Math.floor(benchOf(g, res));
+  const carried = Math.floor(carriedOf(g, res));
+  return bench + carried > 0 ? `${res} ${bench} on benches, ${carried} carried` : '';
+})
+  .filter(Boolean)
+  .join('   ·   ');
+if (loose) line(`In circulation  ${loose}`);
 line(
   'Kept at  ' +
     g.buildings
@@ -765,7 +786,7 @@ for (const res of RESOURCE_ORDER) {
  */
 const inFlight = g.villagers.length * CARRY_CAPACITY;
 for (const b of g.buildings) {
-  const room = storesOf(b.def, b.level);
+  const room = storesOf(b.def, b.level, b.cacheRetired);
   for (const k in room) {
     const res = k as ResourceId;
     const held = b.store[res] ?? 0;
@@ -779,11 +800,38 @@ for (const b of g.buildings) {
   // Anything in a compartment the building is not the home of is a leak of a
   // different kind: something has put goods somewhere nothing will ever fetch
   // them from, and they are lost to the kingdom without ever being destroyed.
+  //
+  // The camp between a lodge opening and the last armful of its founding wood
+  // being carried across is the one legitimate case, and it is checked properly
+  // below — that it *drains* — rather than merely excused here.
+  const draining = b.cacheRetired ? BUILDINGS[b.def].cache ?? {} : {};
   for (const k in b.store) {
     const res = k as ResourceId;
-    if ((b.store[res] ?? 0) > 0 && !(room[res] ?? 0)) {
+    if ((b.store[res] ?? 0) > 0 && !(room[res] ?? 0) && !(draining[res] ?? 0)) {
       problems.push(`${buildingName(b.def, b.level)} is holding ${Math.round(b.store[res] ?? 0)} ${res}, which it does not keep`);
     }
+  }
+}
+
+/*
+ * The camp's founding woodpile closes when a lodge opens, and the wood in it is
+ * carried across rather than teleported — so the thing worth checking is that
+ * somebody actually does the carrying. A hundred wood is nine armfuls; a lodge
+ * that has stood for a whole day with the camp still holding some means the
+ * clearing rung never fired, and the kingdom has wood it cannot reach.
+ *
+ * A lodge finished this same day is still fair game, hence the day's grace.
+ */
+for (const b of g.buildings) {
+  if (!b.cacheRetired) continue;
+  const stuck = (Object.keys(BUILDINGS[b.def].cache ?? {}) as ResourceId[]).find((res) => (b.store[res] ?? 0) > 0);
+  if (!stuck) continue;
+  const lodge = g.buildings.find((o) => o.def === 'lodge' && o.stage === 'done');
+  if (lodge && g.day - lodge.built >= 2) {
+    problems.push(
+      `${buildingName(b.def, b.level)} still holds ${Math.round(b.store[stuck] ?? 0)} ${stuck} ` +
+        `${g.day - lodge.built} days after the lodge opened — nobody is clearing the retired cache`,
+    );
   }
 }
 // The full-store deadlock: the planner will not give a new plan to anybody

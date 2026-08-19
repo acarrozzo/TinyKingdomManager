@@ -937,7 +937,8 @@ export class UI {
     const html = `<div class="intro"><div class="card2" role="dialog" aria-modal="true" aria-labelledby="intro-title">
       <h1 id="intro-title">Tiny Kingdom Manager</h1>
       <p>There is one person here. Their name is <b>${esc(founder?.name ?? 'someone')}</b>, and they have just walked up the beach with nothing at all.<br><br>
-      Watch where they stop, tell them this will do, and see what the place becomes.</p>
+      Nothing is kept in one great pile: every resource lives in the building that produces it, and it gets there
+      because somebody carried it. Watch where they stop, tell them this will do, and see what the place becomes.</p>
       <button class="btn primary" data-act="dismiss-intro">Begin</button>
       <div class="keys">${keys}</div>
     </div></div>`;

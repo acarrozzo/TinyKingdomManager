@@ -167,8 +167,9 @@ export const PERSONAL_DAY_SHIFT = 0.015;
  * unaffordable because of it: a site takes its materials a dozen at a time and
  * the wood storage is topped back up between loads, so a ninety-wood commons is
  * paid for in seven trips rather than not at all. That is what keeps the lodge
- * optional now that wood has a home of its own — the Base Camp's hundred is
- * above every cost the kingdom can actually reach.
+ * optional — the Base Camp's hundred is above every cost a kingdom with no lodge
+ * can actually reach, and once a lodge exists the camp's cache retires into a
+ * woodpile of 250 that is larger still.
  */
 export const WOOD_RESERVE = 32;
 
@@ -253,76 +254,68 @@ export const RESOURCE_META: Record<string, { name: string; icon: string; color: 
 };
 
 /**
- * Where each resource comes from, where it goes, and where it lives. That last
- * one is new and is the point of the whole arrangement: a resource is kept at
- * the building that produces it, so "where is my stone" has an answer you can
- * walk to rather than a number in a shared pool.
+ * Where each resource comes from and what it is for. Two questions the game
+ * cannot answer by being played — you cannot watch a resource and learn what it
+ * will one day be wanted for — which is the test for what belongs here.
+ *
+ * There used to be a third, `kept`, saying in prose where each one lives. It
+ * went because the hover shows that live, building by building, with the amounts
+ * in each: a sentence saying wood is kept at the lodge, printed directly above a
+ * row reading "Woodcutter's Lodge 180/250", is the interface explaining a thing
+ * it is simultaneously demonstrating.
  */
-export const RESOURCE_INFO: Record<string, { from: string; used: string; kept: string }> = {
+export const RESOURCE_INFO: Record<string, { from: string; used: string }> = {
   wood: {
     from: 'Woodcutters at the lodge, who are the only ones who can keep up with a growing kingdom. General Workers will fell a tree by hand when wood drops below thirty-two, at half the pace and no faster. The first twelve came off a single tree, swung at by somebody who had only just arrived.',
     used: 'Nearly every building, from a cabin at 20 up to a windmill at 50, and every step the commons takes.',
-    kept: 'The lodge, once there is one. Before that — and always, alongside it — the Base Camp keeps a hundred, which is enough for anything the kingdom can currently build.',
   },
   stone: {
     from: 'Miners cutting it out of the rocky ground the quarry stands on, and nowhere else. The loose boulders lying about are scenery — too much for bare hands, and gone for good once anything is built over one.',
     used: 'Improving the commons or a cabin, wells, and the workshops further along the chain.',
-    kept: 'The mine, which is also where it comes out of the ground. Builders and smiths walk over for what they need.',
   },
   wheat: {
     from: 'Farmers sowing and reaping the plots around a wheat farm.',
     used: 'Ground into flour at the windmill, three wheat at a time.',
-    kept: 'The farm. The windmill keeps a small working supply on the bench and sends for more as it grinds through it.',
   },
   flour: {
     from: 'The windmill, two flour for every three wheat carried in.',
     used: 'Baked into bread at the kitchen, two flour to a batch of three loaves.',
-    kept: 'The windmill. The kitchen keeps enough on hand for the next few batches.',
   },
   bread: {
     from: 'The kitchen, three loaves a batch. Slower to set up than fish and far easier to keep going once it is.',
     used: 'Eaten. One loaf is a whole meal, and some people would rather have it than fish.',
-    kept: 'The kitchen, which is where everybody in the kingdom walks to eat.',
   },
   fish: {
     from: 'Fishers working the water within reach of their hut, a few at a time. A spot worked hard goes quiet for a while and then comes back.',
     used: 'Nothing eats it raw. Two fish cook down to two meals at the kitchen.',
-    kept: 'The hut. Cooks come down for it, which is a walk worth thinking about when you site the kitchen.',
   },
   cookedFish: {
     from: 'The kitchen, out of raw fish. The same cooks make the bread.',
     used: 'Eaten, and it fills somebody up exactly as well as a loaf does.',
-    kept: 'The kitchen, on the same shelf the bread is on and with its own room.',
   },
   ironOre: {
     from: 'The mine, once it has been sunk deep enough to be an Iron Mine. The same miners bring it up as bring up the stone.',
     used: 'Smelted into iron bars at the forge, one for one, with no coal wanted.',
-    kept: 'The mine, in its own compartment. A mine full of stone still has room for this.',
   },
   coal: {
     from: 'A Deep Mine, which is the third thing the mine becomes. Nothing else in the kingdom turns any up.',
     used: 'Only the forge burns it, and only for steel: two coal to every iron bar going into one.',
-    kept: 'The mine. The smith fetches it as they need it.',
   },
   ironBar: {
     from: 'The forge, one bar from one iron ore. No coal is needed for this part, which surprises people.',
     used: 'The heavier building work, and the first half of every steel bar.',
-    kept: 'The forge — and since that is also where steel is made, the smith never has to carry one anywhere to use it.',
   },
   steelBar: {
     from: 'The forge again: one iron bar and two coal make one steel bar.',
     used: 'Nothing yet. It piles up handsomely and waits for the kingdom to think of something.',
-    kept: 'The forge, stacked against the wall.',
   },
   mithrilOre: {
     from: 'Nowhere. There is talk of a seam under the deep workings, and talk is as far as it has got.',
     used: 'Nothing, since there is none of it.',
-    kept: 'Nowhere, since there is none of it.',
   },
   mithrilBar: {
     from: 'Nowhere yet. The forge would want one mithril ore and four coal, if there were any ore.',
     used: 'Nothing, since there is none of it.',
-    kept: 'Nowhere, since there is none of it.',
   },
 };
 
@@ -496,11 +489,16 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     order: -1,
     once: true,
     desc: 'A fire, a woodpile, and room to sleep rough beside it. Where the kingdom begins, and afterwards the middle of it.',
-    how: 'The first fire, a hundred wood against the first few buildings, and two places to sleep out of doors, all on the same nine tiles. That woodpile is the only storage the commons ever has and it does not grow: everything else the kingdom produces is kept at the building that made it, and the lodge is where wood goes once there is one. It grows with the kingdom rather than being replaced — a Settled Camp, then a Village Commons, and there is talk of something after that — and it never closes for the work. Every step opens up more of the kingdom: new kinds of building, and one more cabin than before. Improving it wants materials and a settlement that has got somewhere; both are listed in full before you commit. People walk through it, sit at it and stand about in it whether or not they have any business there, which is rather the point. It cannot be taken down, and it cannot be moved: it stands where the kingdom began.',
+    how: 'The first fire, a hundred wood against the first few buildings, and two places to sleep out of doors, all on the same nine tiles. That woodpile is scaffolding rather than storage: it never grows, and the day a woodcutter\'s lodge opens it closes for good, with whatever is banked in it carried across to the lodge an armful at a time. After that the commons keeps nothing at all. It grows with the kingdom rather than being replaced — a Settled Camp, then a Village Commons, and there is talk of something after that — and it never closes for the work. Every step opens up more of the kingdom: new kinds of building, and one more cabin than before. Improving it wants materials and a settlement that has got somewhere; both are listed in full before you commit. People walk through it, sit at it and stand about in it whether or not they have any business there, which is rather the point. It cannot be taken down, and it cannot be moved: it stands where the kingdom began.',
     housing: [2, 2, 2, 2],
     // The founding cache, and the whole of the commons' storage. Flat across
     // every level on purpose: improving the heart of the kingdom opens up new
     // buildings, and each of those brings its own storage with it.
+    //
+    // It is also temporary. A lodge is a proper woodpile, and the day one opens
+    // this closes for good — see `Building.cacheRetired`. Leaving it open split
+    // the kingdom's wood across two buildings forever, which is why the ceiling
+    // on the wood chip could never be a plain 250.
     cache: { wood: 100 },
     light: [{ x: 1.5, y: 1.5, radius: 50, color: '#ffb35c' }],
     solid: false,
@@ -583,7 +581,7 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     upgradeCostMul: 2.2,
     order: 20,
     desc: 'Where the kingdom’s wood lives. Woodcutters work the trees nearby, so place it in or beside a wood.',
-    how: 'This is where wood is kept — 250 of it, or 1,000 once the lodge is improved — and where anybody building anything comes to fetch it. Woodcutters work whatever trees stand within thirteen tiles of the lodge, seventeen once improved, and range further only when the near ones are gone. The reach is drawn on the map while you are placing or moving it, along with every tree inside it. Each felled tree becomes a stump and grows back in time. They chop three trips\' worth, carry it back here, and set off again; when the woodpile is full they stop and go and help elsewhere, and nothing else in the kingdom is affected by that. Nothing insists on a lodge — the Base Camp keeps a hundred wood of its own and General Workers will always fell enough by hand to keep thirty-two of it — but they do that at half a woodcutter\'s pace and they stop there, so this is what a kingdom that means to keep building runs on. There is only ever one lodge; if the wood around it thins out, move it, and the woodpile goes with it.',
+    how: 'This is where wood is kept — 250 of it, or 1,000 once the lodge is improved — and where anybody building anything comes to fetch it. Woodcutters work whatever trees stand within thirteen tiles of the lodge, seventeen once improved, and range further only when the near ones are gone. The reach is drawn on the map while you are placing or moving it, along with every tree inside it. Each felled tree becomes a stump and grows back in time. They chop three trips\' worth, carry it back here, and set off again; when the woodpile is full they stop and go and help elsewhere, and nothing else in the kingdom is affected by that. Nothing insists on a lodge — before there is one the Base Camp holds a hundred wood, and General Workers will always fell enough by hand to keep thirty-two of it — but they do that at half a woodcutter\'s pace and they stop there, so this is what a kingdom that means to keep building runs on. Raising a lodge closes the camp\'s woodpile for good and the wood banked there is carried over to this one, so from then on the kingdom\'s wood is all in the one place. There is only ever one lodge; if the wood around it thins out, move it, and the woodpile goes with it.',
     slots: [2, 3],
     job: 'woodcutter',
     harvests: 'tree',
@@ -974,13 +972,18 @@ export function holdsOf(def: BuildingId, level: number): ResourceId[] {
  * The commons is the one building here that stores something it does not
  * produce, and its `cache` is written down rather than derived precisely
  * because it is the exception.
+ *
+ * `retired` closes that cache for good. It is scaffolding for a kingdom with no
+ * proper woodpile, and once a lodge is standing the scaffolding comes down —
+ * see `Building.cacheRetired`. Nothing else in the game passes it, because the
+ * commons is the only building that has a cache to close.
  */
-export function storesOf(def: BuildingId, level: number): Partial<Record<ResourceId, number>> {
+export function storesOf(def: BuildingId, level: number, retired = false): Partial<Record<ResourceId, number>> {
   const cap = STORAGE_TIERS[Math.min(level, STORAGE_TIERS.length) - 1];
   const out: Partial<Record<ResourceId, number>> = {};
   for (const res of holdsOf(def, level)) out[res] = cap;
   const cache = BUILDINGS[def].cache;
-  if (cache) for (const k in cache) out[k as ResourceId] = cache[k as ResourceId];
+  if (cache && !retired) for (const k in cache) out[k as ResourceId] = cache[k as ResourceId];
   return out;
 }
 

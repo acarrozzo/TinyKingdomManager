@@ -231,6 +231,11 @@ export function serialize(g: GameState): SavePayload {
       // find it still on its way, not silently back where it started.
       movingTo: b.movingTo,
       relocOf: b.relocOf,
+      // The camp's founding woodpile, closed for good once a lodge opened. It
+      // is one-way and cannot be re-derived from the map — a kingdom that later
+      // took its lodge down would read as one that had never had one — so it
+      // has to be written down or reloading hands the hundred wood back.
+      cacheRetired: b.cacheRetired,
       built: b.built,
       seed: b.seed,
       name: b.name,

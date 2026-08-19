@@ -395,6 +395,15 @@ export interface Building {
    */
   movingTo?: number;
   relocOf?: number;
+  /**
+   * The Base Camp's founding woodpile has been closed, because a lodge opened
+   * and wood has a proper home now. One-way and saved: it is a thing the kingdom
+   * has *done*, not a condition that holds while some other building stands, so
+   * losing the lodge later must not hand the camp its hundred wood back.
+   *
+   * Only the commons ever carries this — see `BuildingDef.cache`.
+   */
+  cacheRetired?: boolean;
   /** Game-day the building was completed. */
   built: number;
   /** Cosmetic seed for per-instance variation. */
