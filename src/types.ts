@@ -145,6 +145,10 @@ export type BuildingId =
   | 'commons'
   | 'cabin'
   | 'lodge'
+  // Somewhere to put anything, near where the work is. It produces nothing and
+  // is the home of everything, which is what makes siting one a decision about
+  // walking distance rather than about what it holds.
+  | 'storehouse'
   // The mine at every stage of it: Quarry, Iron Mine, Deep Mine, Mithril Mine.
   // One building that grows, so the id stays what it always was.
   | 'quarry'
@@ -162,7 +166,7 @@ export type BuildingId =
   | 'sapling'
   | 'statue';
 
-export type BuildingCategory = 'housing' | 'production' | 'comfort';
+export type BuildingCategory = 'housing' | 'storage' | 'production' | 'comfort';
 
 export interface Recipe {
   inputs: Partial<Record<ResourceId, number>>;
@@ -236,9 +240,10 @@ export interface BuildingDef {
   sheltered?: boolean;
   /**
    * Resources this building is the home of, beyond whatever it extracts or
-   * cooks. Three buildings need it, because what they produce comes off the map
-   * rather than off a recipe: the lodge's wood, the farm's wheat, the hut's
-   * catch. `holdsOf` in `defs.ts` folds it in with the rest.
+   * cooks. Three buildings need it because what they produce comes off the map
+   * rather than off a recipe — the lodge's wood, the farm's wheat, the hut's
+   * catch — and the storehouse needs it because it produces nothing at all and
+   * is the home of the lot. `holdsOf` in `defs.ts` folds it in with the rest.
    */
   holds?: ResourceId[];
   /**

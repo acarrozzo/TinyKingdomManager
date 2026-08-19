@@ -40,14 +40,21 @@ function staffed(g: GameState, def: string): boolean {
  * kingdom's spine: everything else the menu offers is either a comfort, which
  * needs no permission at all, or part of the food chain, which the goals open.
  *
- * The Base Camp hands over three foundations at once — somewhere to sleep, and
- * the two buildings that produce the only two raw materials there are, each of
- * which is also where that material will be kept. That is deliberate: the first
- * hour is about deciding where those three go, and a kingdom that can fell trees
- * but not break stone is one waiting on permission rather than on itself.
+ * The Base Camp hands over four foundations at once — somewhere to sleep,
+ * somewhere to put things, and the two buildings that produce the only two raw
+ * materials there are, each of which is also where that material will be kept.
+ * That is deliberate: the first hour is about deciding where those four go, and
+ * a kingdom that can fell trees but not break stone is one waiting on
+ * permission rather than on itself.
+ *
+ * The storehouse is in that first tier and is a prerequisite of nothing. A
+ * kingdom that never builds one is fed, housed and never stuck — the lodge, the
+ * mine and the kitchen each hold their own — it simply walks further. That is
+ * the shape it has to keep: the moment something requires a storehouse it stops
+ * being a convenience and becomes a tax.
  */
 const COMMONS_UNLOCKS: Record<number, string[]> = {
-  1: ['cabin', 'lodge', 'quarry'],
+  1: ['cabin', 'storehouse', 'lodge', 'quarry'],
   2: ['well'],
   3: ['statue'],
 };
@@ -137,7 +144,7 @@ export function commonsGrants(g: GameState, level: number): string[] {
     const def = (BUILDINGS as Record<string, { name: string } | undefined>)[key];
     if (def) out.push(`Opens the ${def.name}`);
   }
-  for (const id of ['cabin'] as BuildingId[]) {
+  for (const id of ['cabin', 'storehouse'] as BuildingId[]) {
     const counts = BUILDINGS[id].maxCount;
     if (!counts) continue;
     const now = counts[Math.min(level, counts.length) - 1] ?? 0;

@@ -21,6 +21,7 @@ import {
   FOOD_CHAIN_VALUE,
   FOOD_COMFORT_FLOOR,
   FOOD_COMFORT_PER_HEAD,
+  STORAGE_OVERFLOW,
   TRAIT_IDS,
   buildingName,
   inputCapOf,
@@ -226,6 +227,21 @@ export function roomIn(b: Building, res: ResourceId): number {
 }
 
 /**
+ * Room in the margin above the stated line — see `STORAGE_OVERFLOW`. Zero for a
+ * building that is not the home of this resource at all, so overflow can only
+ * ever land somewhere the goods were already meant to live.
+ *
+ * Nothing consults this to decide whether to *make* or *fetch* anything. It is
+ * read in exactly one place, `homeFor`, and only after the ordinary room has
+ * been looked for and not found.
+ */
+export function overflowRoomIn(b: Building, res: ResourceId): number {
+  const cap = capacityIn(b, res);
+  if (cap <= 0) return 0;
+  return Math.max(0, Math.floor(cap * STORAGE_OVERFLOW) - heldIn(b, res));
+}
+
+/**
  * Everything the kingdom physically has of one resource: what is stored, what
  * is sitting on a workshop bench waiting to be used, and what is in somebody's
  * arms. All three are real and all three are the kingdom's, so the aggregate
@@ -280,23 +296,54 @@ export function kingdomStock(g: GameState): Stock {
  * two fewer things over twenty-three days for it. Nearest, honestly, is both
  * simpler and better.
  *
- * Returns null only when the kingdom has nowhere at all with room. A carrier in
- * that position keeps hold of the load and re-decides, which is the rule that
- * makes putting something down incapable of failing.
+ * Ordinary room always wins over the overflow margin, however far away it is:
+ * a load walks past a full lodge to a storehouse with real room rather than
+ * being stacked against the lodge wall. Only when nothing anywhere has room
+ * does the margin come into it, and then it is the nearest home for the
+ * resource that takes it — see `STORAGE_OVERFLOW`.
+ *
+ * Returns null only when even the margin is exhausted everywhere, which takes a
+ * kingdom that has stopped producing this entirely. A carrier in that position
+ * keeps hold of the load and re-decides, and the two-stage search is what makes
+ * that a corner nobody reaches rather than the ordinary meaning of "full".
  */
 export function homeFor(g: GameState, res: ResourceId, x: number, y: number): Building | null {
   let best: Building | null = null;
   let bestD = Infinity;
+  let spare: Building | null = null;
+  let spareD = Infinity;
   for (const b of g.buildings) {
-    if (roomIn(b, res) <= 0) continue;
     const c = buildingCentre(b);
     const d = (c.x - x) ** 2 + (c.y - y) ** 2;
-    if (d < bestD) {
-      bestD = d;
-      best = b;
+    if (roomIn(b, res) > 0) {
+      if (d < bestD) {
+        bestD = d;
+        best = b;
+      }
+    } else if (overflowRoomIn(b, res) > 0) {
+      if (d < spareD) {
+        spareD = d;
+        spare = b;
+      }
     }
   }
-  return best;
+  return best ?? spare;
+}
+
+/**
+ * Where a load of this, produced right here, would actually be taken — and null
+ * if there is no *ordinary* room for one anywhere.
+ *
+ * This is the question every producer asks before starting work, and asking it
+ * this way rather than about their own building is what lets a storehouse take
+ * the strain: a mine whose own stone compartment is full goes on cutting stone
+ * while there is a barn down the hill with room for it. `homeFor`'s overflow
+ * margin is deliberately not consulted — the margin is for loads that already
+ * exist, never a reason to make another.
+ */
+export function dropFor(g: GameState, res: ResourceId, x: number, y: number, need: number): Building | null {
+  const home = homeFor(g, res, x, y);
+  return home && roomIn(home, res) >= need ? home : null;
 }
 
 /**

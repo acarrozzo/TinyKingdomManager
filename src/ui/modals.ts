@@ -53,8 +53,34 @@ import { paintBuilding, paintVillager } from './portraits';
 export function buildingTabs(b: Building): string[] {
   const def = BUILDINGS[b.def];
   if (b.stage !== 'done') return ['Site', 'About'];
-  const tabs = ['People'];
-  if (def.recipe || def.recipes || def.plots || def.harvests || def.extracts || def.fishes) tabs.push('Work');
+  const works = !!(def.recipe || def.recipes || def.plots || def.harvests || def.extracts || def.fishes);
+  const keeps = Object.keys(storesOf(b.def, b.level)).length > 0;
+  // Somewhere people are assigned or sleep, which is what makes People the
+  // right thing to open on.
+  const social = !!(def.slots || def.housing);
+
+  /*
+   * A building that keeps things and does no work still has to be able to say
+   * what is in it. Every workshop shows that inside Work, which is fine while
+   * every building that holds anything is also somewhere something happens —
+   * and the storehouse is the building for which that stopped being true. A
+   * barn holding a thousand wood whose panel says "nobody is assigned here"
+   * is answering a question nobody asked.
+   *
+   * The commons has quietly had the same gap all along, and its hundred wood
+   * is the whole of a young kingdom's storage.
+   *
+   * It gets a tab named for what it is rather than being filed under Work: no
+   * work happens in a storehouse, and a tab promising some would be the panel
+   * telling its own small lie. It leads only where there is nothing else to
+   * lead with — the commons opens on its people, because that is what the
+   * commons is for.
+   */
+  const tabs: string[] = [];
+  if (works || !keeps) tabs.push('People');
+  else if (social) tabs.push('People', 'Kept here');
+  else tabs.push('Kept here', 'People');
+  if (works) tabs.push('Work');
   tabs.push('About');
   return tabs;
 }
@@ -65,6 +91,8 @@ export function buildingBody(game: Game, b: Building, tab: string): string {
       return siteBody(game, b);
     case 'People':
       return buildingPeople(game, b);
+    case 'Kept here':
+      return storageSection(game, b);
     case 'Work':
       return buildingWork(game, b);
     default:
@@ -337,9 +365,30 @@ function storageSection(game: Game, b: Building): string {
       }</span></div>`;
   };
 
+  /*
+   * A building that keeps two or three things lists them all, empty rows and
+   * all, because the empty compartment is the useful half of the answer: it is
+   * the room you are being told you have.
+   *
+   * A storehouse keeps every resource in the game, and thirteen rows of mostly
+   * nought is a wall rather than an answer. Two of those rows would be mithril,
+   * which nothing in the kingdom can reach — the same reason `focusOptions`
+   * will not offer the forge its mithril recipe. Past a handful, then, only
+   * what is actually in there is named, and the rest is one line about room.
+   */
+  const many = keeps.length > 4;
+  const shown = many ? keeps.filter((res) => (b.store[res] ?? 0) > 0) : keeps;
+  const spare = keeps.length - shown.length;
+  const cap = held[keeps[0]] ?? 0;
+
   return `<div class="bsec"><div class="bh">Kept here</div>
-    ${keeps.map((res) => row(res, b.store[res] ?? 0, held[res] ?? 0, game.capacityGain(b, res))).join('') ||
-      '<div class="tiny muted">Nothing is kept here.</div>'}
+    ${shown.map((res) => row(res, b.store[res] ?? 0, held[res] ?? 0, game.capacityGain(b, res))).join('') ||
+      `<div class="tiny muted">${many ? 'Empty, and ready for anything.' : 'Nothing is kept here.'}</div>`}
+    ${
+      spare > 0
+        ? `<div class="tiny muted" style="margin-top:8px">Empty shelves for everything else besides — ${cap} of each.</div>`
+        : ''
+    }
     ${
       bench.length
         ? `<div class="tiny muted" style="margin:10px 0 5px">On the bench — working supplies, fetched as they are used</div>
@@ -349,7 +398,7 @@ function storageSection(game: Game, b: Building): string {
     ${
       keeps.length
         ? `<div class="tiny muted" style="margin-top:8px;line-height:1.55">This is where the kingdom keeps
-            ${plainList(keeps.map((res) => RESOURCE_META[res].name.toLowerCase()))}. Anyone who needs some walks here for it${
+            ${many ? 'anything at all — whatever is nearest to hand when somebody has a load to put down' : plainList(keeps.map((res) => RESOURCE_META[res].name.toLowerCase()))}. Anyone who needs some walks here for it${
               game.canRelocate(b) ? ', and moving the building takes everything in it along' : ''
             }.</div>`
         : ''
@@ -568,7 +617,18 @@ function buildingAbout(game: Game, b: Building): string {
   if (def.slots) facts.push(kv('Places to work', `${jobSlots(b)}`));
   const keeps = Object.entries(storesOf(b.def, b.level));
   if (keeps.length) {
-    facts.push(kv('Keeps', keeps.map(([res, cap]) => `${cap} ${RESOURCE_META[res as ResourceId].name.toLowerCase()}`).join(', ')));
+    // A storehouse keeps every resource at the same figure, and naming all
+    // thirteen — two of them mithril, which nothing can reach — says less than
+    // "of every kind" does in four words.
+    const uniform = keeps.length > 4 && new Set(keeps.map(([, cap]) => cap)).size === 1;
+    facts.push(
+      kv(
+        'Keeps',
+        uniform
+          ? `${keeps[0][1]} of every kind`
+          : keeps.map(([res, cap]) => `${cap} ${RESOURCE_META[res as ResourceId].name.toLowerCase()}`).join(', '),
+      ),
+    );
   }
   if (def.job) facts.push(kv('Trade', JOB_META[def.job].name));
   if (def.harvests) facts.push(kv('Workers range', `${rangeOf(b.def, b.level)} tiles`));
@@ -742,11 +802,23 @@ function improveGains(b: Building): string[] {
   // materials would be understating it threefold.
   const now = storesOf(b.def, b.level);
   const then = storesOf(b.def, b.level + 1);
+  const rooms: { res: ResourceId; was: number; will: number }[] = [];
   for (const k in then) {
     const res = k as ResourceId;
     const was = now[res] ?? 0;
     const will = then[res] ?? 0;
-    if (will > was) out.push(`${RESOURCE_META[res].name} kept: ${was} → ${will}`);
+    if (will > was) rooms.push({ res, was, will });
+  }
+  /*
+   * …except when it is one figure after all. A storehouse steps every one of
+   * its thirteen compartments together, and thirteen identical lines in a
+   * checklist somebody is reading to decide whether to spend sixty wood is
+   * noise standing exactly where the answer should be.
+   */
+  if (rooms.length > 4 && rooms.every((r) => r.was === rooms[0].was && r.will === rooms[0].will)) {
+    out.push(`Kept, of every kind: ${rooms[0].was} → ${rooms[0].will}`);
+  } else {
+    for (const r of rooms) out.push(`${RESOURCE_META[r.res].name} kept: ${r.was} → ${r.will}`);
   }
   return out;
 }

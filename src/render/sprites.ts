@@ -643,6 +643,11 @@ function shapeFor(def: BuildingId, level: number): { wall: number; roof: number;
         : level === 2
           ? { wall: 22, roof: 11, ov: 4, extra: 11 }
           : { wall: 17, roof: 9, ov: 3, extra: 0 };
+    // Taller in the wall than anything else its size, because the thing being
+    // read across the map is "that is a lot of room", and a barn's height is
+    // the whole of how a barn says so.
+    case 'storehouse':
+      return { wall: up ? 24 : 20, roof: up ? 11 : 9, ov: 4, extra: 0 };
     case 'lodge':
       return { wall: 19, roof: 10, ov: 4, extra: 0 };
     // The mine grows visibly as it is sunk deeper: a lean-to over a working
@@ -901,6 +906,17 @@ function drawFinished(
       if (level >= 2) addWindow(ctx, bx, baseY, front + 9, s.wall, pane, windows, M.window);
       if (level >= 3) addWindow(ctx, bx, baseY, bx + 12, s.wall, pane, windows, M.window);
       if (level >= 2) chimney(ctx, roof.ridgeA.x + 5, roof.ridgeA.y - 1, level >= 3 ? 9 : 7, snow);
+      break;
+    }
+    case 'storehouse': {
+      isoWalls(ctx, ox, baseY, w, h, s.wall, { left: M.plankL, right: M.plankR }, 1);
+      gableRoof(ctx, ox, baseY, w, h, s.wall, s.roof, s.ov, slate);
+      // Big double doors across the front — the point of the building.
+      addDoor(ctx, bx, baseY, front, 15, s.wall - 2, '#6b4a2c');
+      // The gap where the two leaves meet, running down with the wall.
+      px(ctx, front, wallFootY(bx, baseY, front) - s.wall + 3, '#4a3320', 1, s.wall - 4);
+      crate(ctx, g.L.x + 1, g.L.y + 6, seed);
+      if (level > 1) crate(ctx, g.R.x - 12, g.R.y + 7, seed + 1);
       break;
     }
     case 'lodge': {

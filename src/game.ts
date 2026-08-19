@@ -25,6 +25,7 @@ import {
   buildingName,
   dayDoing,
   focusOptions,
+  holdsOf,
   rangeOf,
   relocateCost,
   RESOURCE_META,
@@ -1191,7 +1192,19 @@ export class Game {
   relocateBlock(b: Building): string | null {
     const def = BUILDINGS[b.def];
     if (b.def === 'commons') return 'The commons stands where the kingdom began. It does not move.';
-    if (!def.unique) return `There can be more than one ${def.name.toLowerCase()}, so build one where you want it and take this down.`;
+    /*
+     * "Build another and take this one down" is only an answer when taking it
+     * down is actually allowed, and `holdingProblem` refuses that outright while
+     * a building holds anything. So a building that is the home of something can
+     * be moved whether or not it is unique — otherwise a storehouse in the wrong
+     * place fills with a thousand wood and can then be neither moved nor
+     * removed, which is a corner the player cannot get out of.
+     *
+     * It reads as one rule rather than a list because it is one: a building you
+     * cannot rebuild elsewhere is a building you can carry.
+     */
+    if (!def.unique && holdsOf(b.def, b.level).length === 0)
+      return `There can be more than one ${def.name.toLowerCase()}, so build one where you want it and take this down.`;
     if (b.stage !== 'done') return 'It is not finished yet.';
     if (b.upgrading) return 'It is being improved. One thing at a time.';
     if (b.movingTo) return 'It is already on its way somewhere.';

@@ -51,8 +51,10 @@ import {
   assignHome,
   buildingById,
   buildingCentre,
+  capacityIn,
   claim,
   deliver,
+  dropFor,
   foodComfort,
   foodPotential,
   homeCapacity,
@@ -1166,12 +1168,12 @@ function homeLeg(g: GameState, home: Building): Step[] {
  * ever running out of stone.
  */
 function planHarvestTrees(g: GameState, v: Villager, workplace: Building): boolean {
-  // The woodpile is the lodge's own, so this is a question about *this*
-  // building rather than about the kingdom: a full lodge is a lodge whose
-  // people go and help elsewhere, and the larder is not involved either way.
-  const home = homeFor(g, 'wood', workplace.x, workplace.y);
-  if (!home || roomIn(home, 'wood') < CHOP_YIELD) {
-    noticeFull(g, 'wood', home ?? workplace);
+  // Where the load would go, which is the lodge's own woodpile while it has
+  // room and the nearest thing with room once it has not. Never about the
+  // kingdom's larder: a full woodpile and an empty larder are the same kingdom.
+  const home = dropFor(g, 'wood', workplace.x, workplace.y, CHOP_YIELD);
+  if (!home) {
+    noticeFull(g, 'wood', workplace);
     return planGeneralWork(g, v);
   }
 
@@ -1217,7 +1219,11 @@ function planFish(g: GameState, v: Villager, hut: Building): boolean {
   // Enough meals in the kingdom already, counting everything upstream: go and
   // be useful elsewhere. This is a judgement about mouths, not about shelf room.
   if (foodGlut(g, 'fish')) return planGeneralWork(g, v);
-  if (roomIn(hut, 'fish') < FISH_YIELD) {
+  // …and somewhere to put the catch, which is the hut while the hut has room
+  // and a storehouse once it has not. Measured from the hut, so nothing changes
+  // until the hut is genuinely full.
+  const drop = dropFor(g, 'fish', hut.x, hut.y, FISH_YIELD);
+  if (!drop) {
     noticeFull(g, 'fish', hut);
     return planGeneralWork(g, v);
   }
@@ -1248,8 +1254,8 @@ function planFish(g: GameState, v: Villager, hut: Building): boolean {
     steps.push({ t: 'effect', kind: 'catch', x: spot.x, y: spot.y });
   }
   // Back to the hut, which is where the kingdom's fish is kept and where the
-  // cooks come for it.
-  steps.push(...homeLeg(g, hut));
+  // cooks come for it — or to whatever has room for it when the hut has none.
+  steps.push(...homeLeg(g, drop));
   v.plan = steps;
   return true;
 }
@@ -1296,17 +1302,22 @@ function faceToward(from: { x: number; y: number }, to: { x: number; y: number }
  * against `BALANCE_TARGET` rather than against each other, because a kingdom
  * wants far more stone than it does ore.
  *
- * What closes a material off is now this mine's own compartment being full, and
- * nothing else. Each material has its own, so a Deep Mine with nowhere to put
- * stone carries on cutting ore — which used to be impossible, because the one
- * shared pool being full stopped everything at once.
+ * What closes a material off is having nowhere in the kingdom to put it, and
+ * nothing else. Each material is asked about separately, so a Deep Mine with
+ * nowhere to put stone carries on cutting ore — which used to be impossible,
+ * because the one shared pool being full stopped everything at once.
+ *
+ * It asks `dropFor` rather than about its own shelf, and the difference is the
+ * whole reason a storehouse is worth building: a mine sitting at its own
+ * ceiling with a barn down the hill is a mine that should still be cutting
+ * stone. Asking about itself left it stopped beside a thousand empty shelves.
  *
  * Mithril is filtered out unconditionally. The level that would list it cannot
  * be reached, and this is the second lock on that.
  */
 function chooseExtraction(g: GameState, b: Building): ResourceId | null {
   const all: ResourceId[] = extractsOf(b.def, b.level).filter((r) => r !== 'mithrilOre');
-  const open = all.filter((r) => roomIn(b, r) >= (MINE_YIELD[r] ?? 2));
+  const open = all.filter((r) => dropFor(g, r, b.x, b.y, MINE_YIELD[r] ?? 2));
   if (open.length === 0) return null;
   const focus = b.focus;
   if (focus && focus !== 'balanced' && open.includes(focus as ResourceId)) return focus as ResourceId;
@@ -1345,6 +1356,16 @@ function planExtract(g: GameState, v: Villager, mine: Building): boolean {
     return planGeneralWork(g, v);
   }
 
+  /*
+   * Where the load ends up, measured **from the mine** rather than from the
+   * face. That is deliberate and it is what keeps this change invisible until
+   * it is wanted: the mine is at no distance from itself, so it wins outright
+   * whenever it has room, and a storehouse only ever gets the stone once the
+   * mine has none. Measuring from the face would start handing loads to a barn
+   * that happened to sit nearer the rock, which is a different feature.
+   */
+  const drop = dropFor(g, res, mine.x, mine.y, MINE_YIELD[res] ?? 2) ?? mine;
+
   const c = buildingCentre(mine);
   const reach = rangeOf(mine.def, mine.level);
   const rock = rockInRange(g, c.x, c.y, reach);
@@ -1355,7 +1376,7 @@ function planExtract(g: GameState, v: Villager, mine: Building): boolean {
     planWalkTo(g, v, mine, [
       { t: 'act', dur, kind: 'gathering', xp: 'miner' },
       { t: 'effect', kind: 'extract', id: mine.id, res },
-      { t: 'give', to: 'store', id: mine.id },
+      ...(drop.id === mine.id ? ([{ t: 'give', to: 'store', id: mine.id }] as Step[]) : homeLeg(g, drop)),
     ]);
     return true;
   }
@@ -1370,7 +1391,7 @@ function planExtract(g: GameState, v: Villager, mine: Building): boolean {
     steps.push({ t: 'act', dur, kind: 'gathering', xp: 'miner' });
     steps.push({ t: 'effect', kind: 'extract', id: mine.id, res });
   }
-  steps.push(...homeLeg(g, mine));
+  steps.push(...homeLeg(g, drop));
   v.plan = steps;
   return true;
 }
@@ -1464,11 +1485,12 @@ function planFarm(g: GameState, v: Villager, farm: Building): boolean {
     }
   }
 
-  // Reaping wants somewhere for the sheaves to go — the farm's own barn — and a
-  // kingdom that is not already sitting on more meals than it wants. Sowing is
-  // unconditional either way: a bare plot costs nothing to fill and the wheat
-  // will not be wanted for three minutes yet.
-  if (ripe >= 0 && roomIn(farm, 'wheat') >= HARVEST_YIELD && !foodGlut(g, 'wheat')) {
+  // Reaping wants somewhere for the sheaves to go — the farm's own barn, or a
+  // storehouse once that is full — and a kingdom that is not already sitting on
+  // more meals than it wants. Sowing is unconditional either way: a bare plot
+  // costs nothing to fill and the wheat will not be wanted for three minutes yet.
+  const drop = dropFor(g, 'wheat', farm.x, farm.y, HARVEST_YIELD);
+  if (ripe >= 0 && drop && !foodGlut(g, 'wheat')) {
     const p = farm.plots[ripe];
     p.claimed = v.id;
     claim(g, v, 'plot', farm.id * 100 + ripe);
@@ -1489,8 +1511,8 @@ function planFarm(g: GameState, v: Villager, farm: Building): boolean {
       );
     }
     // Into the barn, which is where the kingdom's wheat lives and where the
-    // miller comes for it.
-    steps.push(...homeLeg(g, farm));
+    // miller comes for it — or wherever has room when the barn has none.
+    steps.push(...homeLeg(g, drop));
     v.plan = steps;
     return true;
   }
@@ -1570,9 +1592,15 @@ function chooseRecipe(g: GameState, b: Building): Recipe | null {
   const runnable = liveRecipesOf(b.def).filter((r) => {
     const out = recipeOutput(r);
     // Two separate reasons to stand down, and they answer different questions:
-    // there is nowhere to put another one, or there are already more meals in
-    // the kingdom than anybody wants. Only the first is about this building.
-    if (roomIn(b, out) < (r.outputs[out] ?? 1)) return false;
+    // there is nowhere in the kingdom to put another one, or there are already
+    // more meals than anybody wants.
+    //
+    // The first is deliberately *not* about this building any more. A batch
+    // lands on the shelf where it was made — that much has to stay true, or
+    // bread would appear somewhere nobody carried it — but a full shelf with a
+    // storehouse down the road is a reason to keep baking and let somebody
+    // carry the surplus off, which is rung 4 of the General Worker's ladder.
+    if (!dropFor(g, out, b.x, b.y, r.outputs[out] ?? 1)) return false;
     if (foodGlut(g, out)) return false;
     return couldSupply(g, b, r);
   });
@@ -1685,13 +1713,14 @@ function planProduce(g: GameState, v: Villager, b: Building): boolean {
 
 /**
  * Everything nobody else is doing, in rough order of urgency: supply the sites,
- * build them, restock the workshops, and only then — and only below the reserve
- * — go and fell a tree.
+ * build them, restock the workshops, clear a shelf that has run out of room,
+ * and only then — and only below the reserve — go and fell a tree.
  *
- * There used to be a fourth rung, clearing finished goods off a workshop's
- * shelf into a barn. It is gone because the shelf is the barn: what a building
- * makes is kept where it was made, so there is nothing to move and nobody to
- * move it. Nothing replaced it, and the ladder is shorter for it.
+ * The clearing rung is deliberately last but one and deliberately narrow. What
+ * a building makes is kept where it was made; nothing is shuttled about for
+ * tidiness, and in a kingdom with room to spare this rung never fires. It
+ * exists only so that "full" is somewhere goods can leave rather than a wall
+ * the whole trade stops at.
  *
  * This is the General Worker's whole trade, and every specialist falls through
  * to it the moment their own work has nothing in it.
@@ -1748,7 +1777,45 @@ function planGeneralWork(g: GameState, v: Villager): boolean {
     return true;
   }
 
-  // 4. Fell a tree, and only to keep the reserve up. Wood is the only thing
+  /*
+   * 4. Carry the surplus off a shelf that has run out of room, to somewhere
+   *    that has not.
+   *
+   *    This rung was deleted when the shared store went, and the reasoning was
+   *    sound at the time: the shelf *was* the barn, so there was nothing to move
+   *    and nowhere to move it to. A storehouse is somewhere to move it to, and
+   *    this is the whole of how bread, bars and a full mine's stone ever reach
+   *    one — a cook cannot carry the loaf and go on baking at the same time.
+   *
+   *    It fires only on a compartment that is genuinely at its ceiling, so in an
+   *    ordinary kingdom it never runs at all and goods stay where they were
+   *    made. That is the point: it is a pressure valve, not a logistics layer,
+   *    and a kingdom with room everywhere should look exactly as it did before.
+   */
+  for (const b of g.buildings) {
+    if (b.stage !== 'done') continue;
+    const full = (Object.keys(b.store) as ResourceId[]).find(
+      (res) => capacityIn(b, res) > 0 && roomIn(b, res) <= 0 && (b.store[res] ?? 0) > 0,
+    );
+    if (!full) continue;
+    if (isClaimed(g, 'clear', b.id, v.id)) continue;
+    // Somewhere with *ordinary* room, and never back into the building it came
+    // from — which cannot happen anyway, since that one has none.
+    const to = homeFor(g, full, b.x, b.y);
+    if (!to || to.id === b.id || roomIn(to, full) < 1) continue;
+    const qty = Math.min(CARRY_CAPACITY, b.store[full] ?? 0, roomIn(to, full));
+    if (qty < 1) continue;
+    claim(g, v, 'clear', b.id);
+    const def = BUILDINGS[b.def];
+    v.plan = [
+      { t: 'move', x: b.x, y: b.y, goals: footprintApproach(g, b.x, b.y, def.w, def.h) },
+      { t: 'take', res: full, qty, from: 'store', id: b.id },
+      ...homeLeg(g, to),
+    ];
+    return true;
+  }
+
+  // 5. Fell a tree, and only to keep the reserve up. Wood is the only thing
   //    hands alone can fetch — stone comes out of a quarry or it does not come
   //    at all — and this is emergency stock rather than a supply: enough that a
   //    kingdom with no lodge, or a lodge nobody is standing in, can always dig

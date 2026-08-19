@@ -39,6 +39,7 @@ import {
   GOOD_SPOT,
   SCHEDULE,
   SPECIES,
+  STORAGE_OVERFLOW,
   buildingName,
   rangeOf,
   relocateCost,
@@ -293,6 +294,19 @@ function autoplay(state: GameState): void {
   // is cheap and quick and comes first, the farm is the one that keeps up later.
   // A run that built only one of them would leave half of this untested.
   if (!has('fishhut')) wants.push('fishhut');
+  /*
+   * Somewhere to put things, once there is anything worth putting down and
+   * anywhere far away to carry it from. A player builds one when a haul starts
+   * to feel long, which is exactly the moment both raw-material buildings are
+   * standing out at their resources rather than beside the fire.
+   *
+   * It is deliberately *after* the hut and before the farm: it is a convenience
+   * and nothing in the game requires one, so a run that put it ahead of the
+   * food chain would be modelling a player this game does not have. What it
+   * does buy is coverage — without this line nothing in any harness ever builds
+   * one, and a building nothing exercises is a building nobody has checked.
+   */
+  if (done('lodge') && done('quarry') && !has('storehouse')) wants.push('storehouse');
   if (!has('farm')) wants.push('farm');
   if (!has('mill')) wants.push('mill');
   if (!has('kitchen')) wants.push('kitchen');
@@ -386,10 +400,30 @@ function autoplay(state: GameState): void {
         }
       if (best) near = best;
     }
-    // The three that follow a resource sit as close to it as they can; every-
+    if (def === 'storehouse') {
+      /*
+       * Halfway out to whichever raw-material building is the longer walk. That
+       * is the only reason to build one, and siting it by the fire — where the
+       * commons, the kitchen and everything else already have room — would give
+       * the run a storehouse that never took a single load nothing else would
+       * have taken, which is a test that passes without testing anything.
+       */
+      let far: { x: number; y: number } | null = null;
+      let farD = 0;
+      for (const b of state.buildings) {
+        if (b.def !== 'lodge' && b.def !== 'quarry') continue;
+        const d = (b.x - fire.x) ** 2 + (b.y - fire.y) ** 2;
+        if (d > farD) {
+          farD = d;
+          far = { x: b.x, y: b.y };
+        }
+      }
+      if (far) near = { x: Math.round((fire.x + far.x) / 2), y: Math.round((fire.y + far.y) / 2) };
+    }
+    // The four that follow a resource sit as close to it as they can; every-
     // thing else wants elbow room round the commons rather than crowding the
     // ground people walk through.
-    const minR = def === 'lodge' || def === 'quarry' || def === 'fishhut' ? 2 : 4;
+    const minR = def === 'lodge' || def === 'quarry' || def === 'fishhut' || def === 'storehouse' ? 2 : 4;
     const spot = findSpot(def, near, minR);
     if (spot) place(def, spot.x, spot.y);
     break;
@@ -720,10 +754,14 @@ for (const res of RESOURCE_ORDER) {
 }
 /*
  * Every compartment separately, because there is no longer a single ceiling to
- * check against. A compartment may be overshot by whatever was already in
- * people's arms when it filled — loads already carried are always allowed to
- * land, and that is the rule that stops the full-store deadlock. Anything
- * beyond one full round of deliveries is a leak.
+ * check against — and the ceiling to check against is the *overflow* one rather
+ * than the stated capacity, because the stated capacity is a soft cap by
+ * design: `homeFor` will put a load into the margin above it when the kingdom
+ * has nowhere else at all, and `deliver` has never refused one. Both of those
+ * are what stop the full-store deadlock.
+ *
+ * Past the margin, plus whatever was already in people's arms when it filled,
+ * is a leak: something is depositing without having asked anybody for room.
  */
 const inFlight = g.villagers.length * CARRY_CAPACITY;
 for (const b of g.buildings) {
@@ -731,9 +769,10 @@ for (const b of g.buildings) {
   for (const k in room) {
     const res = k as ResourceId;
     const held = b.store[res] ?? 0;
-    if (held > (room[res] ?? 0) + inFlight + 1) {
+    const ceiling = Math.floor((room[res] ?? 0) * STORAGE_OVERFLOW);
+    if (held > ceiling + inFlight + 1) {
       problems.push(
-        `${buildingName(b.def, b.level)} overflowed ${res}: ${Math.round(held)} > ${room[res]} (+${inFlight} in flight)`,
+        `${buildingName(b.def, b.level)} overflowed ${res}: ${Math.round(held)} > ${ceiling} (+${inFlight} in flight)`,
       );
     }
   }

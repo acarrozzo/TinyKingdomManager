@@ -347,9 +347,24 @@ function resourceTip(game: Game, res: ResourceId): string {
     ${whereRows(game, res)}
     ${carriedLine(game, res)}
     <span class="tip-line">${esc(flowLine(game, res))}</span>
-    <span class="tip-line"><b>Kept at</b> ${esc(info.kept)}</span>
+    <span class="tip-line"><b>Kept at</b> ${esc(info.kept)}${esc(storehouseClause(game))}</span>
     <span class="tip-line"><b>From</b> ${esc(info.from)}</span>
     <span class="tip-line"><b>For</b> ${esc(info.used)}</span>`;
+}
+
+/**
+ * The one thing a storehouse adds to every resource's story, said once here
+ * rather than written into all thirteen of the `kept` lines — which describe
+ * where a resource *comes to rest* and are still true.
+ *
+ * It is silent until the kingdom has actually built one. A standing sentence
+ * about a building the player has not put down is a line of the interface
+ * explaining something that is not on the map.
+ */
+function storehouseClause(game: Game): string {
+  const n = game.state.buildings.filter((b) => b.def === 'storehouse' && b.stage === 'done').length;
+  if (n < 1) return '';
+  return n === 1 ? ' The storehouse keeps some of everything too.' : ' The storehouses keep some of everything too.';
 }
 
 /**
@@ -381,7 +396,9 @@ export function storesBody(game: Game): string {
       <div class="bh">Where things are kept</div>
       <div class="tiny muted" style="line-height:1.55">Nothing is kept in one great pile. Each resource lives in the building that
         produces it — wood at the lodge, stone at the mine, supper at the kitchen — with its own room, and
-        whoever needs some walks there for it. Improving a building is what raises what it can hold.</div>
+        whoever needs some walks there for it. A storehouse takes any of it, which is what makes one near the
+        work worth building: the load goes to whichever building with room is nearest.
+        Improving a building is what raises what it can hold.</div>
     </div>
     <div class="bsec"><div class="bh">What there is</div>${rows}</div>`;
 }

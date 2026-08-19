@@ -16,6 +16,7 @@ import type {
   TraitId,
   UpgradeReq,
 } from '../types';
+import { RESOURCE_ORDER } from '../types';
 
 export const CARRY_CAPACITY = 12;
 
@@ -32,6 +33,26 @@ export const CARRY_CAPACITY = 12;
  * with extra walking.
  */
 export const STORAGE_TIERS = [250, 1000, 2500, 5000];
+
+/**
+ * The stated capacity is a **soft** cap, and this is how far past it a
+ * compartment will still take a load when the kingdom has nowhere else at all
+ * to put one.
+ *
+ * The number above is the one the player reads and the one every producer works
+ * to: a woodcutter stops at a full woodpile, a cook stops at a full larder, and
+ * that is what "full" means everywhere in the interface. This margin is not a
+ * bigger number pretending to be that one — nothing ever *aims* at it. It is
+ * only ever reached from below, by a load already in somebody's arms with
+ * nowhere to go, which `deliver` has always accepted rather than refused.
+ *
+ * It exists because "there is nowhere to put this" must never be a wall. A
+ * carrier who cannot set a load down keeps hold of it and re-decides, forever,
+ * and the kingdom is short one pair of hands until something drains. The margin
+ * gives that case somewhere to land, and it drains on its own precisely because
+ * production stopped at the line below it.
+ */
+export const STORAGE_OVERFLOW = 1.25;
 
 /**
  * …and how much of an ingredient a workshop keeps on the bench. Small against
@@ -510,6 +531,44 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     housing: [2, 4, 6],
     sheltered: true,
     light: [{ x: 1.0, y: 1.35, radius: 36, color: '#ffc06a' }],
+    solid: true,
+  },
+  /*
+   * The one building that makes nothing and is the home of everything.
+   *
+   * It is not a raised ceiling on a shared pile — there is no shared pile any
+   * more, and it is not coming back. A storehouse is an ordinary building with
+   * an ordinary compartment for every resource, which is why it needs no
+   * special case anywhere: `holdsOf` folds `holds` in with what a building
+   * produces, and `homeFor` is nearest-wins, so a woodcutter twenty tiles out
+   * from the lodge drops the load here without a word of the planner changing.
+   *
+   * That walk is the whole of what it is for. Siting one is a decision about
+   * distance rather than about capacity, and the cost of getting it wrong is
+   * time rather than anything lost.
+   */
+  storehouse: {
+    id: 'storehouse',
+    name: 'Storehouse',
+    category: 'storage',
+    w: 2,
+    h: 2,
+    cost: { wood: 25 },
+    labour: 40,
+    maxLevel: 2,
+    upgradeCostMul: 2.4,
+    order: 10,
+    unlock: 'storehouse',
+    desc: 'Room for anything, wherever you put it. Build them out where the work is.',
+    how: 'Somewhere to put things down, and it keeps every kind of thing the kingdom has — 250 of each, or 1,000 once it is improved, every resource in a compartment of its own so a full woodpile never crowds out the supper. Nobody works here and nothing is made here. What it changes is the walking: a load is always carried to whichever building with room is nearest, so a storehouse out by the mine or the woods is half the journey for everyone hauling from there, and anybody who needs stone will come and fetch it from here rather than walking on to the quarry. The commons decides how many may stand at once, one more with each step it takes. It can be moved, and everything inside moves with it.',
+    // The same allowance as the cabin, and handed over the same way: one more
+    // with each step the commons takes. Somewhere to put things is a want that
+    // grows with the kingdom exactly as somewhere to sleep does.
+    maxCount: [1, 2, 3, 4],
+    // The whole list, deliberately. A storehouse that kept only some of it
+    // would be a sorting puzzle, and the reason to build one is that you can
+    // stop thinking about where a load is going.
+    holds: [...RESOURCE_ORDER],
     solid: true,
   },
   lodge: {
@@ -1140,10 +1199,14 @@ export function relocateLabour(def: BuildingId): number {
   return BUILDINGS[def].labour;
 }
 
-// No Storage category any more: there is no building whose job is to hold
-// things in general, because every production building holds its own.
+// Storage is a category of one, and stays a category of its own rather than
+// being filed under Production: every other building here is somewhere work
+// happens, and the storehouse is the only one that is purely somewhere to put
+// things. Grouping it with the mills and the mine would suggest it produced
+// something.
 export const CATEGORY_META: Record<string, { name: string; icon: string }> = {
   housing: { name: 'Housing', icon: '🏠' },
+  storage: { name: 'Storage', icon: '📦' },
   production: { name: 'Production', icon: '⚙️' },
   comfort: { name: 'Comfort', icon: '🌷' },
 };
