@@ -677,7 +677,7 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     order: 23,
     desc: 'A barn and twenty-four plots. Farmers sow, tend, and harvest wheat.',
     how: 'Twenty-four plots around a barn corner, which is why it wants a broad flat piece of ground. A farmer sows a bare plot, hoes it while it comes on, and reaps it for a single sheaf when it is ripe — the better part of a day\'s growing at normal speed, quickest in summer and about a third of that pace in winter. Hoeing brings a plot on a little faster, so a farm somebody is walking about in does better than one left to itself, and a farm with nobody assigned at all creeps along at about a third the pace. About a quarter of the field is kept under seed whatever happens; the rest goes under only while the kingdom wants more to eat, and lies fallow the rest of the time — which is why a well-fed kingdom has farmers hoeing bare ground. What is standing is always brought in. Harvested wheat goes into the barn and stays there: this is where the kingdom\'s wheat lives, 250 of it and 1,000 once the farm is improved, and the miller walks over for it. There is one farm in the kingdom; moving it takes the barn and everything in it, but lays out fresh plots on the new ground, so whatever was standing in the old ones is lost with them — worth waiting for a harvest first.',
-    slots: [2, 4],
+    slots: [1, 2],
     job: 'farmer',
     plots: true,
     holds: ['wheat'],

@@ -200,6 +200,9 @@ function buildingPeople(game: Game, b: Building): string {
       })
       .join('');
     const free = slots - b.workers.length;
+    // Not every improvement buys another pair of hands — the farm's second level
+    // buys barn room instead — so only promise more places when there are more.
+    const moreLater = b.level < def.maxLevel && def.slots[Math.min(b.level + 1, def.slots.length) - 1] > slots;
     out += `<div class="bsec"><div class="bh" id="b-work">Working here · ${b.workers.length}/${slots}</div>
       ${rows || '<div class="tiny muted">Nobody works here yet, so nothing is being made.</div>'}
       ${
@@ -209,7 +212,7 @@ function buildingPeople(game: Game, b: Building): string {
               <button class="btn small" data-act="autostaff" data-id="${b.id}">Nearest free hand</button>
             </div>
             <div class="tiny muted" style="margin-top:6px">${free} place${free === 1 ? '' : 's'} still open. Taking somebody off another job is allowed — they keep everything they have learned.</div>`
-          : `<div class="tiny muted" style="margin-top:8px">Every place is taken. Improving the building adds more.</div>`
+          : `<div class="tiny muted" style="margin-top:8px">Every place is taken.${moreLater ? ' Improving the building adds more.' : ''}</div>`
       }</div>`;
   }
 
