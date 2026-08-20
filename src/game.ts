@@ -54,7 +54,7 @@ import {
   totalOf,
   villagerById,
 } from './sim/state';
-import { completeConstruction, siteNeeds, updateVillagers } from './sim/villager';
+import { completeConstruction, layPlots, siteNeeds, updateVillagers } from './sim/villager';
 import {
   campProblem,
   canChooseCamp,
@@ -281,6 +281,16 @@ export class Game {
           t.building = b.id;
           if (def.solid) t.blocked = true;
         }
+    }
+    // Fields go down after every building has claimed its ground, so a farm
+    // never tills a tile somebody else is standing on. Re-laying them also
+    // repairs a kingdom saved when the farm was three tiles across: it carries
+    // eight plots inside a footprint that is now five, which reads on the map
+    // as a field that has failed to fill its own fence. What is already
+    // ripening stays where it is, and the rest of the ground is turned over.
+    for (const b of g.buildings) {
+      const def = BUILDINGS[b.def];
+      if (def.plots && b.stage === 'done') layPlots(g, b, true);
       for (const p of b.plots) {
         const t = tileAt(g, p.x, p.y);
         if (t) t.plot = b.id;

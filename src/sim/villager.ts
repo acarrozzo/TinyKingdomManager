@@ -737,7 +737,7 @@ export function completeConstruction(g: GameState, b: Building): void {
     toast(g, def.levelNames ? `Now a ${now}` : `${now} improved`, '⬆️', 'good');
     journal(g, def.levelNames ? `A ${now.toLowerCase()} took the place of the old one.` : `The ${now.toLowerCase()} was improved.`, '⬆️');
   } else {
-    if (def.plots) makePlots(g, b);
+    if (def.plots) layPlots(g, b);
     // The Base Camp deserves better words than "Base Camp finished", and
     // finishing it is what moves the kingdom out of its founding.
     const founded = onFoundingBuild(g, b);
@@ -856,7 +856,7 @@ function finishRelocation(g: GameState, site: Building): void {
     }
   // Fresh ground means fresh fields: whatever was growing in the old plots went
   // with them, which is why the farm's own panel says to harvest before moving.
-  if (def.plots) makePlots(g, b);
+  if (def.plots) layPlots(g, b);
 
   const name = buildingName(b.def, b.level);
   toast(g, `The ${name.toLowerCase()} is standing at its new spot`, '🧭', 'good');
@@ -866,8 +866,15 @@ function finishRelocation(g: GameState, site: Building): void {
   for (const v of g.villagers) abandonPlan(g, v);
 }
 
-function makePlots(g: GameState, b: Building): void {
+/**
+ * Lays a field out over the ground its building stands on, everything but the
+ * barn corner. `keep` carries over whatever is already growing on a tile the
+ * farm still holds, which is what a kingdom whose footprint changed under it
+ * wants; fresh ground gets a fresh field.
+ */
+export function layPlots(g: GameState, b: Building, keep = false): void {
   const def = BUILDINGS[b.def];
+  const standing = keep ? new Map(b.plots.map((p) => [p.y * g.w + p.x, p])) : null;
   b.plots = [];
   for (let dy = 0; dy < def.h; dy++) {
     for (let dx = 0; dx < def.w; dx++) {
@@ -876,9 +883,14 @@ function makePlots(g: GameState, b: Building): void {
       const y = b.y + dy;
       const t = tileAt(g, x, y);
       if (!t || t.terrain === 'water' || t.terrain === 'shallow') continue;
+      // Ground somebody else is standing on is not the farm's to till. Only a
+      // footprint that grew after the fact can find a neighbour inside it, and
+      // the field goes round rather than swallowing them.
+      if (t.building && t.building !== b.id) continue;
       t.prop = null;
       t.plot = b.id;
-      b.plots.push({ x, y, state: 'empty', growth: 0, claimed: 0 });
+      const was = standing?.get(y * g.w + x);
+      b.plots.push(was ? { ...was, claimed: 0 } : { x, y, state: 'empty', growth: 0, claimed: 0 });
     }
   }
 }
