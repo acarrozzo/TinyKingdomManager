@@ -150,6 +150,14 @@ const OCEAN_H = 256;
  */
 const HOVER_FADE = 0.65;
 /**
+ * How far past the map's own edge the baked shadow layer reaches, in world
+ * pixels. A tree on the last tile at sunset throws its shadow off the island
+ * and over the water, and the layer has to have somewhere to put it.
+ */
+const SHADE_MARGIN = 128;
+/** How often the shadow layer is asked whether it is still right, in seconds. */
+const SURVEY_EVERY = 0.1;
+/**
  * How solid somebody asleep indoors is drawn, over the faded wall in front of
  * them. Short of full, so they read as a person glimpsed through a wall rather
  * than as a person lying on top of it.
@@ -199,6 +207,19 @@ export class Renderer {
    */
   private shade: HTMLCanvasElement;
   private sctx: CanvasRenderingContext2D;
+  /**
+   * The half of that pass which does not move: trees, boulders and roofs. See
+   * `drawShadows` — it is kept between frames and rebuilt only when the picture
+   * on it would actually differ.
+   *
+   * Map-sized and laid out in world pixels, exactly like `ground`, so that
+   * panning the camera reads a different window out of the same layer rather
+   * than rebuilding it. A viewport-sized one would have been smaller and would
+   * have thrown itself away on every frame of a drag or a follow, which is
+   * precisely when the machine is busiest.
+   */
+  private staticShade: HTMLCanvasElement;
+  private ssctx: CanvasRenderingContext2D;
 
   private terrain!: TerrainSheet;
   private props!: PropSheet;
@@ -224,8 +245,24 @@ export class Renderer {
   private hiring: Hiring[] = [];
   /** People the player has not looked at yet, marked over the dark like the rest. */
   private newcomers: { sx: number; sy: number }[] = [];
-  /** Shadow shapes reused across one frame; see `streak`. */
+  /** Shadow shapes reused across one bake of the static layer; see `streak`. */
   private stamps = new Map<string, { c: HTMLCanvasElement; ax: number; ay: number }>();
+  /**
+   * What the static shadow layer currently shows, as one number. It is compared
+   * against the same number recomputed each frame; the layer is rebuilt only
+   * when they differ.
+   */
+  private shadeKey = 0;
+  /**
+   * Everything the static layer is made of, flat: width, height, world x, world
+   * y, four numbers per caster. Filled during the same walk that computes the
+   * key, so a rebuild replays this rather than crossing the map twice. Reused
+   * between frames; `shadeCount` says how much of it is live.
+   */
+  private shadeItems: number[] = [];
+  private shadeCount = 0;
+  /** When the layer was last checked, on the renderer's own clock. */
+  private lastSurvey = -1;
   private time = 0;
   /** 0 in full daylight, 1 at the darkest point of the night. */
   private darkness = 0;
@@ -243,12 +280,19 @@ export class Renderer {
     this.offY = HALF_H;
     this.ground = mkCanvas((mapW + mapH) * HALF_W, (mapW + mapH) * HALF_H);
     this.gctx = ctxOf(this.ground);
+    // Room for the longest shadow a corner tile can throw off the map's edge.
+    this.staticShade = mkCanvas(this.ground.width + SHADE_MARGIN * 2, this.ground.height + SHADE_MARGIN * 2);
+    this.ssctx = ctxOf(this.staticShade);
     this.resize();
   }
 
   /** Season change or a terrain edit; the ground layer is rebuilt next frame. */
   invalidateGround(): void {
     this.groundDirty = true;
+    // Whatever moved the ground may have moved what is standing on it, and a
+    // different kingdom entirely comes through here.
+    this.lastSurvey = -1;
+    this.shadeKey = 0;
   }
 
   setSeason(season: Season): void {
@@ -260,6 +304,8 @@ export class Renderer {
     clearBuildingCache();
     clearCropCache();
     this.groundDirty = true;
+    // New sprites means new silhouettes, and the key knows nothing about seasons.
+    this.shadeKey = 0;
   }
 
   resize(zoom = 1): void {
@@ -644,49 +690,64 @@ export class Renderer {
   // the ground at any zoom without a single number being drawn over the map.
   // -------------------------------------------------------------------------
 
+  /**
+   * Cast shadows, in two layers.
+   *
+   * Trees, boulders and roofs do not move, and the sun crosses the sky slowly
+   * enough that their shadows are the identical picture for seconds at a time.
+   * So they are stamped into a layer of their own, which is kept and blitted
+   * until something on it would genuinely look different; only the people and
+   * the animals are stamped afresh every frame.
+   *
+   * That split is worth a great deal. A wooded island in view is around three
+   * hundred and fifty stamps, and redrawing them at the frame rate was more of
+   * the machine than the whole of the rest of the game put together — measured
+   * at two fifths of the total cost, for a picture that had not changed.
+   */
   private drawShadows(g: GameState): void {
     const sun = sunlight(g.dayT, g.day, g.weather);
     if (sun.alpha < 0.012) return;
 
-    const s = this.sctx;
-    s.clearRect(0, 0, this.bufW, this.bufH);
-    // The shape depends on where the body is, so the stamps last one frame.
-    this.stamps.clear();
-
-    const { minX, maxX, minY, maxY } = this.visibleTiles(g);
-
-    for (let y = minY; y <= maxY; y++)
-      for (let x = minX; x <= maxX; x++) {
-        const t = g.tiles[y * g.w + x];
-        if (!t.prop) continue;
-        const sprites = this.props[t.prop];
-        const sp = sprites[t.variant % sprites.length];
-        // How far the sprite stands above the tile it is on. Flowers, pebbles
-        // and lilypads barely do, and a shadow off them is a smudge.
-        const h = Math.max(0, -sp.oy);
-        if (h < 7) continue;
-        this.stamp(sun, sp.canvas.width * 0.34, h, toScreenX(x, y), toScreenY(x, y));
+    // Asking the question is cheap but not free — it is a walk of the whole map
+    // — and the answer cannot change fast. A felled tree keeps its shadow for a
+    // tenth of a second, which is a good deal less than the axe swing that
+    // brought it down.
+    if (this.time - this.lastSurvey >= SURVEY_EVERY) {
+      this.lastSurvey = this.time;
+      const key = this.surveyCasters(g, sun);
+      if (key !== this.shadeKey) {
+        this.shadeKey = key;
+        this.bakeStaticShadows(g, sun);
       }
-
-    for (const bd of g.buildings) {
-      const def = BUILDINGS[bd.def];
-      if (bd.x + def.w < minX - 4 || bd.x > maxX + 4 || bd.y + def.h < minY - 4 || bd.y > maxY + 4) continue;
-      const sprite = getBuildingSprite(bd.def, def.w, def.h, bd.level, g.season, bd.seed, bd.stage === 'done' ? 'done' : 'site');
-      // A site is a frame and a stack of materials, not a building yet.
-      const h = Math.max(4, bd.stage === 'done' ? sprite.rise : sprite.rise * 0.4);
-      this.buildingShadow(sun, bd, def.w, def.h, h);
     }
 
+    const s = this.sctx;
+    s.clearRect(0, 0, this.bufW, this.bufH);
+    // The window of the layer this view is looking at, which is the same
+    // arithmetic the ground blit does a few lines earlier.
+    s.drawImage(
+      this.staticShade,
+      this.viewX + this.offX + SHADE_MARGIN,
+      this.viewY + this.offY + SHADE_MARGIN,
+      this.bufW,
+      this.bufH,
+      0,
+      0,
+      this.bufW,
+      this.bufH,
+    );
+
+    const { minX, maxX, minY, maxY } = this.visibleTiles(g);
     for (const v of g.villagers) {
       if (v.x < minX - 3 || v.x > maxX + 3 || v.y < minY - 3 || v.y > maxY + 3) continue;
       // Somebody asleep in a cabin casts nothing: they are indoors, and a
       // shadow lying on the grass beside the door is the giveaway.
       if (sleepingIndoors(g, v)) continue;
-      this.stamp(sun, 4, 13, toScreenX(v.x, v.y), toScreenY(v.x, v.y));
+      this.stamp(s, sun, 4, 13, toScreenX(v.x, v.y) - this.viewX, toScreenY(v.x, v.y) - this.viewY);
     }
     for (const a of g.animals) {
       if (a.x < minX - 3 || a.x > maxX + 3 || a.y < minY - 3 || a.y > maxY + 3) continue;
-      this.stamp(sun, 4, 7, toScreenX(a.x, a.y), toScreenY(a.x, a.y));
+      this.stamp(s, sun, 4, 7, toScreenX(a.x, a.y) - this.viewX, toScreenY(a.x, a.y) - this.viewY);
     }
 
     const b = this.bctx;
@@ -694,6 +755,86 @@ export class Renderer {
     b.globalAlpha = sun.alpha;
     b.drawImage(this.shade, 0, 0);
     b.restore();
+  }
+
+  /**
+   * Walks everything that casts a shadow and does not move, collecting it into
+   * `shadeItems` and reducing it to one number.
+   *
+   * The walk itself is unavoidable — the map has to be asked what is in view
+   * either way — and it is cheap: reading a tile and a sprite is a rounding
+   * error beside actually painting one. What the number buys is the painting.
+   *
+   * `sun.alpha` is deliberately not part of it. Darkness is applied at the
+   * composite, so the light may go on changing between bakes; what is baked in
+   * is only the *shape*, and the reach vector is rounded to whole pixels so
+   * that the layer is rebuilt when the longest shadow on the island would move
+   * one, rather than sixty times a second for a change nobody can see.
+   */
+  private surveyCasters(g: GameState, sun: Sunlight): number {
+    const items = this.shadeItems;
+    let n = 0;
+    const reach = this.reachOf(sun, 24);
+    const key0 =
+      Math.imul(Math.round(reach.dx) + 4093, 73856093) ^ Math.imul(Math.round(reach.dy) + 4093, 19349663);
+    let key = key0 | 0;
+
+    const tiles = g.tiles;
+    for (let i = 0; i < tiles.length; i++) {
+      const t = tiles[i];
+      if (!t.prop) continue;
+      const sprites = this.props[t.prop];
+      const sp = sprites[t.variant % sprites.length];
+      // How far the sprite stands above the tile it is on. Flowers, pebbles
+      // and lilypads barely do, and a shadow off them is a smudge.
+      const h = Math.max(0, -sp.oy);
+      if (h < 7) continue;
+      const x = i % g.w;
+      const y = (i - x) / g.w;
+      const w = sp.canvas.width * 0.34;
+      items[n] = w;
+      items[n + 1] = h;
+      items[n + 2] = toScreenX(x, y);
+      items[n + 3] = toScreenY(x, y);
+      n += 4;
+      // The silhouette is all that matters, so the size and the place are all
+      // that go in: a felled tree changes both, and a hoed plot changes neither
+      // and rightly does not rebuild anything.
+      key = (Math.imul(key, 31) + i + Math.imul(Math.round(w), 7) + Math.imul(h, 13)) | 0;
+    }
+    this.shadeCount = n;
+
+    for (const bd of g.buildings) {
+      key =
+        (Math.imul(key, 31) + Math.imul(bd.x, 61) + bd.y + Math.imul(bd.level, 7) + (bd.stage === 'done' ? 3 : 1)) | 0;
+    }
+    return key;
+  }
+
+  /** Repaints the static layer from what `surveyCasters` last collected. */
+  private bakeStaticShadows(g: GameState, sun: Sunlight): void {
+    const s = this.ssctx;
+    s.clearRect(0, 0, this.staticShade.width, this.staticShade.height);
+    // The shape depends on where the sun is, so the shapes last one bake.
+    this.stamps.clear();
+
+    // World pixels to layer pixels, which is the ground layer's own offset plus
+    // the margin the overhanging shadows live in.
+    const ox = this.offX + SHADE_MARGIN;
+    const oy = this.offY + SHADE_MARGIN;
+
+    const items = this.shadeItems;
+    for (let i = 0; i < this.shadeCount; i += 4) {
+      this.stamp(s, sun, items[i], items[i + 1], items[i + 2] + ox, items[i + 3] + oy);
+    }
+
+    for (const bd of g.buildings) {
+      const def = BUILDINGS[bd.def];
+      const sprite = getBuildingSprite(bd.def, def.w, def.h, bd.level, g.season, bd.seed, bd.stage === 'done' ? 'done' : 'site');
+      // A site is a frame and a stack of materials, not a building yet.
+      const h = Math.max(4, bd.stage === 'done' ? sprite.rise : sprite.rise * 0.4);
+      this.buildingShadow(s, sun, bd, def.w, def.h, h, ox, oy);
+    }
   }
 
   /**
@@ -707,14 +848,22 @@ export class Renderer {
     return { dx: sun.lean * HALF_W * tiles, dy: HALF_H * tiles };
   }
 
-  private stamp(sun: Sunlight, w: number, h: number, wx: number, wy: number): void {
-    const bx = wx - this.viewX;
-    const by = wy - this.viewY;
+  /** One shadow, at `bx`/`by` in the target canvas's own pixels. */
+  private stamp(
+    ctx: CanvasRenderingContext2D,
+    sun: Sunlight,
+    w: number,
+    h: number,
+    bx: number,
+    by: number,
+  ): void {
+    const cw = ctx.canvas.width;
+    const ch = ctx.canvas.height;
     const { dx, dy } = this.reachOf(sun, h);
-    if (bx + Math.min(0, dx) > this.bufW + 8 || bx + Math.max(0, dx) < -8) return;
-    if (by > this.bufH + 8 || by + dy < -8) return;
+    if (bx + Math.min(0, dx) > cw + 8 || bx + Math.max(0, dx) < -8) return;
+    if (by > ch + 8 || by + dy < -8) return;
     const st = this.streak(Math.max(3, Math.round(w)), Math.round(h), dx, dy);
-    this.sctx.drawImage(st.c, Math.round(bx) - st.ax, Math.round(by) - st.ay);
+    ctx.drawImage(st.c, Math.round(bx) - st.ax, Math.round(by) - st.ay);
   }
 
   /**
@@ -756,17 +905,26 @@ export class Renderer {
    * a box lying over the grid rather than a streak, because at this size a
    * roofline is a shape the eye recognises.
    */
-  private buildingShadow(sun: Sunlight, bd: Building, w: number, h: number, rise: number): void {
+  private buildingShadow(
+    ctx: CanvasRenderingContext2D,
+    sun: Sunlight,
+    bd: Building,
+    w: number,
+    h: number,
+    rise: number,
+    ox: number,
+    oy: number,
+  ): void {
     const { dx, dy } = this.reachOf(sun, rise);
     const base = [
-      { x: toScreenX(bd.x, bd.y) - this.viewX, y: toScreenY(bd.x, bd.y) - HALF_H - this.viewY },
-      { x: toScreenX(bd.x + w - 1, bd.y) + HALF_W - this.viewX, y: toScreenY(bd.x + w - 1, bd.y) - this.viewY },
-      { x: toScreenX(bd.x + w - 1, bd.y + h - 1) - this.viewX, y: toScreenY(bd.x + w - 1, bd.y + h - 1) + HALF_H - this.viewY },
-      { x: toScreenX(bd.x, bd.y + h - 1) - HALF_W - this.viewX, y: toScreenY(bd.x, bd.y + h - 1) - this.viewY },
+      { x: toScreenX(bd.x, bd.y) + ox, y: toScreenY(bd.x, bd.y) - HALF_H + oy },
+      { x: toScreenX(bd.x + w - 1, bd.y) + HALF_W + ox, y: toScreenY(bd.x + w - 1, bd.y) + oy },
+      { x: toScreenX(bd.x + w - 1, bd.y + h - 1) + ox, y: toScreenY(bd.x + w - 1, bd.y + h - 1) + HALF_H + oy },
+      { x: toScreenX(bd.x, bd.y + h - 1) - HALF_W + ox, y: toScreenY(bd.x, bd.y + h - 1) + oy },
     ];
     const pts = base.concat(base.map((p) => ({ x: p.x + dx, y: p.y + dy })));
-    this.sctx.fillStyle = '#000';
-    fillPoly(this.sctx, convexHull(pts));
+    ctx.fillStyle = '#000';
+    fillPoly(ctx, convexHull(pts));
   }
 
   // -------------------------------------------------------------------------

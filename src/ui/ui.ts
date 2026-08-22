@@ -976,6 +976,12 @@ export class UI {
         this.renderModal();
         break;
       }
+      case 'set-fps':
+        this.game.updateSettings({ fps: Number(target.dataset.fps) });
+        // Beside the buttons is a line saying what the choice means, so the
+        // panel has something to say back.
+        this.renderModal();
+        break;
       case 'toggle-build':
         this.toggleBuild();
         break;

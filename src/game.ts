@@ -181,6 +181,8 @@ export class Game {
   private lastFrame = 0;
   private running = false;
   private accumulatedSay = 0;
+  /** When the world was last painted, as against last simulated; see `frame`. */
+  private lastPaint = 0;
 
   constructor(canvas: HTMLCanvasElement, state?: GameState, slotId?: string, slotName?: string) {
     this.state = state ?? newGame();
@@ -306,6 +308,22 @@ export class Game {
   // Main loop
   // -------------------------------------------------------------------------
 
+  /**
+   * The kingdom thinks on every frame the browser offers and is painted rather
+   * less often, at whatever rate the player has asked for.
+   *
+   * The two are separated because they cost wildly different amounts. A tick of
+   * the simulation is a twentieth of a millisecond; painting the island is very
+   * nearly the whole of what this game asks of a machine, and at a tile a
+   * second there is no motion here that sixty frames describes and thirty does
+   * not. So the world goes on moving smoothly, and it is shown to you less
+   * often — which is the opposite way round from skipping simulation ticks, and
+   * the reason nothing about the kingdom changes with the setting.
+   *
+   * The elapsed time handed to the renderer is the time since it last painted,
+   * not since the last frame, because its own animations — sails, ripples, the
+   * twinkle on the water — run off it and would otherwise crawl.
+   */
   private frame = (now: number): void => {
     if (!this.running) return;
     // Clamped: the kingdom does not simulate while the tab is in the background.
@@ -313,7 +331,23 @@ export class Game {
     this.lastFrame = now;
 
     this.update(realDt);
-    this.render(realDt);
+
+    /*
+     * The millisecond of slack is not a rounding error. A 60Hz display delivers
+     * frames a shade under 16.67ms apart as often as not, and asking for "at
+     * least 16.67" would drop every other one and quietly serve 30 to somebody
+     * who asked for 60.
+     */
+    // Full rate while the player has hold of the map. A ghost that lags the
+    // cursor, or ground that lags a drag, reads as the game struggling — and
+    // this is the one moment when nobody is leaving it alone to run quietly.
+    const handsOn = this.dragging || this.tool.kind !== 'none';
+    const period = handsOn ? 0 : 1000 / clamp(this.settings.fps || 30, 10, 240);
+    const sincePaint = now - this.lastPaint;
+    if (sincePaint >= period - 1) {
+      this.lastPaint = now;
+      this.render(clamp(sincePaint / 1000, 0, 0.25));
+    }
     requestAnimationFrame(this.frame);
   };
 

@@ -40,7 +40,7 @@ import { foodGlut, labourNeeded, siteNeeds } from '../sim/villager';
 import { protectedBuilding } from '../sim/founding';
 import { fmtDuration } from '../core/util';
 import type { Game } from '../game';
-import { listSlots } from '../save/save';
+import { FPS_CHOICES, listSlots } from '../save/save';
 import { relocateCostLine } from './build';
 import { activityLabel, cap, esc, type UIEnv } from './context';
 import { jobOptionsFor } from './inspector';
@@ -1056,15 +1056,38 @@ function speedControl(game: Game): string {
   return `<div class="speed" role="group" aria-label="Speed">${buttons}</div>`;
 }
 
+/**
+ * How often the kingdom is repainted. Not a speed and not a quality: the world
+ * runs at the same rate whatever this says, and every frame it does paint is
+ * the same picture. What changes is how much of the machine is spent on
+ * showing it, which for a game meant to be left open all day is worth a row.
+ */
+function smoothnessControl(game: Game): string {
+  const chosen = game.settings.fps;
+  const buttons = FPS_CHOICES.map((o) => {
+    const on = o.fps === chosen;
+    const tip = `${o.label} — ${o.note}`;
+    return `<button data-act="set-fps" data-fps="${o.fps}" class="${on ? 'on' : ''}"
+      title="${esc(tip)}" aria-label="${esc(tip)}" aria-pressed="${on}">${esc(o.label)}</button>`;
+  }).join('');
+  return `<div class="speed" role="group" aria-label="Smoothness">${buttons}</div>`;
+}
+
 export function viewBody(game: Game): string {
   const s = game.settings;
+  const chosen = FPS_CHOICES.find((o) => o.fps === s.fps) ?? FPS_CHOICES[1];
   return `<div class="row" style="margin-bottom:14px;gap:10px">
       <span style="width:64px">Speed</span>${speedControl(game)}
       <span class="tiny muted"><kbd>space</kbd> pauses · <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> set the rate</span>
     </div>
+    <div class="row" style="margin-bottom:14px;gap:10px">
+      <span style="width:64px">Drawing</span>${smoothnessControl(game)}
+      <span class="tiny muted">${esc(chosen.note)}</span>
+    </div>
     <label class="check" style="margin-bottom:11px"><input type="checkbox" data-act="set-bubbles" ${s.showBubbles ? 'checked' : ''}> Show what villagers say</label>
     <label class="check" style="margin-bottom:11px"><input type="checkbox" data-act="set-names" ${s.showNames ? 'checked' : ''}> Show names over favourites</label>
     <label class="check" style="margin-bottom:11px"><input type="checkbox" data-act="set-activity" ${s.showActivity ? 'checked' : ''}> Show what everyone is doing</label>
+    <div class="hint">Drawing the island is nearly all of the work this game asks of a computer, so a lower setting is much kinder to a laptop — and it changes nothing about the kingdom, which goes on at the same rate either way. Whatever you pick, the map stays at full speed while you are dragging it or placing something.</div>
     <div class="hint">Clean viewing mode (<kbd>H</kbd>) hides the whole interface and leaves the kingdom running on its own. Double-click anyone to follow them about.</div>`;
 }
 

@@ -72,8 +72,27 @@ export interface Settings {
   showBubbles: boolean;
   showNames: boolean;
   showActivity: boolean;
+  /**
+   * How many times a second the kingdom is repainted. The simulation is not
+   * involved: it runs at whatever rate the machine offers whatever this says,
+   * so nothing about the world changes with it — only how often you are shown
+   * the world.
+   *
+   * It is here because painting is nearly the whole cost of running this game,
+   * and a terrarium's whole proposition is that it can be left open all day.
+   * Thirty is the default because at a tile a second nobody can tell it from
+   * sixty, and it is worth about a third of a core.
+   */
+  fps: number;
   lastSlot: string | null;
 }
+
+/** The rates offered, fastest first. See `Settings.fps`. */
+export const FPS_CHOICES: { fps: number; label: string; note: string }[] = [
+  { fps: 60, label: 'Smooth', note: 'As often as the screen can show it' },
+  { fps: 30, label: 'Easy', note: 'Half as much drawing, and hard to tell apart' },
+  { fps: 20, label: 'Gentle', note: 'Kindest to a laptop left running all day' },
+];
 
 export const DEFAULT_SETTINGS: Settings = {
   volume: 0.6,
@@ -81,6 +100,7 @@ export const DEFAULT_SETTINGS: Settings = {
   showBubbles: true,
   showNames: true,
   showActivity: true,
+  fps: 30,
   lastSlot: null,
 };
 

@@ -41,6 +41,21 @@ function chipLabel(res: ResourceId, store: ReturnType<Game['storageInfo']>): str
   return `${name}: ${held} stored of ${fmt(store.cap)}${state}`;
 }
 
+/**
+ * How often the strip is actually worked out, in milliseconds.
+ *
+ * Every figure up here is a walk of every building in the kingdom, and there
+ * are thirteen of them; at the frame rate that was several hundred sweeps a
+ * second to move numbers that change perhaps twice a minute. Worse, each sweep
+ * wrote to the DOM and then measured it, which makes the browser stop and lay
+ * the page out again before the next frame can start.
+ *
+ * Six times a second is faster than anybody can read and slow enough that none
+ * of that happens. The clock is on the same clock, which is ample: a game-minute
+ * is a second and a quarter of real time.
+ */
+const STRIP_INTERVAL = 160;
+
 export class Hud {
   private resNodes = new Map<ResourceId, { wrap: HTMLElement; val: HTMLElement }>();
   private strip: HTMLElement;
@@ -49,6 +64,8 @@ export class Hud {
   private vibeTxt: HTMLElement;
   private clockT: HTMLElement;
   private clockS: HTMLElement;
+  private lastSweep = 0;
+  private clock = '';
 
   constructor(host: HTMLElement, game: Game) {
     const left = el('div', 'cluster');
@@ -115,9 +132,12 @@ export class Hud {
     host.appendChild(right);
   }
 
-  /** Cheap enough to run every frame. */
+  /** Called every frame; does its actual work six times a second. */
   tick(game: Game, env: UIEnv): string {
     const g = game.state;
+    const now = performance.now();
+    if (now - this.lastSweep < STRIP_INTERVAL) return this.clock;
+    this.lastSweep = now;
 
     const pop = popLabel(g);
     if (this.popTxt.textContent !== pop) this.popTxt.textContent = pop;
@@ -166,6 +186,7 @@ export class Hud {
     if (this.clockT.textContent !== clock) this.clockT.textContent = clock;
     const seasonLabel = env.compact ? cap(g.season) : `${cap(g.season)} · Year ${g.year}`;
     if (this.clockS.textContent !== seasonLabel) this.clockS.textContent = seasonLabel;
+    this.clock = clock;
     return clock;
   }
 }

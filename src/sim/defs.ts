@@ -922,9 +922,26 @@ export function recipesOf(def: BuildingId): Recipe[] {
   return d.recipe ? [d.recipe] : [];
 }
 
-/** Recipes a smith could actually run today — the mithril one never is. */
+/**
+ * Recipes a smith could actually run today — the mithril one never is.
+ *
+ * Worked out once per kind of building and kept. Everything below this line is
+ * a pure reading of `BUILDINGS`, which does not change while the game is
+ * running, and the planner asks these questions of every workshop several times
+ * a second; returning a freshly filtered array each time made the answer to
+ * "what does a forge make" a few hundred throwaway arrays a second.
+ *
+ * The arrays and objects handed back are shared, exactly as `extractsOf` has
+ * always shared the table's own row. Nothing may write to one.
+ */
+const liveRecipeCache = new Map<BuildingId, Recipe[]>();
 export function liveRecipesOf(def: BuildingId): Recipe[] {
-  return recipesOf(def).filter((r) => !r.locked);
+  let out = liveRecipeCache.get(def);
+  if (!out) {
+    out = recipesOf(def).filter((r) => !r.locked);
+    liveRecipeCache.set(def, out);
+  }
+  return out;
 }
 
 /** What one batch of a recipe is called by, which is its first output. */
@@ -944,8 +961,15 @@ export function extractsOf(def: BuildingId, level: number): ResourceId[] {
  * — recipe outputs and mined materials alike. The helper ladder uses this to
  * decide whether there is a shelf worth clearing.
  */
+const outputCache = new Map<string, ResourceId[]>();
 export function outputsOf(def: BuildingId, level: number): ResourceId[] {
-  return [...extractsOf(def, level), ...liveRecipesOf(def).map(recipeOutput)];
+  const key = `${def}|${level}`;
+  let out = outputCache.get(key);
+  if (!out) {
+    out = [...extractsOf(def, level), ...liveRecipesOf(def).map(recipeOutput)];
+    outputCache.set(key, out);
+  }
+  return out;
 }
 
 /**
@@ -958,9 +982,16 @@ export function outputsOf(def: BuildingId, level: number): ResourceId[] {
  * form "where does a villager take this" or "where does one come from" is
  * answered by walking the buildings and asking this.
  */
+const holdsCache = new Map<string, ResourceId[]>();
 export function holdsOf(def: BuildingId, level: number): ResourceId[] {
-  const out = outputsOf(def, level);
-  for (const res of BUILDINGS[def].holds ?? []) if (!out.includes(res)) out.push(res);
+  const key = `${def}|${level}`;
+  let out = holdsCache.get(key);
+  if (!out) {
+    // A copy, because `outputsOf` hands back the list it is keeping.
+    out = outputsOf(def, level).slice();
+    for (const res of BUILDINGS[def].holds ?? []) if (!out.includes(res)) out.push(res);
+    holdsCache.set(key, out);
+  }
   return out;
 }
 
@@ -978,12 +1009,23 @@ export function holdsOf(def: BuildingId, level: number): ResourceId[] {
  * see `Building.cacheRetired`. Nothing else in the game passes it, because the
  * commons is the only building that has a cache to close.
  */
-export function storesOf(def: BuildingId, level: number, retired = false): Partial<Record<ResourceId, number>> {
-  const cap = STORAGE_TIERS[Math.min(level, STORAGE_TIERS.length) - 1];
-  const out: Partial<Record<ResourceId, number>> = {};
-  for (const res of holdsOf(def, level)) out[res] = cap;
-  const cache = BUILDINGS[def].cache;
-  if (cache && !retired) for (const k in cache) out[k as ResourceId] = cache[k as ResourceId];
+const storesCache = new Map<string, Readonly<Partial<Record<ResourceId, number>>>>();
+export function storesOf(
+  def: BuildingId,
+  level: number,
+  retired = false,
+): Readonly<Partial<Record<ResourceId, number>>> {
+  const key = `${def}|${level}|${retired ? 1 : 0}`;
+  let out = storesCache.get(key);
+  if (!out) {
+    const cap = STORAGE_TIERS[Math.min(level, STORAGE_TIERS.length) - 1];
+    const built: Partial<Record<ResourceId, number>> = {};
+    for (const res of holdsOf(def, level)) built[res] = cap;
+    const cache = BUILDINGS[def].cache;
+    if (cache && !retired) for (const k in cache) built[k as ResourceId] = cache[k as ResourceId];
+    out = built;
+    storesCache.set(key, out);
+  }
   return out;
 }
 

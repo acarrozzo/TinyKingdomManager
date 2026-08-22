@@ -109,6 +109,12 @@ somebody's arms, and where the resource comes from and what it is for.
 **Clean viewing mode** (`H`). Hides the entire interface except a small time and
 season chip. This is the point of the whole thing.
 
+**Drawing** (Settings → Viewing). How often the island is repainted — Smooth,
+Easy or Gentle. Drawing is nearly the whole cost of running this, so the lower
+settings are markedly kinder to a laptop left open all day; the kingdom itself
+runs at the same rate whichever you pick, and the map returns to full speed
+while you are dragging it or placing something.
+
 **Journal and goals.** The kingdom keeps a dated written record of its own
 history. Thirteen onboarding goals and milestones gradually unlock the build
 menu rather than presenting it all on day one.
