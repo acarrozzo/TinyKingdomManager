@@ -750,8 +750,11 @@ export class Game {
       this.setHover(e.clientX, e.clientY);
       // There is no hover on a touchscreen, only a drag that has not finished.
       // A finger passing over the sun would otherwise leave the tip up.
-      this.skyHover =
-        e.pointerType === 'touch' || this.camera.overview ? null : this.skyUnder(e.clientX, e.clientY);
+      //
+      // Overview keeps this one. Nothing on the ground answers to a cursor at
+      // that size, but the sun is half the picture and hanging its name off it
+      // is the only hover out there worth having.
+      this.skyHover = e.pointerType === 'touch' ? null : this.skyUnder(e.clientX, e.clientY);
       // Hovering does not normally concern the interface — the ghost is drawn
       // by the renderer, which reads `hover` every frame anyway. It concerns it
       // for exactly one thing: the placement hint counts the trees under the
@@ -940,6 +943,7 @@ export class Game {
     const was = this.camera.overview;
     this.camera.zoomBy(delta, anchor);
     if (this.camera.overview === was) return;
+    this.syncCursor();
     if (this.camera.overview) this.enterOverview();
     else this.notify();
   }
@@ -952,7 +956,6 @@ export class Game {
   private enterOverview(): void {
     const g = this.state;
     this.camera.stopFollowing();
-    this.syncCursor();
     this.camera.glideToTile(g.w / 2, g.h / 2);
     this.hover = null;
     this.hoverPx = null;
@@ -1667,10 +1670,14 @@ export class Game {
   }
 
   private syncCursor(): void {
-    // A crosshair over an island the size of a coin is the tool claiming to be
-    // armed when nothing out here can be placed. It comes back with the map.
-    const armed = this.tool.kind !== 'none' && !this.camera.overview;
-    this.renderer.canvas.classList.toggle('tool-active', armed);
+    // Two cursors, and Overview settles both. A crosshair out there is the tool
+    // claiming to be armed when nothing can be placed; the magnifier is the
+    // only thing that says the click brings the map back, which is as close to
+    // an instruction as this view is allowed to come.
+    const out = this.camera.overview;
+    const canvas = this.renderer.canvas;
+    canvas.classList.toggle('overview', out);
+    canvas.classList.toggle('tool-active', this.tool.kind !== 'none' && !out);
   }
 
   select(kind: Selection['kind'], id: number): void {

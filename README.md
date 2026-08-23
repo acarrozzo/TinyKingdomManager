@@ -116,10 +116,11 @@ the resource comes from and what it is for.
 season chip. This is the point of the whole thing.
 
 **Overview.** One step out past 1×, and the kingdom becomes a small island in a
-lot of ocean with the sun hanging over it at its full size. Nothing is written on
-it — no labels, no marks, no panels, not even a way out, because clicking
-anywhere brings you back down at that spot. Whatever you had open is waiting when
-you get there.
+lot of ocean with the sun hanging over it at its full size. Almost nothing is
+written on it: no labels, no marks, no panels. What stays is the zoom pad, the
+clock, and the toasts — so you can sit out here all afternoon and still be told
+when somebody arrives. Clicking anywhere brings you back down at that spot, and
+whatever you had open is waiting when you get there.
 
 **Drawing** (Kingdom → Settings). How often the island is repainted — Smooth,
 Easy or Gentle. Drawing is nearly the whole cost of running this, so the lower

@@ -296,15 +296,27 @@ export class UI {
         case 'h':
           this.game.setCleanMode(!this.game.cleanMode);
           break;
-        case 'b':
-          this.toggleBuild();
+        /*
+         * Asking for a panel from out in Overview is also asking to come back
+         * down — and to *open* the thing, rather than to toggle whatever was
+         * left open behind the fade. A key that means "show me the people"
+         * on the map must not quietly mean "hide them" from out there.
+         */
+        case 'b': {
+          const back = this.fromOverview();
+          if (!(back && this.buildOpen)) this.toggleBuild();
           break;
-        case 'j':
-          this.setModal(this.modal === 'kingdom' ? null : 'kingdom', KTAB.journal);
+        }
+        case 'j': {
+          const back = this.fromOverview();
+          this.setModal(!back && this.modal === 'kingdom' ? null : 'kingdom', KTAB.journal);
           break;
-        case 'p':
-          this.setModal(this.modal === 'people' ? null : 'people');
+        }
+        case 'p': {
+          const back = this.fromOverview();
+          this.setModal(!back && this.modal === 'people' ? null : 'people');
           break;
+        }
         case ' ':
           e.preventDefault();
           this.game.togglePause();
@@ -433,6 +445,18 @@ export class UI {
    * is what drops the highlight from the map — restoring the one without the
    * other would reopen a card about nothing.
    */
+  /**
+   * Comes back down from Overview if that is where the view is, and says
+   * whether it had to. Nothing is opened out there: a panel behind the fade is
+   * a panel nobody can see, and `syncOverview` would shut it again on the way
+   * in anyway.
+   */
+  private fromOverview(): boolean {
+    if (!this.game.camera.overview) return false;
+    this.game.exitOverview();
+    return true;
+  }
+
   private syncOverview(): void {
     const on = this.game.camera.overview;
     this.root.classList.toggle('overview', on);

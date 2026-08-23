@@ -104,6 +104,11 @@ body {
 #stage.tool-active {
   cursor: crosshair;
 }
+/* Out in Overview the click brings the map back, and the cursor is the only
+   way that is said — there is no hint and nothing labelled. */
+#stage.overview {
+  cursor: zoom-in;
+}
 #stage.dragging {
   cursor: grabbing;
 }
@@ -152,10 +157,8 @@ body {
   transform: translateY(-6px);
 }
 /*
- * Overview. Everything goes, including the one control clean view keeps: out
- * here there is nothing to press, and a button floating over an ocean is the
- * wrong picture entirely. The way back is the island — the whole screen is the
- * control, so none of it needs to say so.
+ * Overview. Nearly everything goes: nothing out here is legible at the size it
+ * would be drawn, and nothing out here can be built, hired or inspected.
  */
 #ui.overview > * {
   opacity: 0;
@@ -165,6 +168,49 @@ body {
      the interface still leaves rather than blinking out. */
   visibility: hidden;
   transition: opacity 0.3s ease, visibility 0s linear 0.3s;
+}
+/*
+ * Four things stay, and each earns it separately.
+ *
+ * **The view pad**, because a way back that exists only as a click on an island
+ * nobody has mentioned is a way back somebody will not find. It stays in the
+ * corner it is always in, so coming back is a control already learned rather
+ * than a discovery.
+ *
+ * **The toasts**, because parking out here and watching is what the view is
+ * for, and they are the only thing that says anything has happened. They are
+ * never clickable, so they cannot eat the click that brings the map back.
+ *
+ * **The clock chip**, because the sun says the hour perfectly well at this size
+ * and says nothing whatever about the season or the day.
+ *
+ * **The sun and moon tip**, because the sun is the largest thing on the screen
+ * out here, and pointing at it and getting nothing is a dead spot in the
+ * liveliest part of the picture.
+ *
+ * Clean view still wins over all four. Somebody who pressed H asked for an
+ * empty screen and did not stop asking by zooming out.
+ */
+#ui.overview:not(.clean) .viewpad,
+#ui.overview:not(.clean) .skytip,
+#ui.overview:not(.clean) .clean-chip,
+#ui.overview .toasts {
+  opacity: 1;
+  visibility: visible;
+  transition: opacity 0.3s ease, visibility 0s linear 0s;
+}
+/* Out here the chip is a label rather than a control: its one button belongs to
+   clean view, and the rest of the screen is a click that brings the map back. */
+#ui.overview:not(.clean) .clean-chip {
+  pointer-events: none;
+}
+#ui.overview:not(.clean) .clean-chip button {
+  display: none;
+}
+/* An announcement is not interface. Hiding this would leave a screen reader
+   silent for as long as somebody stayed out here. */
+#ui.overview .sr-only {
+  visibility: visible;
 }
 
 .hide-in-clean {

@@ -726,9 +726,10 @@ Integer from 1× up. Do not add smooth fractional zoom. Smooth the input, not th
 The half step is **Overview** and is a place to look from rather than a scale to play at:
 
 - entering it frames the island, so it is a picture of a small kingdom in a large sea rather than of the corner of one;
-- the whole interface stands down — labels, badges, marks, tools, panels and the clean-view chip with them — and what was open is restored on the way back;
+- the interface stands down bar four things, and each is there for its own reason: the **view pad**, because a way back that exists only as a click nobody has mentioned is a way back somebody will not find; the **toasts**, because parking out here is a thing to do all afternoon and they are the only thing that says anything happened; the **clock chip**, because the sun gives the hour and nothing gives the season; and the **sun and moon tooltip**, because the sun is the largest thing on the screen. Labels, badges, marks, tools and panels go, and what was open is restored on the way back. Clean view still wins over all four;
 - the sky keeps its own size. Sun, moon, arc, haze and stars are scaled by `Renderer.skyK` so the island shrinks under a sun that does not;
-- panning and every zoom input work normally, and a click anywhere returns to 1× looking at that spot. There is no hint and no exit control, because the map is the control;
+- panning and every zoom input work normally, and a click anywhere returns to 1× looking at that spot. There is no written hint: the zoom-in cursor over the map is the whole of what says so;
+- a key that asks for a panel (`B`, `P`, `J`) brings the view down first and then opens it. Nothing opens behind the fade, and such a key never toggles a panel shut from out here;
 - it is the one place the pixel pipeline goes below one screen pixel per art pixel. The blit is a downsample and smoothing is switched on for it; on a retina screen it is exactly 2:1.
 
 `ZOOM_HOME` and `ZOOM_START` name the two steps anything else needs: where Overview hands back, and where a new kingdom opens.
