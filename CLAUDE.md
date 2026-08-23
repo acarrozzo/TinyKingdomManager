@@ -180,6 +180,25 @@ Use `PRELOAD` to load an existing kingdom through the game’s own save path. Us
 
 Capture only the viewports relevant to the change.
 
+#### Contact sheets
+
+Three of them, on `window.tkm`, none reachable from the interface:
+
+```bash
+node scripts/shot.mjs http://localhost:5173/ icons.png 3 "document.body.appendChild(window.tkm.iconSheet())"
+node scripts/shot.mjs http://localhost:5173/ sprites.png 3 "document.body.appendChild(window.tkm.spriteSheet('summer', 3))"
+PRELOAD=k.json node scripts/shot.mjs http://localhost:5173/ poses.png 3 \
+  "document.body.appendChild(window.tkm.poseSheet(window.tkm.game.state.villagers[0], 6))"
+```
+
+- `iconSheet()` — every interface icon.
+- `spriteSheet(season, zoom)` — every building at every level, then the props and the wheat plot through its stages.
+- `poseSheet(villager, zoom)` — one person in every pose, both facings, carrying each kind of load, and every trade's tool.
+
+Use these rather than hunting for an example on the map. Half the buildings are behind another building, the lighting is over all of it, and the one you want is at a level this kingdom has not reached — reviewing procedural art by looking for it in play does not work, and the bugs it hides are the ones a player sees first.
+
+Judge art at the zoom it is played at as well as up close. Detail that reads at 6× and turns to noise at 1× is a loss.
+
 ---
 
 ## Project map
@@ -594,6 +613,30 @@ Everything that overlaps moving actors participates in the depth-sorted pass. Bu
 Procedural terrain, props and buildings belong in `sprites.ts`. Villagers and animals are drawn per frame in `actors.ts`.
 
 Respect sprite `padX` and `rise` when positioning building art.
+
+### Where detail is affordable
+
+The two halves of the world art have opposite budgets, and this is the single most useful thing to know before adding to either.
+
+**Buildings and props are baked once and cached**, keyed on def, level, season, seed and stage. Detail there costs bake time and nothing else, so it can be as fine as it is worth drawing.
+
+**Villagers and animals are redrawn every frame, for everybody on screen.** A rectangle added there is paid twenty times a second times sixty. Spend that budget on *pose* rather than on ornament: at the zooms the game is actually played at, a stoop under a load reads across the whole map and a belt buckle does not.
+
+### Building surfaces
+
+A flat two-tone fill is a box, not a building. Every wall names a `texture` — `plank`, `log`, `stone` or `plaster` — and `wallTexture` draws its courses, joints, eaves shadow and foot line. A `frame` colour lays timber framing over the top.
+
+Everything drawn on a wall runs *with* the face, off `wallFootY`, never along a screen row. A wall's foot climbs away from the near corner at one pixel in two; drawn flat, a course cuts across the building and reads as a crack.
+
+All of it is derived from the face colour with `shade`, so a wall never needs a second palette kept in step with the first and a winter recolour carries its texture with it.
+
+The gable is boarded vertically. It is the largest unbroken shape in the silhouette, and it is the one direction not already spoken for — the roof runs one way and the walls the other.
+
+Copies of a building at the same level are identical on purpose. The silhouette carries the *level* read across the map, and variation that touches it would trade a fact the player needs for decoration.
+
+### What somebody is holding
+
+`toolFor` decides by activity first and by trade second: anybody can be handed a hammer and sent to a site, and a miner at the rock face and a cook at the range are both "working". The tool is drawn at the hand — the same pixel the arm ends on, swinging with it — never at a fixed offset from the body. A tool nobody is holding reads as a bug rather than as work.
 
 ### Sea and haze
 

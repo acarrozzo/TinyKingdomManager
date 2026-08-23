@@ -264,14 +264,32 @@ function bakeConifer(season: Season): PropSprite {
   return { canvas: c, ox: -cx, oy: -(h - 3) };
 }
 
+/**
+ * What a felled tree leaves. The cut face is the whole of it: this is the one
+ * prop the player made happen, and the rings are what say a tree stood here
+ * rather than a rock.
+ */
 function bakeStump(v: number): PropSprite {
-  const c = mkCanvas(10, 8);
+  const c = mkCanvas(12, 10);
   const ctx = ctxOf(c);
-  px(ctx, 2, 3, TRUNK[2], 6, 4);
-  px(ctx, 2, 2, TRUNK[0], 6, 2);
-  px(ctx, 3, 2, '#8d6743', 4, 1);
-  if (v % 2 === 0) px(ctx, 7, 4, '#4f7d38', 2, 2);
-  return { canvas: c, ox: -5, oy: -6 };
+  groundShadow(ctx, 6, 9, 9);
+  // Bark, then the sawn face on top of it, then the rings.
+  px(ctx, 2, 4, TRUNK[2], 8, 4);
+  px(ctx, 3, 7, TRUNK[2], 6, 1);
+  px(ctx, 2, 3, TRUNK[0], 8, 2);
+  px(ctx, 3, 2, '#a07c52', 6, 2);
+  px(ctx, 4, 3, '#b98f5f', 4, 1);
+  px(ctx, 5, 3, '#8d6743', 2, 1);
+  // Splintered edge where the last of it tore rather than cut.
+  px(ctx, 2 + (v % 3), 2, '#c2a074', 2, 1);
+  // Roots breaking the ground line, so it is rooted rather than resting on it.
+  px(ctx, 1, 7, TRUNK[2], 2, 1);
+  px(ctx, 9, 7, TRUNK[2], 2, 1);
+  if (v % 2 === 0) {
+    px(ctx, 8, 5, '#4f7d38', 3, 2);
+    px(ctx, 9, 4, '#639554', 1, 1);
+  }
+  return { canvas: c, ox: -6, oy: -8 };
 }
 
 function bakeBoulder(v: number, small: boolean): PropSprite {
@@ -310,6 +328,17 @@ function bakeBoulder(v: number, small: boolean): PropSprite {
     }
     px(ctx, cx - 3 + (v % 3), cy - 6, light, 3, 1);
     px(ctx, cx + 1, cy - 2, dark, 2, 1);
+    /*
+     * A crack down the face and a patch of lichen on the weather side. Boulders
+     * are the one prop that never regrows and never moves, so they are the one
+     * thing on the map that is allowed to look old.
+     */
+    px(ctx, cx - 1 + (v % 2), cy - 7, dark, 1, 4);
+    px(ctx, cx + (v % 2), cy - 4, dark, 1, 2);
+    const lichen = '#8f9c72';
+    px(ctx, cx - 5 + (v % 3), cy - 5, lichen, 2, 1);
+    px(ctx, cx - 6 + (v % 3), cy - 4, lichen, 2, 1);
+    px(ctx, cx + 2, cy - 8 + (v % 2), lichen, 2, 1);
   }
   return { canvas: c, ox: -w / 2, oy: -(h - 2) };
 }
@@ -321,46 +350,90 @@ function bakeBush(season: Season, v: number): PropSprite {
   const cx = 8;
   const cy = 8;
   groundShadow(ctx, cx, 10, 11);
-  for (let y = -6; y <= 2; y++) {
-    const r = 6.5;
-    const span = Math.sqrt(Math.max(0, r * r - y * y)) * 1.05;
-    const yy = cy + y;
-    if (yy < 0 || yy >= 12) continue;
-    px(ctx, Math.round(cx - span), yy, y < -3 ? light : y > 0 ? dark : mid, Math.max(1, Math.round(span * 2)), 1);
+  // Two lobes rather than one, offset per variant, so a hedgerow is not a row
+  // of identical domes. A bush is several things growing out of one root.
+  const lobes = [
+    { dx: -2 + (v % 2), dy: 0, r: 5.4 },
+    { dx: 2, dy: -2 - (v % 2), r: 4.6 },
+  ];
+  for (const lo of lobes) {
+    for (let y = -Math.ceil(lo.r); y <= 2; y++) {
+      const span = Math.sqrt(Math.max(0, lo.r * lo.r - y * y)) * 1.05;
+      const yy = cy + lo.dy + y;
+      if (yy < 0 || yy >= 12 || span < 0.5) continue;
+      const col = y < -lo.r * 0.45 ? light : y > 0 ? dark : mid;
+      px(ctx, Math.round(cx + lo.dx - span), yy, col, Math.max(1, Math.round(span * 2)), 1);
+    }
+  }
+  // A few twigs poking out of the mass, which is what stops it reading as a
+  // green pebble.
+  for (let i = 0; i < 4; i++) {
+    const a = hash2(i * 9 + v, i * 3, 61) * Math.PI * 2;
+    const x = Math.round(cx + Math.cos(a) * 6);
+    const y = Math.round(cy - 2 + Math.sin(a) * 4);
+    if (x < 0 || x >= 16 || y < 0 || y >= 12) continue;
+    px(ctx, x, y, dark);
   }
   const berry = BLOSSOM[season];
   if (berry && v % 2 === 0) {
     px(ctx, cx - 3, cy - 3, berry);
     px(ctx, cx + 2, cy - 1, berry);
+    px(ctx, cx + 1, cy - 5, berry);
   }
   return { canvas: c, ox: -cx, oy: -10 };
 }
 
 function bakeFlowers(season: Season, v: number): PropSprite {
   const colors = FLOWER_COLORS[season];
-  const [mid, , dark] = FOLIAGE[season];
-  const c = mkCanvas(16, 10);
+  const [mid, light, dark] = FOLIAGE[season];
+  const c = mkCanvas(16, 12);
   const ctx = ctxOf(c);
-  for (let i = 0; i < 5; i++) {
-    const x = 2 + Math.floor(hash2(i * 3 + v, i, 17) * 12);
-    const y = 4 + Math.floor(hash2(i, i * 5 + v, 19) * 4);
-    px(ctx, x, y, i % 2 ? mid : dark, 1, 3);
-    px(ctx, x, y - 1, colors[Math.floor(hash2(i * 7, v, 23) * colors.length)]);
+  // A clump: a low mat of leaves with the heads standing out of it. Bare stems
+  // with a dot on top read as pins in a board rather than as anything growing.
+  for (let i = 0; i < 7; i++) {
+    const x = 2 + Math.floor(hash2(i * 11 + v * 3, i, 71) * 12);
+    const y = 8 + Math.floor(hash2(i, i * 7 + v, 73) * 2);
+    px(ctx, x, y, i % 2 ? mid : dark, 2, 1);
   }
-  return { canvas: c, ox: -8, oy: -8 };
+  for (let i = 0; i < 6; i++) {
+    const x = 2 + Math.floor(hash2(i * 3 + v, i, 17) * 12);
+    const stem = 3 + Math.floor(hash2(i, i * 5 + v, 19) * 3);
+    const top = 9 - stem;
+    px(ctx, x, top, i % 2 ? mid : dark, 1, stem);
+    // One leaf off the side of the taller stems.
+    if (stem >= 5) px(ctx, x + (i % 2 ? 1 : -1), top + 2, light);
+    const col = colors[Math.floor(hash2(i * 7, v, 23) * colors.length)];
+    px(ctx, x, top - 1, col);
+    // A head is two pixels across on the taller ones, which is the difference
+    // between a flower and a speck.
+    if (stem >= 4) px(ctx, x + (i % 2 ? -1 : 1), top - 1, col);
+  }
+  return { canvas: c, ox: -8, oy: -10 };
 }
 
 function bakeReeds(season: Season, v: number): PropSprite {
   const [mid, light, dark] = FOLIAGE[season];
-  const c = mkCanvas(14, 14);
+  const c = mkCanvas(14, 16);
   const ctx = ctxOf(c);
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < 8; i++) {
     const x = 2 + Math.floor(hash2(i * 5 + v, i, 29) * 10);
-    const hgt = 5 + Math.floor(hash2(i, i * 3 + v, 31) * 6);
-    px(ctx, x, 12 - hgt, i % 3 === 0 ? light : i % 3 === 1 ? mid : dark, 1, hgt);
-    if (i % 2 === 0) px(ctx, x, 12 - hgt - 1, '#8a6b3a', 1, 2);
+    const hgt = 5 + Math.floor(hash2(i, i * 3 + v, 31) * 8);
+    const col = i % 3 === 0 ? light : i % 3 === 1 ? mid : dark;
+    const top = 14 - hgt;
+    px(ctx, x, top, col, 1, hgt);
+    // Reeds bend. A one-pixel kick at the top is the whole of it at this size,
+    // and without it a stand of reeds is a barcode.
+    const lean = i % 2 === 0 ? 1 : -1;
+    px(ctx, x + lean, top - 1, col, 1, 2);
+    // A seed head on the taller ones, which is what says reed rather than grass.
+    if (hgt > 8) {
+      px(ctx, x + lean, top - 4, '#8a6b3a', 1, 3);
+      px(ctx, x + lean, top - 5, '#a5824f', 1, 1);
+    }
+    // A blade off the base of every other one.
+    if (i % 2 === 0) px(ctx, x + lean * 2, 14 - Math.round(hgt * 0.4), dark, 1, 2);
   }
-  return { canvas: c, ox: -7, oy: -12 };
+  return { canvas: c, ox: -7, oy: -14 };
 }
 
 function bakeLilypad(season: Season, v: number): PropSprite {
@@ -542,10 +615,131 @@ function diamond(ox: number, baseY: number, w: number, h: number, inset: number,
   };
 }
 
+/**
+ * What a wall is made of.
+ *
+ * A flat two-tone fill is a box, not a building. At one and two times zoom that
+ * is all anyone sees anyway, but the game is played at four and six as often as
+ * not, and up there a plastered cottage and a plank barn were the same shape in
+ * different colours. The texture is what tells them apart, and it costs nothing
+ * at runtime because every building sprite is baked once and cached.
+ *
+ * All of it is derived from the face colour with `shade`, so a wall never needs
+ * a second palette kept in step with the first, and a winter recolour carries
+ * its own texture along with it.
+ */
+type WallTexture =
+  /** Overlapping horizontal boards. Barns, huts, the first cabin. */
+  | 'plank'
+  /** Stacked round logs — the same courses, lit along the top of each. */
+  | 'log'
+  /** Coursed rubble with staggered joints. */
+  | 'stone'
+  /** Smooth render. No courses; it gets its interest from the frame over it. */
+  | 'plaster';
+
 interface WallColors {
   left: string;
   right: string;
   top?: string;
+  /** How the face is put together. Left off, the wall stays a flat fill. */
+  texture?: WallTexture;
+  /** Timber framing laid over the face: a sill, a mid-rail and corner posts. */
+  frame?: string;
+}
+
+/**
+ * How far apart a texture's courses sit. Three pixels for stone because a
+ * rubble course is roughly a stone deep; four for boards, which are wider than
+ * they are thick; five for logs, which are the widest thing anybody stacks.
+ */
+const COURSE: Record<WallTexture, number> = { plank: 4, log: 5, stone: 3, plaster: 0 };
+
+/**
+ * Paints a texture into a wall that has already been filled.
+ *
+ * Everything here runs with the face rather than across the screen. A wall's
+ * foot climbs away from the near corner at one pixel in two, so a course is
+ * `wallFootY(x) - k` and not a screen row; drawn flat it would cut across the
+ * building at an angle and read as a crack rather than as a join.
+ */
+function wallTexture(
+  ctx: CanvasRenderingContext2D,
+  ox: number,
+  baseY: number,
+  w: number,
+  h: number,
+  height: number,
+  col: WallColors,
+  inset: number,
+): void {
+  const g = diamond(ox, baseY, w, h, inset, 0);
+  const bx = g.S.x;
+  const x0 = Math.ceil(g.L.x);
+  const x1 = Math.floor(g.R.x);
+  const tex = col.texture;
+  const step = tex ? COURSE[tex] : 0;
+
+  for (let x = x0; x <= x1; x++) {
+    const face = x < bx ? col.left : col.right;
+    const foot = wallFootY(bx, baseY, x);
+    // The far side of the near corner is in shade, so its texture has to be
+    // quieter or the whole right-hand face turns to stripes.
+    const near = x < bx;
+    const dark = shade(face, near ? 0.86 : 0.9);
+    const lit = shade(face, near ? 1.09 : 1.06);
+
+    if (step > 0 && tex !== 'plaster') {
+      for (let k = step; k < height; k += step) {
+        px(ctx, x, foot - k, dark);
+        // A log is round: the course line is its underside, and the pixel above
+        // it is the top of the log below catching the light.
+        if (tex === 'log') px(ctx, x, foot - k + 1, lit);
+      }
+    }
+
+    // Staggered joints. Every other course is offset by half a stone, which is
+    // the whole difference between coursed masonry and a stack of bricks.
+    if (tex === 'stone') {
+      for (let k = 0; k < height; k += step) {
+        const row = Math.floor(k / step);
+        if ((x + (row % 2) * 3) % 6 !== 0) continue;
+        px(ctx, x, foot - k - step + 1, dark, 1, step - 1);
+      }
+    }
+
+    // Butt joints between boards, staggered the same way so a plank wall does
+    // not read as one impossibly long board.
+    if (tex === 'plank') {
+      for (let k = 0; k < height; k += step) {
+        const row = Math.floor(k / step);
+        if ((x + (row % 2) * 5) % 11 !== 0) continue;
+        px(ctx, x, foot - k - step + 1, dark, 1, step - 1);
+      }
+    }
+
+    // Under the eaves, and along the ground. The top band is the shadow the
+    // roof casts on its own wall; the foot line is where the wall meets the
+    // earth, and without it a building floats a little.
+    px(ctx, x, foot - height, 'rgba(0,0,0,0.16)', 1, 2);
+    px(ctx, x, foot - 1, 'rgba(0,0,0,0.12)', 1, 1);
+  }
+
+  // Timber framing, over the top of whatever the wall is made of: a sill along
+  // the ground, a rail at shoulder height, and a post at each corner. It is the
+  // one detail that makes a rendered wall look built rather than poured.
+  if (col.frame && height > 10) {
+    const rail = Math.round(height * 0.55);
+    for (let x = x0; x <= x1; x++) {
+      const foot = wallFootY(bx, baseY, x);
+      px(ctx, x, foot - rail, col.frame);
+      px(ctx, x, foot - 2, col.frame);
+    }
+    for (const cx of [x0, Math.round(bx), x1 - 1]) {
+      const foot = wallFootY(bx, baseY, cx);
+      px(ctx, cx, foot - height + 1, col.frame, 1, height - 1);
+    }
+  }
 }
 
 /** Two visible wall faces of a box standing on the footprint. */
@@ -566,6 +760,28 @@ function isoWalls(
   if (col.top) {
     const t = diamond(ox, baseY, w, h, inset, height);
     fillPoly(ctx, [t.L, t.N, t.R, t.S], col.top);
+    /*
+     * A flat top is the one surface the camera looks straight down on, so it is
+     * also the one that shows its own size most honestly — and a quarry's
+     * platform is a hand's width of unbroken grey without this. Speckle rather
+     * than courses: from directly above you see the tops of the stones, not the
+     * joints between them.
+     */
+    if (col.texture === 'stone') {
+      const dark = shade(col.top, 0.9);
+      const lit = shade(col.top, 1.08);
+      for (let i = 0; i < 26; i++) {
+        const u = hash2(i * 7, i * 3, 331);
+        const vv = hash2(i * 5, i * 11, 337);
+        const y = Math.round(t.N.y + (t.S.y - t.N.y) * vv);
+        const half = ((1 - Math.abs(vv * 2 - 1)) * t.dw) / 2;
+        const x = Math.round(t.N.x - half + u * half * 2);
+        px(ctx, x, y, i % 3 === 0 ? lit : dark, 2, 1);
+      }
+    }
+  }
+  if (height > 3 && (col.texture || col.frame)) {
+    wallTexture(ctx, ox, baseY, w, h, height, col, inset);
   }
   // A one-pixel darker seam down the near corner gives the box an edge.
   line(ctx, { x: g.S.x, y: g.S.y - height }, g.S, 'rgba(0,0,0,0.18)');
@@ -614,6 +830,28 @@ function gableRoof(
   // Far slope, then the gable end, then the near slope on top.
   fillPoly(ctx, [N, R, B, A], col.far);
   fillPoly(ctx, [R, S, B], col.gable);
+  /*
+   * Boarding on the gable. It is the biggest unbroken shape in the whole
+   * silhouette — a hand's width of flat colour on a building where every other
+   * surface has courses on it — and until it was boarded it read as a hole in
+   * the roof rather than as the end of one.
+   *
+   * The boards are vertical because that is how a gable is actually closed in,
+   * and because vertical is the only direction in this projection that is not
+   * already spoken for: the roof runs one way and the walls the other.
+   */
+  const board = shade(col.gable, 0.87);
+  for (let x = Math.ceil(S.x); x <= Math.floor(R.x); x++) {
+    if ((x - Math.round(S.x)) % 3 !== 0) continue;
+    const bottom = S.y - (x - S.x) * 0.5;
+    const top =
+      x <= B.x
+        ? S.y + ((x - S.x) / Math.max(1, B.x - S.x)) * (B.y - S.y)
+        : B.y + ((x - B.x) / Math.max(1, R.x - B.x)) * (R.y - B.y);
+    const y0 = Math.round(top);
+    const height = Math.round(bottom) - y0;
+    if (height > 0) px(ctx, x, y0, board, 1, height);
+  }
   fillPoly(ctx, [A, B, S, L], col.near);
 
   // Shingle courses running parallel to the ridge.
@@ -622,11 +860,41 @@ function gableRoof(
     line(ctx, lerpPt(A, L, t), lerpPt(B, S, t), col.ridge);
     line(ctx, lerpPt(A, N, t), lerpPt(B, R, t), col.ridge);
   }
+  /*
+   * Tile joints: short breaks running down the slope, staggered course by
+   * course. Without them the courses read as four long stripes rather than as
+   * a roof made of small things, which is the difference between a shingled
+   * roof and a corrugated one.
+   */
+  for (let i = 0; i < 5; i++) {
+    const t0 = i / 5;
+    const t1 = (i + 1) / 5;
+    for (let j = 1; j < 6; j++) {
+      const u = (j + (i % 2) * 0.5) / 6;
+      const nearA = lerpPt(lerpPt(A, L, t0), lerpPt(B, S, t0), u);
+      const nearB = lerpPt(lerpPt(A, L, t1), lerpPt(B, S, t1), u);
+      line(ctx, nearA, nearB, col.ridge);
+      const farA = lerpPt(lerpPt(A, N, t0), lerpPt(B, R, t0), u);
+      const farB = lerpPt(lerpPt(A, N, t1), lerpPt(B, R, t1), u);
+      line(ctx, farA, farB, col.ridge);
+    }
+  }
   // Ridge cap and eaves shadow.
   line(ctx, A, B, col.ridge);
   line(ctx, { x: A.x, y: A.y - 1 }, { x: B.x, y: B.y - 1 }, col.ridge);
   line(ctx, L, S, 'rgba(0,0,0,0.22)');
   line(ctx, S, R, 'rgba(0,0,0,0.22)');
+  /*
+   * A fascia along the eaves and a barge board down the gable. Both are the
+   * board that closes off the end of the rafters, and both are the reason a
+   * roof reads as sitting on a building rather than being part of it: they are
+   * the only line in the silhouette lighter than the slope above them.
+   */
+  const fascia = shade(col.gable, 1.12);
+  line(ctx, { x: L.x, y: L.y + 1 }, { x: S.x, y: S.y + 1 }, fascia);
+  line(ctx, { x: S.x, y: S.y + 1 }, { x: R.x, y: R.y + 1 }, fascia);
+  line(ctx, R, B, fascia);
+  line(ctx, S, B, fascia);
 
   return { apex: mid(A, B), ridgeA: A, ridgeB: B };
 }
@@ -800,6 +1068,30 @@ function drawSite(
   px(ctx, px0, baseY - 7, '#8d673c', 11, 3);
   px(ctx, px0 + 1, baseY - 9, '#a97f4d', 9, 2);
   px(ctx, px0 + 2, baseY - 11, '#c39a63', 7, 2);
+  // Ends of the stack, so it reads as sawn lengths rather than a brown wedge.
+  px(ctx, px0, baseY - 9, '#6f4f2c', 1, 2);
+  px(ctx, px0 + 10, baseY - 7, '#6f4f2c', 1, 3);
+
+  /*
+   * A ladder against the left-hand post and a heap of stone by the right one.
+   * Four posts and a rail is a fenced-off square; what makes it a *building*
+   * site is the evidence that somebody has been working in it. Both are placed
+   * off the corners rather than the middle, because the middle of a site is
+   * where the villagers doing the building actually stand.
+   */
+  const lx = Math.round(g.L.x) + 4;
+  const ly = Math.round(g.L.y);
+  const lh = postH + 2;
+  px(ctx, lx, ly - lh, '#a5824f', 1, lh);
+  px(ctx, lx + 3, ly - lh + 2, '#a5824f', 1, lh - 2);
+  for (let r = 2; r < lh - 1; r += 3) px(ctx, lx, ly - lh + r, '#8a6a42', 4, 1);
+
+  const sx0 = Math.round(g.R.x) - 12;
+  const sy0 = Math.round(g.R.y);
+  px(ctx, sx0, sy0 - 4, '#8e8f8a', 10, 4);
+  px(ctx, sx0 + 1, sy0 - 6, '#a1a29c', 7, 2);
+  px(ctx, sx0 + 3, sy0 - 7, '#b4b5af', 3, 1);
+  px(ctx, sx0 + 2, sy0 - 3, '#6a6b67', 2, 1);
 }
 
 /**
@@ -894,10 +1186,17 @@ function drawFinished(
       // roof at the top. The silhouette has to change enough that you can tell
       // across the map which of your cabins has been seen to and which has not.
       if (level >= 3) {
-        isoWalls(ctx, ox, baseY, w, h, 5, { left: M.stoneL, right: M.stoneR }, 1);
-        isoWalls(ctx, ox, baseY - 5, w, h, s.wall - 5, { left: M.plasterL, right: M.plasterR }, 2);
+        isoWalls(ctx, ox, baseY, w, h, 5, { left: M.stoneL, right: M.stoneR, texture: 'stone' }, 1);
+        // Rendered walls with the frame showing through them. This is the one
+        // wall in the kingdom that is meant to look expensive.
+        isoWalls(ctx, ox, baseY - 5, w, h, s.wall - 5, {
+          left: M.plasterL,
+          right: M.plasterR,
+          texture: 'plaster',
+          frame: '#6f5334',
+        }, 2);
       } else {
-        isoWalls(ctx, ox, baseY, w, h, s.wall, { left: M.plankL, right: M.plankR }, 2);
+        isoWalls(ctx, ox, baseY, w, h, s.wall, { left: M.plankL, right: M.plankR, texture: 'plank' }, 2);
       }
       const roof = gableRoof(ctx, ox, baseY, w, h, s.wall, s.roof, s.ov, level >= 3 ? tile : thatch);
       addDoor(ctx, bx, baseY, front, 7, s.wall - 2, M.door);
@@ -909,7 +1208,7 @@ function drawFinished(
       break;
     }
     case 'storehouse': {
-      isoWalls(ctx, ox, baseY, w, h, s.wall, { left: M.plankL, right: M.plankR }, 1);
+      isoWalls(ctx, ox, baseY, w, h, s.wall, { left: M.plankL, right: M.plankR, texture: 'plank', frame: '#6d4f2e' }, 1);
       gableRoof(ctx, ox, baseY, w, h, s.wall, s.roof, s.ov, slate);
       // Big double doors across the front — the point of the building.
       addDoor(ctx, bx, baseY, front, 15, s.wall - 2, '#6b4a2c');
@@ -920,7 +1219,9 @@ function drawFinished(
       break;
     }
     case 'lodge': {
-      isoWalls(ctx, ox, baseY, w, h, s.wall, { left: '#8a6b41', right: '#6d5334' }, 2);
+      // Stacked logs, because it is a woodcutter's. Nothing else in the kingdom
+      // is built out of the thing it produces.
+      isoWalls(ctx, ox, baseY, w, h, s.wall, { left: '#8a6b41', right: '#6d5334', texture: 'log' }, 2);
       gableRoof(ctx, ox, baseY, w, h, s.wall, s.roof, s.ov, moss);
       addDoor(ctx, bx, baseY, front, 7, s.wall - 2, M.door);
       // Log pile and an axe left in a stump.
@@ -933,7 +1234,7 @@ function drawFinished(
       break;
     }
     case 'quarry': {
-      isoWalls(ctx, ox, baseY, w, h, s.wall, { left: '#8b8a83', right: '#6e6d67', top: '#9e9d95' }, 1);
+      isoWalls(ctx, ox, baseY, w, h, s.wall, { left: '#8b8a83', right: '#6e6d67', top: '#9e9d95', texture: 'stone' }, 1);
       // Lean-to over the working face, on four posts. Every level keeps it —
       // a Deep Mine is still a quarry, with more built on top.
       const shelterY = baseY - s.wall - 14;
@@ -973,7 +1274,7 @@ function drawFinished(
     case 'forge': {
       // Squat and stone, because everything in it is hot. Low walls, a heavy
       // roof, and a chimney doing most of the talking.
-      isoWalls(ctx, ox, baseY, w, h, s.wall, { left: '#8e8377', right: '#6f665c', top: '#a09587' }, 1);
+      isoWalls(ctx, ox, baseY, w, h, s.wall, { left: '#8e8377', right: '#6f665c', top: '#a09587', texture: 'stone' }, 1);
       const roof = gableRoof(ctx, ox, baseY, w, h, s.wall, s.roof, s.ov, slate);
       // A wide mouth rather than a door: this is where the heat comes out, and
       // it is the one part of the building that has to read from across the map.
@@ -1005,23 +1306,86 @@ function drawFinished(
       // The barn sits on the back corner; the rest of the plot is worked ground.
       const barnBaseY = baseY - (w + h - 2) * HALF_H;
       const barnOx = ox + (h - 1) * HALF_W;
-      isoWalls(ctx, barnOx, barnBaseY, 1, 1, s.wall, { left: '#a55f42', right: '#83492f' }, 0);
+      isoWalls(ctx, barnOx, barnBaseY, 1, 1, s.wall, { left: '#a55f42', right: '#83492f', texture: 'plank', frame: '#6d3f28' }, 0);
       gableRoof(ctx, barnOx, barnBaseY, 1, 1, s.wall, s.roof, s.ov, slate);
       const barnBx = barnOx + HALF_W;
       addDoor(ctx, barnBx, barnBaseY, barnBx - 8, 7, s.wall - 2, '#4f3520');
-      // Low fence posts around the near edges of the plot.
-      for (let i = 1; i < (w + h) * 2; i++) {
-        const t = i / ((w + h) * 2);
-        const a = lerpPt(g.L, g.S, t);
-        const b = lerpPt(g.S, g.R, t);
-        px(ctx, a.x, a.y - 4, '#9a7b52', 1, 4);
-        px(ctx, b.x, b.y - 4, '#9a7b52', 1, 4);
+      /*
+       * A post-and-rail fence around the near edges of the plot.
+       *
+       * It used to be bare posts, which at this size came out as a dotted line
+       * in the grass — twenty-four plots of worked ground with a row of specks
+       * along the front of it. Posts alone are not a fence; the rail between
+       * them is the part the eye follows, and it is the whole difference
+       * between "somebody farms here" and "somebody dropped some sticks".
+       */
+      const post = '#9a7b52';
+      const rail = '#8a6b41';
+      const railLit = '#b08b5c';
+      const gateAt = Math.floor((w + h));
+      const steps = (w + h) * 2;
+      for (const [from, to] of [
+        [g.L, g.S],
+        [g.S, g.R],
+      ] as const) {
+        /*
+         * The rails are drawn as lines rather than sampled at the post
+         * positions. Sampling gave twenty separate pixels along a hundred and
+         * sixty of edge, which is a dotted line — the thing the fence was
+         * being rebuilt to stop being.
+         */
+        const runs: [number, number][] = [
+          [0, (gateAt - 1) / steps],
+          [(gateAt + 1) / steps, 1],
+        ];
+        for (const [t0, t1] of runs) {
+          const a = lerpPt(from, to, t0);
+          const b = lerpPt(from, to, t1);
+          for (const [dy, col] of [
+            [-5, railLit],
+            [-4, rail],
+            [-2, rail],
+          ] as const) {
+            line(ctx, { x: a.x, y: a.y + dy }, { x: b.x, y: b.y + dy }, col);
+          }
+        }
+        for (let i = 1; i < steps; i += 2) {
+          const p = lerpPt(from, to, i / steps);
+          if (i >= gateAt - 1 && i <= gateAt + 1) continue;
+          px(ctx, p.x, p.y - 7, post, 1, 7);
+          px(ctx, p.x, p.y - 7, railLit, 1, 1);
+        }
       }
+      // A gateway in each run, because a field somebody works has a way in.
+      for (const [from, to] of [
+        [g.L, g.S],
+        [g.S, g.R],
+      ] as const) {
+        for (const i of [gateAt - 2, gateAt + 2]) {
+          const p = lerpPt(from, to, i / steps);
+          px(ctx, p.x, p.y - 9, post, 1, 9);
+          px(ctx, p.x, p.y - 9, railLit, 1, 1);
+        }
+      }
+      // Sacks of seed by the barn door, and a scythe leaning on the wall — the
+      // barn is one tile in a plot of twenty-four, so what says "farm" at a
+      // glance has to be the things standing around it.
+      const yardY = barnBaseY + HALF_H;
+      px(ctx, barnBx - 17, yardY - 5, '#cbb98e', 5, 5);
+      px(ctx, barnBx - 17, yardY - 6, '#e0d0a6', 5, 1);
+      px(ctx, barnBx - 16, yardY - 8, '#bfab7e', 3, 2);
+      px(ctx, barnBx - 11, yardY - 4, '#cbb98e', 4, 4);
+      px(ctx, barnBx - 11, yardY - 5, '#e0d0a6', 4, 1);
+      px(ctx, barnBx + 9, yardY - 13, '#8a6b41', 1, 13);
+      px(ctx, barnBx + 9, yardY - 14, '#c8ccd2', 5, 1);
+      px(ctx, barnBx + 13, yardY - 13, '#c8ccd2', 1, 2);
       break;
     }
     case 'mill': {
-      isoWalls(ctx, ox, baseY, w, h, 6, { left: M.stoneL, right: M.stoneR }, 1);
-      isoWalls(ctx, ox, baseY - 6, w, h, s.wall - 6, { left: '#dccdaf', right: '#b8a68a' }, 6);
+      isoWalls(ctx, ox, baseY, w, h, 6, { left: M.stoneL, right: M.stoneR, texture: 'stone' }, 1);
+      // A tower of coursed rubble, and tall enough that the courses are most of
+      // what tells you how tall it is.
+      isoWalls(ctx, ox, baseY - 6, w, h, s.wall - 6, { left: '#dccdaf', right: '#b8a68a', texture: 'stone' }, 6);
       const roof = gableRoof(ctx, ox, baseY, w, h, s.wall, s.roof, s.ov, slate);
       // Stacked up the front of the tower, not wrapped round its corner.
       addWindow(ctx, bx, baseY, front, s.wall, 6, windows, M.window);
@@ -1033,8 +1397,13 @@ function drawFinished(
       break;
     }
     case 'kitchen': {
-      isoWalls(ctx, ox, baseY, w, h, 4, { left: M.stoneL, right: M.stoneR }, 1);
-      isoWalls(ctx, ox, baseY - 4, w, h, s.wall - 4, { left: '#ecdcbb', right: '#cbb894' }, 2);
+      isoWalls(ctx, ox, baseY, w, h, 4, { left: M.stoneL, right: M.stoneR, texture: 'stone' }, 1);
+      isoWalls(ctx, ox, baseY - 4, w, h, s.wall - 4, {
+        left: '#ecdcbb',
+        right: '#cbb894',
+        texture: 'plaster',
+        frame: '#8a6440',
+      }, 2);
       const roof = gableRoof(ctx, ox, baseY, w, h, s.wall, s.roof, s.ov, tile);
       addDoor(ctx, bx, baseY, front, 7, s.wall - 2, '#7a4f2c');
       addWindow(ctx, bx, baseY, front - 11, s.wall, 4, windows, M.window);
@@ -1078,7 +1447,7 @@ function drawFinished(
       // ground — a rack, creels and floats. The first attempt hung the rack off
       // the building's east corner, where it came out as sticks floating in the
       // grass beside a barn.
-      isoWalls(ctx, ox, baseY, w, h, s.wall, { left: M.plankL, right: M.plankR }, 2);
+      isoWalls(ctx, ox, baseY, w, h, s.wall, { left: M.plankL, right: M.plankR, texture: 'plank' }, 2);
       gableRoof(ctx, ox, baseY, w, h, s.wall, s.roof, s.ov, thatch);
       addDoor(ctx, bx, baseY, front, 9, s.wall - 2, '#3f2f22');
 
@@ -1114,7 +1483,7 @@ function drawFinished(
       break;
     }
     case 'well': {
-      isoWalls(ctx, ox, baseY, w, h, s.wall, { left: M.stoneL, right: M.stoneR, top: '#3f6580' }, 4);
+      isoWalls(ctx, ox, baseY, w, h, s.wall, { left: M.stoneL, right: M.stoneR, top: '#3f6580', texture: 'stone' }, 4);
       px(ctx, bx - 8, baseY - 22, '#8a6b41', 2, 16);
       px(ctx, bx + 6, baseY - 22, '#8a6b41', 2, 16);
       gableRoof(ctx, ox, baseY - 22 + s.wall, w, h, s.wall, s.roof, s.ov, thatch);
@@ -1163,7 +1532,7 @@ function drawFinished(
       break;
     }
     case 'statue': {
-      isoWalls(ctx, ox, baseY, w, h, s.wall, { left: '#84837c', right: '#6a6963', top: '#9a9891' }, 4);
+      isoWalls(ctx, ox, baseY, w, h, s.wall, { left: '#84837c', right: '#6a6963', top: '#9a9891', texture: 'stone' }, 4);
       px(ctx, bx - 3, baseY - 24, '#b6b5ac', 7, 19);
       px(ctx, bx - 3, baseY - 24, '#c8c7be', 3, 19);
       px(ctx, bx - 2, baseY - 27, '#a3a29a', 5, 4);
@@ -1549,14 +1918,43 @@ export function getCropSprite(stage: number, season: Season): HTMLCanvasElement 
   const baseY = HALF_H * 2 + 10;
 
   // Tilled earth.
+  const top = baseY - HALF_H * 2;
   for (let y = 0; y < HALF_H * 2; y++) {
     const { x0, width } = diamondRow(y);
-    px(ctx, x0, baseY - HALF_H * 2 + y, y < 3 ? '#7d5f3f' : y > 12 ? '#5c4429' : '#6b4f33', width, 1);
+    px(ctx, x0, top + y, y < 3 ? '#7d5f3f' : y > 12 ? '#5c4429' : '#6b4f33', width, 1);
   }
-  for (let i = 0; i < 5; i++) {
-    const y = 3 + i * 2;
-    const { x0, width } = diamondRow(y);
-    px(ctx, x0 + 2, baseY - HALF_H * 2 + y, '#5c4429', Math.max(1, width - 4), 1);
+
+  /*
+   * Furrows, running along the grid rather than across the screen.
+   *
+   * They used to be horizontal bands, which on a diamond reads as contour lines
+   * on a hill — the field looked moulded rather than ploughed. A furrow is a
+   * line somebody walked, so it runs in one of the two directions the world is
+   * actually laid out in: parallel to the near-left edge, at one pixel down for
+   * every two across, which is the same slope every wall in the kingdom has.
+   */
+  const inside = (x: number, y: number): boolean => {
+    const local = y - top;
+    if (local < 0 || local >= HALF_H * 2) return false;
+    const { x0, width } = diamondRow(local);
+    return x >= x0 && x < x0 + width;
+  };
+  /**
+   * A furrow is the set of points where `y - x/2` is this constant.
+   *
+   * Four pixels apart and no closer. At two the furrow and the lit ridge beside
+   * it met the next furrow with nothing in between, and the field came out as a
+   * woven lattice — which is a basket, not a ploughed field. The gap between
+   * them is as much of the read as the lines are.
+   */
+  const FURROWS = [4, 8, 12, 16];
+  for (const c of FURROWS) {
+    for (let x = 0; x < HALF_W * 2; x++) {
+      const y = Math.round(top + c + x * 0.5);
+      if (inside(x, y)) px(ctx, x, y, '#523c24');
+      // The ridge of turned earth alongside each furrow, caught by the light.
+      if (inside(x, y - 1)) px(ctx, x, y - 1, '#78593a');
+    }
   }
 
   if (stage > 0) {
@@ -1577,7 +1975,19 @@ export function getCropSprite(stage: number, season: Season): HTMLCanvasElement 
       const { x0, width } = diamondRow(y);
       if (width < 8) continue;
       const x = Math.floor(x0 + 3 + hx * (width - 6));
-      const yy = baseY - HALF_H * 2 + y;
+      /*
+       * Snapped onto the nearest furrow. The positions are still the same
+       * hashed ones in the same order — which is what keeps a stalk that is
+       * already standing from moving as the field comes on — but a sown field
+       * is sown in rows, and scattering them was the last thing making this
+       * look like grass rather than a crop.
+       */
+      let yy = baseY - HALF_H * 2 + y;
+      const c = yy - top - x * 0.5;
+      let best = FURROWS[0];
+      for (const f of FURROWS) if (Math.abs(f - c) < Math.abs(best - c)) best = f;
+      const snapped = Math.round(top + best + x * 0.5);
+      if (inside(x, snapped)) yy = snapped;
       px(ctx, x, yy - height, stalk, 1, height);
       // Ears only once there are ears: heavy heads are the ripe field's tell,
       // and the turn gets a paler tip a stage before them.

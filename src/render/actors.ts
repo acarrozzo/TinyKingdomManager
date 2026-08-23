@@ -26,8 +26,118 @@ function shadow(ctx: Ctx, x: number, y: number, w: number): void {
 const HAT_COLORS = ['#8a5b3a', '#6a7f5a', '#7a6a8a', '#b5893f'];
 
 /**
+ * What somebody has in their hands, by trade and by what they are doing.
+ *
+ * The activity wins where it names a specific job of work — anybody at all can
+ * be handed a hammer and sent to a building site — and their trade decides it
+ * the rest of the time. A miner at the rock face and a cook at the range are
+ * both "working", and the point of drawing a tool at all is that you should not
+ * have to click on them to find out which.
+ */
+type Tool = 'axe' | 'pick' | 'hoe' | 'rod' | 'ladle' | 'hammer' | 'sack' | 'tongs' | null;
+
+function toolFor(v: Villager): Tool {
+  switch (v.activity) {
+    case 'building':
+      return 'hammer';
+    case 'planting':
+    case 'tending':
+    case 'harvesting':
+      return 'hoe';
+    case 'fishing':
+      return 'rod';
+    case 'cooking':
+      return 'ladle';
+    case 'gathering':
+      return v.job === 'miner' ? 'pick' : 'axe';
+    case 'working':
+      break;
+    default:
+      return null;
+  }
+  const byJob: Record<JobId, Tool> = {
+    general: 'hammer',
+    woodcutter: 'axe',
+    miner: 'pick',
+    farmer: 'hoe',
+    miller: 'sack',
+    cook: 'ladle',
+    fisher: 'rod',
+    smith: 'tongs',
+  };
+  return byJob[v.job] ?? null;
+}
+
+/**
+ * Draws a tool held in a hand at `(gx, gy)`. `dir` is +1 facing right, -1
+ * facing left, so every shape below is drawn once and mirrored rather than
+ * written out twice.
+ *
+ * The grip is the origin and everything is measured from it, which sounds
+ * obvious and was not how the first version worked: each shape had its own
+ * idea of where it started, so an axe hung two pixels off the end of the arm
+ * holding it and a hoe floated beside the farmer entirely. A tool nobody is
+ * holding is worse than no tool, because it reads as a bug rather than as work.
+ */
+function drawTool(ctx: Ctx, tool: Tool, gx: number, gy: number, dir: number): void {
+  const haft = '#6b4a2f';
+  const steel = '#c8ccd2';
+  const dull = '#8f949b';
+  switch (tool) {
+    case 'axe':
+      px(ctx, gx, gy - 5, haft, 1, 7);
+      px(ctx, gx + dir, gy - 6, steel, 1, 3);
+      px(ctx, gx + dir * 2, gy - 5, steel, 1, 1);
+      break;
+    case 'pick':
+      px(ctx, gx, gy - 5, haft, 1, 7);
+      px(ctx, gx - 1, gy - 6, dull, 3, 1);
+      px(ctx, gx + dir * 2, gy - 5, dull, 1, 1);
+      px(ctx, gx - dir * 2, gy - 5, dull, 1, 1);
+      break;
+    case 'hoe':
+      // The blade is at the bottom, because a hoe is used by dragging it.
+      px(ctx, gx, gy - 5, haft, 1, 7);
+      px(ctx, gx + dir, gy + 2, steel, 2, 1);
+      px(ctx, gx + dir, gy + 1, dull, 1, 1);
+      break;
+    case 'rod':
+      // The rod goes up and out; the line drops from its tip. A fisher with the
+      // rod alone reads as somebody holding a stick.
+      for (let i = 0; i < 7; i++) px(ctx, gx + dir * i, gy - 1 - i, haft);
+      px(ctx, gx + dir * 6, gy - 7, 'rgba(230,240,245,0.6)', 1, 8);
+      break;
+    case 'ladle':
+      px(ctx, gx, gy - 4, haft, 1, 6);
+      px(ctx, gx + dir, gy + 2, dull, 2, 2);
+      break;
+    case 'hammer':
+      px(ctx, gx, gy - 4, haft, 1, 6);
+      px(ctx, gx - 1, gy - 6, dull, 3, 2);
+      break;
+    case 'sack':
+      px(ctx, gx - (dir < 0 ? 3 : 0), gy - 3, '#cbb98e', 4, 5);
+      px(ctx, gx - (dir < 0 ? 3 : 0), gy - 3, '#e0d0a6', 4, 1);
+      break;
+    case 'tongs':
+      px(ctx, gx, gy - 4, dull, 1, 5);
+      px(ctx, gx + dir, gy - 5, dull, 1, 2);
+      px(ctx, gx + dir * 2, gy - 6, '#ff8a3c', 2, 2);
+      break;
+    default:
+      break;
+  }
+}
+
+/**
  * Draws one villager. (sx, sy) is the point where their feet meet the ground.
  * `selected` adds a marker ring so a followed villager stays findable.
+ *
+ * Sixteen pixels tall, redrawn every frame for everybody on screen, so what
+ * goes in here is bought at twenty people times sixty frames a second. That
+ * budget is spent on *pose* rather than on detail: at the zooms this game is
+ * actually played at, a stoop under a load reads across the whole map and a
+ * belt buckle does not.
  */
 export function drawVillager(
   ctx: Ctx,
@@ -40,6 +150,8 @@ export function drawVillager(
   const a = v.appearance;
   const back = v.face === 2 || v.face === 3;
   const flip = v.face === 1 || v.face === 2;
+  /** +1 facing right, -1 facing left. Every asymmetric part is drawn off this. */
+  const dir = flip ? -1 : 1;
   const moving = v.activity === 'walking' || v.activity === 'hauling';
   const working =
     v.activity === 'working' ||
@@ -47,7 +159,9 @@ export function drawVillager(
     v.activity === 'building' ||
     v.activity === 'harvesting' ||
     v.activity === 'planting' ||
-    v.activity === 'tending';
+    v.activity === 'tending' ||
+    v.activity === 'cooking' ||
+    v.activity === 'fishing';
 
   // Gait: a two-frame leg swap plus a one-pixel body bob.
   const stride = moving ? Math.floor(v.phase * 6) % 2 : 0;
@@ -61,9 +175,21 @@ export function drawVillager(
   }
 
   const sitting = v.activity === 'resting';
+  const eating = v.activity === 'eating';
+  const talking = v.activity === 'chatting';
+  const watching = v.activity === 'watching';
+  const carrying = !!v.carrying;
   const baseY = sy + (sitting ? 2 : 0);
   const x = Math.round(sx);
   const y = Math.round(baseY) + bob;
+
+  /*
+   * A load is heavy. The whole upper body tips a pixel the way they are going
+   * and the head drops with it — which is the entire difference between
+   * somebody carrying eight stone across a field and somebody out for a walk
+   * with a box floating beside their hip.
+   */
+  const tilt = carrying && !sitting ? dir : 0;
 
   shadow(ctx, sx, sy, 7);
   if (selected) selectionRing(ctx, sx, sy, '#ffd77a');
@@ -78,81 +204,145 @@ export function drawVillager(
     px(ctx, x - 2, y - 1, '#3a3128', 2, 1);
     px(ctx, x, y - 1, '#3a3128', 2, 1);
   } else {
-    px(ctx, x - 2, y - 3, a.trousers, 5, 2);
-    px(ctx, x + 1, y - 2, a.trousers, 2, 2);
+    // Sat down: shins forward along the ground, knees up, feet at the end of
+    // them. Two rectangles read as a heap; the step between them reads as legs.
+    px(ctx, x - 1, y - 5, a.trousers, 3, 3);
+    px(ctx, x + dir * 2, y - 3, a.trousers, 3, 2);
+    px(ctx, x + dir * 4, y - 2, '#3a3128', 2, 1);
   }
 
   // Torso.
   const torsoY = sitting ? y - 9 : y - 10;
-  px(ctx, x - 3, torsoY, a.shirt, 6, 6);
-  px(ctx, x - 3, torsoY, shade(a.shirt, 1.15), 6, 1);
-  px(ctx, flip ? x + 2 : x - 3, torsoY + 1, shade(a.shirt, 0.82), 1, 5);
+  const tx0 = x - 3 + tilt;
+  px(ctx, tx0, torsoY, a.shirt, 6, 6);
+  px(ctx, tx0, torsoY, shade(a.shirt, 1.15), 6, 1);
+  px(ctx, flip ? tx0 + 5 : tx0, torsoY + 1, shade(a.shirt, 0.82), 1, 5);
+  // A belt. One pixel, and it is what stops a torso reading as a painted block.
+  px(ctx, tx0, torsoY + 5, shade(a.trousers, 0.8), 6, 1);
 
   // Arms.
   const armY = torsoY + 1;
-  const swing = working ? Math.round(workSwing * 2) : moving ? (stride === 0 ? -1 : 1) : 0;
-  px(ctx, x - 4, armY + (flip ? swing : -swing), a.shirt, 1, 4);
-  px(ctx, x + 3, armY + (flip ? -swing : swing), a.shirt, 1, 4);
-  px(ctx, x - 4, armY + 4 + (flip ? swing : -swing), a.skin, 1, 1);
-  px(ctx, x + 3, armY + 4 + (flip ? -swing : swing), a.skin, 1, 1);
+  const front = tx0 + (flip ? -1 : 6);
+  const rear = tx0 + (flip ? 6 : -1);
+  if (carrying) {
+    // Both arms out in front and level, under whatever they are holding.
+    px(ctx, front, armY + 1, a.shirt, 1, 3);
+    px(ctx, front + dir, armY + 2, a.skin, 1, 2);
+    px(ctx, rear, armY + 1, shade(a.shirt, 0.88), 1, 3);
+  } else if (eating) {
+    // One hand up at the mouth, the other down at their side.
+    px(ctx, front, armY, a.shirt, 1, 2);
+    px(ctx, front, armY - 2, a.skin, 1, 2);
+    px(ctx, rear, armY, shade(a.shirt, 0.88), 1, 4);
+  } else if (watching) {
+    // A hand up shading the eyes, which is the only pose in here that says
+    // somebody is looking at something rather than at nothing.
+    px(ctx, front, armY - 1, a.shirt, 1, 3);
+    px(ctx, front, armY - 3, a.skin, 2, 1);
+    px(ctx, rear, armY, shade(a.shirt, 0.88), 1, 4);
+  } else if (talking) {
+    // One hand moving while they talk. Slow, and only a pixel of it.
+    const gesture = Math.round(Math.sin(v.phase * 3) * 1.5);
+    px(ctx, front, armY + gesture, a.shirt, 1, 3);
+    px(ctx, front, armY + 3 + gesture, a.skin, 1, 1);
+    px(ctx, rear, armY, shade(a.shirt, 0.88), 1, 4);
+  } else {
+    const swing = working ? Math.round(workSwing * 2) : moving ? (stride === 0 ? -1 : 1) : 0;
+    px(ctx, rear, armY - swing, shade(a.shirt, 0.88), 1, 4);
+    px(ctx, front, armY + swing, a.shirt, 1, 4);
+    px(ctx, rear, armY + 4 - swing, a.skin, 1, 1);
+    px(ctx, front, armY + 4 + swing, a.skin, 1, 1);
+  }
 
-  // Head.
-  const headY = torsoY - 5;
-  px(ctx, x - 3, headY, a.skin, 6, 5);
-  px(ctx, x - 3, headY, shade(a.skin, 1.08), 6, 1);
+  // Head. It drops a pixel under a load, along with the tip of the torso.
+  const headY = torsoY - 5 + (carrying && !sitting ? 1 : 0);
+  const hx0 = x - 3 + tilt;
+  px(ctx, hx0, headY, a.skin, 6, 5);
+  px(ctx, hx0, headY, shade(a.skin, 1.08), 6, 1);
+  // A jaw line under the cheek on the side turned away from us.
+  if (!back) px(ctx, flip ? hx0 : hx0 + 5, headY + 4, shade(a.skin, 0.85), 1, 1);
 
   if (!back) {
     // Eyes, offset by facing so people look where they are going.
-    const ex = flip ? x - 2 : x;
+    const ex = flip ? hx0 + 1 : hx0 + 3;
     px(ctx, ex, headY + 2, '#3a2f26');
     px(ctx, ex + (flip ? -1 : 1) * 2, headY + 2, '#3a2f26');
   }
 
   // Hair.
   if (a.hat === 0) {
-    px(ctx, x - 3, headY - 1, a.hair, 6, 2);
-    if (a.hairStyle >= 1) px(ctx, back ? x - 3 : flip ? x + 2 : x - 3, headY + 1, a.hair, 1, 3);
-    if (a.hairStyle === 2) px(ctx, x - 3, headY + 1, a.hair, 6, 1);
+    px(ctx, hx0, headY - 1, a.hair, 6, 2);
+    px(ctx, hx0, headY - 1, shade(a.hair, 1.22), 6, 1);
+    if (a.hairStyle >= 1) px(ctx, back ? hx0 : flip ? hx0 + 5 : hx0, headY + 1, a.hair, 1, 3);
+    if (a.hairStyle === 2) px(ctx, hx0, headY + 1, a.hair, 6, 1);
   } else {
     const hc = HAT_COLORS[a.hat - 1];
-    px(ctx, x - 4, headY - 1, hc, 8, 2);
-    px(ctx, x - 3, headY - 3, hc, 6, 2);
-    px(ctx, x - 3, headY - 3, shade(hc, 1.2), 6, 1);
-    px(ctx, x - 3, headY, a.hair, 6, 1);
+    px(ctx, hx0 - 1, headY - 1, hc, 8, 2);
+    px(ctx, hx0, headY - 3, hc, 6, 2);
+    px(ctx, hx0, headY - 3, shade(hc, 1.2), 6, 1);
+    // A band round the crown, and the brim catching the light on the sunny side.
+    px(ctx, hx0, headY - 1, shade(hc, 0.72), 6, 1);
+    px(ctx, hx0 - 1, headY - 1, shade(hc, 1.15), 1, 1);
+    px(ctx, hx0, headY, a.hair, 6, 1);
   }
 
-  // Carried goods, held out in front.
+  /*
+   * What they are carrying, held in front of them at chest height rather than
+   * out at arm's length beside the hip. It sits just past the hands, one pixel
+   * below the arms, so the arms visibly go under it.
+   */
   if (v.carrying) {
     const meta = RESOURCE_META[v.carrying.res];
-    const cx = flip ? x - 6 : x + 4;
-    px(ctx, cx - 1, torsoY + 1, shade(meta.color, 0.75), 4, 4);
-    px(ctx, cx - 1, torsoY + 1, meta.color, 4, 3);
-    px(ctx, cx - 1, torsoY + 1, shade(meta.color, 1.25), 4, 1);
+    const cx = flip ? tx0 - 5 : tx0 + 6;
+    px(ctx, cx, armY + 1, shade(meta.color, 0.7), 5, 5);
+    px(ctx, cx, armY + 1, meta.color, 5, 4);
+    px(ctx, cx, armY + 1, shade(meta.color, 1.28), 5, 1);
+    // A strap or a seam across it, so a load of wood and a load of stone are
+    // not the same box in two colours.
+    px(ctx, cx + 2, armY + 1, shade(meta.color, 0.78), 1, 5);
   }
 
-  // A tool while working, so the action reads at a glance.
+  // Something in the mouth, for anybody actually eating.
+  if (eating) px(ctx, flip ? hx0 - 1 : hx0 + 6, headY + 2, '#d8a86a');
+
+  /*
+   * And a tool, in the hand that is doing the work — the same pixel the arm
+   * ends on, swinging with it, rather than at a fixed offset from the body.
+   */
   if (working) {
-    const tx = flip ? x - 6 : x + 5;
-    const ty = torsoY + 1 + Math.round(workSwing * 2);
-    if (v.activity === 'gathering' || v.activity === 'building') {
-      px(ctx, tx, ty, '#6b4a2f', 1, 5);
-      px(ctx, tx - 1, ty - 1, '#b9bcc2', 3, 2);
-    } else if (v.activity === 'harvesting' || v.activity === 'planting' || v.activity === 'tending') {
-      px(ctx, tx, ty, '#6b4a2f', 1, 4);
-      px(ctx, tx, ty - 1, '#c8ccd2', 2, 1);
+    const tool = toolFor(v);
+    if (tool) {
+      const swing = Math.round(workSwing * 2);
+      drawTool(ctx, tool, front + dir, armY + 4 + swing, dir);
     }
   }
 }
 
+/**
+ * Asleep: a mat, a blanket with somebody under it, a pillow and a head on it.
+ *
+ * The old version was a flat lilac bar with a skin-coloured square stuck on the
+ * end, which at any zoom read as a crate with a lid. What makes a sleeping
+ * figure legible is the *bump* — a shoulder and a hip under the blanket — and
+ * that is two rectangles.
+ */
 function drawSleeping(ctx: Ctx, v: Villager, sx: number, sy: number): void {
   const a = v.appearance;
   const x = Math.round(sx);
   const y = Math.round(sy);
-  shadow(ctx, sx, sy, 9);
-  px(ctx, x - 5, y - 4, '#6a5f7a', 10, 4);
-  px(ctx, x - 5, y - 5, '#7b6f8c', 10, 1);
-  px(ctx, x + 3, y - 7, a.skin, 4, 3);
-  px(ctx, x + 3, y - 8, a.hair, 4, 1);
+  shadow(ctx, sx, sy, 11);
+  // The mat, then the blanket over it.
+  px(ctx, x - 6, y - 3, '#584e69', 12, 3);
+  px(ctx, x - 6, y - 4, '#6a5f7a', 12, 1);
+  // Shoulder and hip under the blanket, which is the whole of the read.
+  px(ctx, x - 4, y - 6, '#6a5f7a', 7, 3);
+  px(ctx, x - 3, y - 7, '#7b6f8c', 5, 1);
+  px(ctx, x - 1, y - 5, '#5c5270', 3, 1);
+  // A pillow, and a head resting on it rather than floating beside it.
+  px(ctx, x + 3, y - 6, '#cdc4d8', 5, 2);
+  px(ctx, x + 4, y - 9, a.skin, 4, 3);
+  px(ctx, x + 4, y - 10, a.hair, 4, 1);
+  px(ctx, x + 4, y - 7, shade(a.skin, 0.85), 4, 1);
   // Drifting Z, in time with a slow breath.
   const t = Math.floor(v.phase * 0.9) % 3;
   ctx.fillStyle = 'rgba(240,235,225,0.75)';

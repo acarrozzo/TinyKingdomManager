@@ -174,7 +174,13 @@ load, from a season-aware palette; villagers and animals are drawn per frame
 because they are tiny and every one of them has their own colouring. The
 interface is drawn the same way — every icon in it is a twelve-by-twelve grid
 baked at boot, so a button can tint its own icon and nothing is left to whatever
-emoji the operating system happens to have. This is
+emoji the operating system happens to have.
+
+Walls know what they are made of: planks, stacked logs, coursed rubble or render
+with the timber frame showing through it, with the courses running along the
+face rather than across the screen. Roofs are shingled and boarded at the gable.
+Villagers carry a load in front of them with a stoop in it, and hold the tool of
+whatever trade they are working at. This is
 what lets a season change recolour the entire world for free, and it means the
 whole game is a single self-contained bundle.
 

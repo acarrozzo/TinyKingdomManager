@@ -4,6 +4,7 @@ import './ui/style.css';
 import { Game } from './game';
 import { UI } from './ui/ui';
 import { iconSheet, installIcons } from './ui/icons';
+import { poseSheet, spriteSheet } from './ui/portraits';
 import { audio } from './audio/audio';
 import { listSlots, loadFromSlot, loadSettings, newSlotId } from './save/save';
 
@@ -44,4 +45,4 @@ document.addEventListener('visibilitychange', () => {
 });
 
 // Handy for poking at a kingdom from the console.
-(window as unknown as { tkm: unknown }).tkm = { game, ui, iconSheet };
+(window as unknown as { tkm: unknown }).tkm = { game, ui, iconSheet, spriteSheet, poseSheet };
