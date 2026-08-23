@@ -4,11 +4,20 @@ import { clamp, lerp } from '../core/util';
 import { HALF_H, HALF_W, toScreenX, toScreenY } from '../world/iso';
 
 /**
- * Integer only — the pixel pipeline scales by `round(zoom × dpr)`. 5× is
+ * Integer from 1× up — the pixel pipeline scales by `round(zoom × dpr)`. 5× is
  * deliberately skipped: it sits too close to both its neighbours to be worth a
  * stop on the way up.
+ *
+ * The half step at the bottom is not one of the playing zooms and does not
+ * pretend to be. It is Overview: the whole island at arm's length with the sun
+ * still its own size over the top of it, and the only step where the art is
+ * shown at less than one screen pixel per art pixel. See `Renderer.resize`.
  */
-export const ZOOM_LEVELS = [1, 2, 3, 4, 6];
+export const ZOOM_LEVELS = [0.5, 1, 2, 3, 4, 6];
+/** One screen pixel per art pixel — where Overview hands the map back. */
+export const ZOOM_HOME = ZOOM_LEVELS.indexOf(1);
+/** Where a new kingdom opens: close enough to see faces. */
+export const ZOOM_START = ZOOM_LEVELS.indexOf(2);
 
 /**
  * How far past the island's north corner the camera may travel, as a share of
@@ -24,7 +33,7 @@ export class Camera {
   /** Centre of view, in world pixels. */
   x = 0;
   y = 0;
-  zoomIndex = 1;
+  zoomIndex = ZOOM_START;
   /** Entity the camera is tracking, or null. */
   followId = 0;
   followKind: 'villager' | 'animal' | null = null;
@@ -36,6 +45,11 @@ export class Camera {
 
   get zoom(): number {
     return ZOOM_LEVELS[this.zoomIndex];
+  }
+
+  /** Whether the camera is out in Overview rather than over the kingdom. */
+  get overview(): boolean {
+    return this.zoom < 1;
   }
 
   centerOnTile(tx: number, ty: number): void {

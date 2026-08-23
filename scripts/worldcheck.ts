@@ -41,8 +41,23 @@ const NEAR_TREE_RADIUS = 9;
  * and make a liar of the interface, which calls this a choice.
  */
 const WANT_CAMPSITES = 6;
-const NODE_RADIUS = 14;
+const NODE_RADIUS = 15;
 const CAMP_RADIUS = 9;
+/**
+ * The open middle, measured the way a player uses it: ground inside six tiles
+ * of the centre that a building could stand on and somebody could walk across.
+ *
+ * A camp needs nine tiles of it. A first village needs the rest, and the whole
+ * reason the island grew was to have it — so it is worth asserting rather than
+ * trusting, because every pass after the clearing is carved is free to put
+ * something back on top of it: the outcrop spreads, the lake has lobes, and the
+ * two node guarantees will plant fifty-five trees wherever they find room.
+ *
+ * Flowers and bushes do not count against it. Nothing is stopped by them, and a
+ * clearing with none of them in it looks mown.
+ */
+const CLEARING_RADIUS = 6;
+const WANT_CLEAR_TILES = 92;
 /** The opening should still be a walk rather than a step. */
 const MIN_ARRIVAL_DISTANCE = 6;
 /**
@@ -143,6 +158,12 @@ function check(seed: number, m: World): string[] {
   }
   if (countCampsites(tiles, w, h) < WANT_CAMPSITES) {
     bad.push(`${countCampsites(tiles, w, h)} legal campsites, wanted ${WANT_CAMPSITES}`);
+  }
+
+  // …and room around it to put the rest of the kingdom.
+  const open = openMiddle(tiles, w, h);
+  if (open < WANT_CLEAR_TILES) {
+    bad.push(`${open} open tiles within ${CLEARING_RADIUS} of the middle, wanted ${WANT_CLEAR_TILES}`);
   }
 
   // --- and everything else on the same piece of land as it ---
@@ -338,6 +359,22 @@ function countCampsites(tiles: Tile[], w: number, h: number): number {
   return n;
 }
 
+/** Buildable, unobstructed ground at the middle of the island. */
+function openMiddle(tiles: Tile[], w: number, h: number): number {
+  const cx = w / 2;
+  const cy = h / 2;
+  let n = 0;
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      if (Math.hypot(x - cx, y - cy) >= CLEARING_RADIUS) continue;
+      const t = tiles[y * w + x];
+      if (t.terrain !== 'grass' && t.terrain !== 'meadow') continue;
+      if (t.prop === 'tree' || t.prop === 'boulder') continue;
+      n++;
+    }
+  return n;
+}
+
 /** Standing trees the founder could walk to from where the kingdom starts. */
 function nearTrees(m: World, reach: Uint8Array): number {
   let n = 0;
@@ -388,6 +425,7 @@ const stats = {
   boulders: [Infinity, 0],
   near: [Infinity, 0],
   sites: [Infinity, 0],
+  clearing: [Infinity, 0],
   treeD: [Infinity, 0],
   quarry: [Infinity, 0],
   quarryBest: [Infinity, 0],
@@ -436,6 +474,7 @@ for (let i = 0; i < count; i++) {
   note(stats.boulders, boulders);
   note(stats.near, nearTrees(m, reach));
   note(stats.sites, countCampsites(m.tiles, m.w, m.h));
+  note(stats.clearing, openMiddle(m.tiles, m.w, m.h));
   note(stats.treeD, nearestTree);
   note(stats.quarry, quarrySites(m, reach));
   note(stats.quarryBest, bestQuarry(m, reach));
@@ -453,6 +492,7 @@ console.log(`\n✓ ${count} worlds, all sound (${secs}s)`);
 console.log(`  trees within ${NODE_RADIUS}        ${stats.trees[0]}–${stats.trees[1]}`);
 console.log(`  boulders within ${NODE_RADIUS}     ${stats.boulders[0]}–${stats.boulders[1]}`);
 console.log(`  campsites to choose between      ${stats.sites[0]}–${stats.sites[1]}`);
+console.log(`  open ground within ${CLEARING_RADIUS} of the middle ${stats.clearing[0]}–${stats.clearing[1]} tiles`);
 console.log(`  trees within ${NEAR_TREE_RADIUS} of the start   ${stats.near[0]}–${stats.near[1]}`);
 console.log(`  walk to the nearest tree        ${stats.treeD[0].toFixed(1)}–${stats.treeD[1].toFixed(1)} tiles`);
 console.log(`  places a quarry could work from ${stats.quarry[0]}–${stats.quarry[1]}`);

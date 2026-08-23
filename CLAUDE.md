@@ -103,9 +103,11 @@ npx tsx scripts/worldcheck.ts 1 8
 
 Use this for changes to `world/terrain.ts`.
 
-It verifies that generated islands are deterministic and playable: valid campsites, reachable founding trees, usable quarry locations, viable fishing locations, connected terrain and sane tile data.
+It verifies that generated islands are deterministic and playable: valid campsites, an open middle big enough to lay a village out in, reachable founding trees, usable quarry locations, viable fishing locations, connected terrain and sane tile data.
 
 Random scatter is not a guarantee. Any required resource or placement count must have a deterministic fallback.
+
+The middle of the island is an irregular clearing roughly thirteen tiles across, and it is the ground the kingdom is built on. `clearingEdge()` is the authority for where it ends — one signed distance, read like `lakeEdge()` — and every pass with an opinion about the middle asks it rather than carrying a radius of its own. Woodland, the outcrop and both node guarantees stop at it; flowers, bushes and a few trees at its rim do not, because a clearing with nothing growing in it reads as mown. It yields to the lake and to nothing else.
 
 ### Building relocation
 
@@ -606,7 +608,9 @@ Never:
 - introduce fractional world scaling;
 - allow smoothing to blur the pixel art.
 
-Ground is baked into a map-sized canvas. Call `renderer.invalidateGround()` after terrain or season changes.
+The buffer is always one canvas pixel per art pixel. Overview is the single exception to the *blit*: below 1× the buffer is larger than the display, so the last step is a downsample and smoothing is switched on for it. That exception belongs to Overview alone and is not a precedent for the zooms the game is played at.
+
+Ground is baked into a map-sized canvas. Call `renderer.invalidateGround()` after terrain or season changes, and `renderer.setMapSize()` when a kingdom of a different size is adopted — islands generated before the island grew are 40×40 and still load.
 
 Everything that overlaps moving actors participates in the depth-sorted pass. Buildings generally sort from the front of their footprint; farms sort from the back so crops appear correctly.
 
@@ -711,13 +715,23 @@ Time-of-day visuals do not add mechanics. They represent systems that already ex
 
 ## Input and camera
 
-Zoom uses the fixed integer ladder:
+Zoom uses the fixed ladder:
 
 ```text
-1×, 2×, 3×, 4×, 6×
+0.5×, 1×, 2×, 3×, 4×, 6×
 ```
 
-Do not add smooth fractional zoom. Smooth the input, not the resulting scale.
+Integer from 1× up. Do not add smooth fractional zoom. Smooth the input, not the resulting scale.
+
+The half step is **Overview** and is a place to look from rather than a scale to play at:
+
+- entering it frames the island, so it is a picture of a small kingdom in a large sea rather than of the corner of one;
+- the whole interface stands down — labels, badges, marks, tools, panels and the clean-view chip with them — and what was open is restored on the way back;
+- the sky keeps its own size. Sun, moon, arc, haze and stars are scaled by `Renderer.skyK` so the island shrinks under a sun that does not;
+- panning and every zoom input work normally, and a click anywhere returns to 1× looking at that spot. There is no hint and no exit control, because the map is the control;
+- it is the one place the pixel pipeline goes below one screen pixel per art pixel. The blit is a downsample and smoothing is switched on for it; on a retina screen it is exactly 2:1.
+
+`ZOOM_HOME` and `ZOOM_START` name the two steps anything else needs: where Overview hands back, and where a new kingdom opens.
 
 Scrolling zooms. Dragging pans.
 
@@ -949,7 +963,7 @@ Exact tuning belongs in `defs.ts`. These figures describe the current shape of t
 
 | System | Current scale |
 |---|---|
-| Map | 40×40 tiles |
+| Map | 44×44 tiles |
 | Day | 30 real minutes at 1× |
 | Season | 6 game-days |
 | Year | 24 game-days |

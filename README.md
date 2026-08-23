@@ -20,8 +20,9 @@ npm run dev      # http://localhost:5173
 The brief's "Initial Scope" loop, built end to end and balanced against a
 headless simulator (see [Development tools](#development-tools)).
 
-**The world.** A 40×40 isometric island generated per save: woodland, meadow,
-rocky ground, a pond, and a beach. Trees are real resource nodes that deplete,
+**The world.** A 44×44 isometric island generated per save: an open clearing at
+the middle with room for a village, and around it woodland, meadow, rocky
+ground, a pond, and a beach. Trees are real resource nodes that deplete,
 leave stumps and grow back. Surface boulders do not: they are finite, and one
 built over is gone for good. Everything the kingdom digs up comes instead out of
 the rocky ground a mine stands on, which does not run out.
@@ -114,6 +115,12 @@ the resource comes from and what it is for.
 **Clean viewing mode** (`H`). Hides the entire interface except a small time and
 season chip. This is the point of the whole thing.
 
+**Overview.** One step out past 1×, and the kingdom becomes a small island in a
+lot of ocean with the sun hanging over it at its full size. Nothing is written on
+it — no labels, no marks, no panels, not even a way out, because clicking
+anywhere brings you back down at that spot. Whatever you had open is waiting when
+you get there.
+
 **Drawing** (Kingdom → Settings). How often the island is repainted — Smooth,
 Easy or Gentle. Drawing is nearly the whole cost of running this, so the lower
 settings are markedly kinder to a laptop left open all day; the kingdom itself
@@ -147,7 +154,7 @@ unlocks, per-building job slots, the goal list — are all in place.
 | | |
 |---|---|
 | Drag · one finger | Pan |
-| Scroll · wheel · pinch | Zoom (1×, 2×, 3×, 4×, 6×) |
+| Scroll · wheel · pinch | Zoom (0.5×, 1×, 2×, 3×, 4×, 6×) |
 | Click | Select a villager, animal, building or tile |
 | Double-click | Follow someone with the camera |
 | **Build** | Pick a building, then click where it goes; removing is at the foot of the same panel |
@@ -159,6 +166,7 @@ unlocks, per-building job slots, the goal list — are all in place.
 | `1` `2` `3` | 1× · 2× · 4× (also under Kingdom → Settings) |
 | `Esc` | Cancel the current tool, or close a panel |
 | Right-edge pad | Zoom in, zoom out, recentre — the whole of the controls on a touchscreen |
+| Past 1× | Overview: the island in its ocean, no interface at all. Click anywhere to come back |
 | Right-click | Cancel the current tool |
 
 ---
@@ -186,7 +194,10 @@ whole game is a single self-contained bundle.
 
 **Rendering.** The world is drawn into a buffer at exactly one canvas pixel per
 art pixel, then upscaled with nearest-neighbour at an integer scale — that is
-what keeps the pixel art crisp instead of smeared at every zoom level. Ground is
+what keeps the pixel art crisp instead of smeared at every zoom level. Overview,
+the half step below 1×, is the one place that goes the other way: the buffer is
+larger than the screen and comes down to it, which is the price of a whole island
+in one picture. Ground is
 baked once into a single map-sized canvas and blitted as one image; only things
 that need depth sorting against moving actors are drawn per frame. Lighting is a
 separate light buffer (ambient tint plus radial sources) composited with

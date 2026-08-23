@@ -4,8 +4,8 @@ import { RNG, fbm, hash2, clamp, mix32 } from '../core/util';
 import type { GameState, PropId, Tile, TerrainId } from '../types';
 import { FISH_FLOOR, FISH_REST, GOOD_SPOT, TERRAIN_SPEED, WATER_NEAR } from '../sim/defs';
 
-export const MAP_W = 40;
-export const MAP_H = 40;
+export const MAP_W = 44;
+export const MAP_H = 44;
 
 /**
  * What a node holds, and how long a felled tree takes to come back.
@@ -37,8 +37,14 @@ export const CAMP_SPAN = CAMP_HALF * 2 + 1;
 /** Trees and boulders the middle of the island owes the player, whatever the noise did. */
 const WANT_TREES = 55;
 const WANT_BOULDERS = 26;
-/** Radius the two counts above are measured over. */
-const NODE_RADIUS = 14;
+/**
+ * Radius the two counts above are measured over. It grew with the clearing
+ * rather than with the map: the open middle is now most of the ground inside
+ * seven tiles, so counting from fourteen would have squeezed the same fifty-five
+ * trees into a thinner ring and quietly made the woodland denser than it looks
+ * anywhere else on the island.
+ */
+const NODE_RADIUS = 15;
 /**
  * The opening is one tree, felled by hand, for one full load of twelve. So the
  * founder is owed trees they can genuinely walk to from where they camp —
@@ -48,12 +54,52 @@ const NODE_RADIUS = 14;
 const WANT_NEAR_TREES = 4;
 const NEAR_TREE_RADIUS = 9;
 /**
- * Ground at the very middle that is kept open whatever the noise did, so there
- * is always somewhere — several somewheres — a three-by-three camp will sit.
- * Comfortably wider than the camp itself: a clearing exactly one camp across
- * would offer the player a single legal tile and call it a choice.
+ * The open middle of the island: room for a village, rather than room for a
+ * camp.
+ *
+ * It used to be three and a half tiles of guaranteed grass, which is a camp and
+ * its elbows — every building after the first was sited by looking for a gap in
+ * the woodland. Thirteen-odd tiles across is a first village with room to lay
+ * itself out, and it is what the island grew for: the coast moved out, the lake
+ * and the outcrop stayed the size they were, and the difference went here.
+ *
+ * The rim wanders instead of sitting at a fixed radius, for the same reason the
+ * lake's does. A circle of grass in a wood does not read as a clearing; it reads
+ * as something that has been mown.
  */
-const CLEARING_RADIUS = 3.6;
+const CLEARING_RADIUS = 6.4;
+const CLEARING_WOBBLE = 1.2;
+/**
+ * The very middle, where the camp lands and nothing at all stands. Small enough
+ * that the clearing is still ground with things growing on it, wide enough that
+ * the founder is not siting the kingdom in a flowerbed.
+ */
+const CLEARING_CORE = 3.0;
+/**
+ * How far in from the rim a tree may still take root. The founder's first
+ * morning is one tree felled by hand, so the wood has to start within sight of
+ * the camp — but a tree in the middle of the clearing is the obstruction the
+ * clearing exists to not have.
+ */
+const CLEARING_EDGE = 2.2;
+
+/** Where the open middle is, and the noise that makes its rim wander. */
+interface Clearing {
+  cx: number;
+  cy: number;
+  salt: number;
+}
+
+/**
+ * How far this tile is from the clearing's rim, in tiles, negative inside it.
+ * Read exactly like `lakeEdge` and for the same reason: one signed number, so
+ * every pass with an opinion about the middle of the island asks the same
+ * question instead of each carrying its own radius.
+ */
+function clearingEdge(c: Clearing, x: number, y: number): number {
+  const wob = (fbm((x / 9) * 2.2 + 21, (y / 9) * 2.2 - 33, 2, c.salt) - 0.5) * 2 * CLEARING_WOBBLE;
+  return Math.hypot(x - c.cx, y - c.cy) - (CLEARING_RADIUS + wob);
+}
 
 // ---------------------------------------------------------------------------
 // The lake
@@ -79,7 +125,7 @@ function makeLake(r: RNG, x: number, y: number, outward: number): Lake {
   // in it; three starts to sprawl across the island and read as a river.
   const lobes = r.chance(0.6) ? 2 : 1;
   // Broadside on, and that is load-bearing rather than tidy. The lake sits
-  // eleven tiles from the middle of an island whose coast is about eighteen out,
+  // twelve tiles from the middle of an island whose coast is about twenty out,
   // so a lobe pushed *outward* walks straight through the beach and the lake
   // stops being a lake — measured over five hundred seeds, half of them came out
   // as bays. Pushed along the shore instead it grows by the same amount and
@@ -153,6 +199,7 @@ function saltsFor(seed: number) {
     meadow: mix32(seed ^ 0x85ebca6b),
     rock: mix32(seed ^ 0xc2b2ae35),
     pond: mix32(seed ^ 0x27d4eb2f),
+    clear: mix32(seed ^ 0x7feb352d),
     props: mix32(seed ^ 0x165667b1),
     variant: mix32(seed ^ 0x9e3779b1),
   };
@@ -186,14 +233,18 @@ export function generateMap(seed: number): {
   const S = saltsFor(seed);
 
   // The lake, off to one side of the clearing, as a main body with a lobe or
-  // two pushed out of it. See `makeLake`.
+  // two pushed out of it. See `makeLake`. It and the outcrop below it moved out
+  // with the coast rather than staying put as the map grew: both are the size
+  // they always were, and what grew is the ground between them and the middle.
   const pondAngle = r.range(0, Math.PI * 2);
-  const lake = makeLake(r, cx + Math.cos(pondAngle) * 11, cy + Math.sin(pondAngle) * 11, pondAngle);
+  const lake = makeLake(r, cx + Math.cos(pondAngle) * 12.2, cy + Math.sin(pondAngle) * 12.2, pondAngle);
 
   // Rocky outcrop on roughly the opposite side.
   const rockAngle = pondAngle + Math.PI + r.range(-0.7, 0.7);
-  const rockX = cx + Math.cos(rockAngle) * 12;
-  const rockY = cy + Math.sin(rockAngle) * 12;
+  const rockX = cx + Math.cos(rockAngle) * 13.2;
+  const rockY = cy + Math.sin(rockAngle) * 13.2;
+
+  const clear: Clearing = { cx, cy, salt: S.clear };
 
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
@@ -215,10 +266,13 @@ export function generateMap(seed: number): {
         const forestN = fbm(nx * 1.3 + 40, ny * 1.3 - 20, 4, S.forest);
         const meadowN = fbm(nx * 1.1 - 15, ny * 1.1 + 55, 3, S.meadow);
         const rockD = Math.sqrt((x - rockX) ** 2 + (y - rockY) ** 2);
-        const clearD = Math.sqrt((x - cx) ** 2 + (y - cy) ** 2);
 
-        if (rockD < 5.5 + fbm(nx * 3, ny * 3, 2, S.rock) * 3.5) terrain = 'rocky';
-        else if (clearD < 5) terrain = 'grass';
+        // The clearing is asked first, so neither the woodland nor the outcrop
+        // can grow into the one part of the island the player is owed. The
+        // meadow noise still runs through it: a clearing of nothing but lawn is
+        // the mown look again, one step further in.
+        if (clearingEdge(clear, x, y) < 0) terrain = meadowN > 0.58 ? 'meadow' : 'grass';
+        else if (rockD < 5.5 + fbm(nx * 3, ny * 3, 2, S.rock) * 3.5) terrain = 'rocky';
         else if (forestN > 0.56) terrain = 'forest';
         else if (meadowN > 0.58) terrain = 'meadow';
         else terrain = 'grass';
@@ -259,9 +313,19 @@ export function generateMap(seed: number): {
       const weedy = 0.35 + fbm((x / 9) * 2.2 - 30, (y / 9) * 2.2 + 18, 2, S.props) * 1.5;
       // Still water: the lake and its immediate margin, as against the open sea.
       const sheltered = lakeEdge(lake, x, y) < 3;
+      const ce = clearingEdge(clear, x, y);
       let prop: PropId | null = null;
 
-      if (t.terrain === 'forest') {
+      if (ce < 0) {
+        // The open middle. Flowers and the odd bush, so it reads as ground
+        // rather than as a floor — and a tree only where the clearing is
+        // already giving way to the wood around it, because the first morning
+        // of the kingdom is one tree felled by hand and it should be in sight
+        // of where the founder camps.
+        if (rr < 0.1) prop = 'flowers';
+        else if (rr < 0.14) prop = 'bush';
+        else if (rr < 0.2 && ce > -CLEARING_EDGE) prop = 'tree';
+      } else if (t.terrain === 'forest') {
         if (rr < 0.62) prop = 'tree';
         else if (rr < 0.74) prop = 'bush';
       } else if (t.terrain === 'grass') {
@@ -293,8 +357,8 @@ export function generateMap(seed: number): {
         if (rr < 0.08 * weedy * (sheltered ? 1 : 0.3)) prop = 'reeds';
       }
 
-      // Keep the founding clearing genuinely clear.
-      if (clearD < 3.2) prop = null;
+      // Keep the very middle genuinely bare.
+      if (clearD < CLEARING_CORE) prop = null;
 
       t.prop = prop;
       t.variant = Math.floor(hash2(x, y, S.variant) * 4);
@@ -304,18 +368,19 @@ export function generateMap(seed: number): {
   }
 
   // Open ground at the middle, before anything is counted or placed: the camp
-  // needs nine tiles of it and the player needs a choice of where to put them.
-  ensureClearing(tiles, w, h, cx, cy);
+  // needs nine tiles of it, the village that follows needs the rest, and the
+  // player needs a choice of where to put both.
+  ensureClearing(tiles, w, h, clear);
 
   // Guarantee a workable amount of nearby wood and stone regardless of noise luck.
-  ensureNodes(tiles, w, h, cx, cy, 'tree', WANT_TREES, r, S.variant);
-  ensureNodes(tiles, w, h, cx, cy, 'boulder', WANT_BOULDERS, r, S.variant);
+  ensureNodes(tiles, w, h, cx, cy, 'tree', WANT_TREES, r, S.variant, clear);
+  ensureNodes(tiles, w, h, cx, cy, 'boulder', WANT_BOULDERS, r, S.variant, clear);
 
   // The campsite has to exist before the first tree can be checked against it:
   // "reachable" means reachable by somebody standing where the kingdom begins.
   const start = findStart(tiles, w, h, cx, cy);
   const reach = walkableFrom(tiles, w, h, start.x, start.y);
-  ensureNearTrees(tiles, w, h, start, reach, S.variant);
+  ensureNearTrees(tiles, w, h, start, reach, S.variant, clear);
 
   return { tiles, w, h, start, arrival: findArrival(tiles, w, h, cx, cy, r, reach) };
 }
@@ -345,15 +410,29 @@ export function campSuitable(tiles: Tile[], w: number, h: number, x: number, y: 
 /**
  * Open ground at the middle of the island, whatever the coast, the rock and the
  * pond noise decided between them. Run after all three so nothing can carve it
- * back out again: the rocky outcrop sits twelve tiles away but can spread nine,
- * and a camp is nine tiles that all have to be grass at once.
+ * back out again: the rocky outcrop sits thirteen tiles away but can spread
+ * nine, and a village is a good many tiles that all have to be buildable at
+ * once.
+ *
+ * The one thing it yields to is water. A lobe of the lake that has reached this
+ * far is a lake, and filling it in would leave a bite out of the shore that no
+ * pass afterwards could explain — whereas a clearing with a corner of lake in it
+ * is a clearing by a lake.
  */
-function ensureClearing(tiles: Tile[], w: number, h: number, cx: number, cy: number): void {
+function ensureClearing(tiles: Tile[], w: number, h: number, c: Clearing): void {
   for (let y = 1; y < h - 1; y++)
     for (let x = 1; x < w - 1; x++) {
-      if (Math.hypot(x - cx, y - cy) >= CLEARING_RADIUS) continue;
+      const ce = clearingEdge(c, x, y);
+      if (ce >= 0) continue;
       const t = tiles[y * w + x];
+      if (t.terrain === 'water' || t.terrain === 'shallow' || t.terrain === 'sand') continue;
       if (t.terrain !== 'grass' && t.terrain !== 'meadow') t.terrain = 'grass';
+      // Whatever the passes above did, the middle is not where a boulder sits or
+      // a tree stands. The rim keeps its trees; that is what the rim is for.
+      if (t.prop === 'boulder' || (t.prop === 'tree' && ce < -CLEARING_EDGE)) {
+        t.prop = null;
+        t.amount = 0;
+      }
     }
 }
 
@@ -424,6 +503,7 @@ function candidateTiles(
   prop: PropId,
   minD: number,
   maxD: number,
+  keep?: (x: number, y: number) => boolean,
 ): { x: number; y: number; d: number }[] {
   const out: { x: number; y: number; d: number }[] = [];
   for (let y = 1; y < h - 1; y++)
@@ -431,6 +511,7 @@ function candidateTiles(
       const t = tiles[y * w + x];
       if (t.prop || t.building) continue;
       if (!nodeGround(prop, t.terrain)) continue;
+      if (keep && !keep(x, y)) continue;
       // Half-open at the top, matching how `countProps` measures the same band.
       // A tile at exactly the radius is placeable but uncountable, so a fill
       // that used it would report success one node short of the guarantee.
@@ -468,6 +549,7 @@ function ensureNearTrees(
   start: { x: number; y: number },
   reach: Uint8Array,
   salt: number,
+  clear: Clearing,
 ): void {
   let count = 0;
   for (let y = 1; y < h - 1; y++)
@@ -477,9 +559,11 @@ function ensureNearTrees(
     }
   if (count >= WANT_NEAR_TREES) return;
 
-  // Nearest first, and never inside the camp's own footprint: a tree the
-  // founding is about to clear away is not a tree they can fell.
-  for (const c of candidateTiles(tiles, w, h, start.x, start.y, 'tree', CAMP_HALF + 1.5, NEAR_TREE_RADIUS)) {
+  // Nearest first, never inside the camp's own footprint — a tree the founding
+  // is about to clear away is not a tree they can fell — and never further into
+  // the clearing than the scatter itself is allowed to plant one.
+  const rim = (x: number, y: number) => clearingEdge(clear, x, y) > -CLEARING_EDGE;
+  for (const c of candidateTiles(tiles, w, h, start.x, start.y, 'tree', CAMP_HALF + 1.5, NEAR_TREE_RADIUS, rim)) {
     if (count >= WANT_NEAR_TREES) break;
     if (reach[c.y * w + c.x] !== 1) continue;
     placeNode(tiles, w, c.x, c.y, 'tree', salt);
@@ -497,12 +581,13 @@ function ensureNodes(
   want: number,
   r: RNG,
   salt: number,
+  clear: Clearing,
 ): void {
   let count = countProps(tiles, w, h, cx, cy, prop, NODE_RADIUS);
   let guard = 0;
   while (count < want && guard++ < 4000) {
     const a = r.range(0, Math.PI * 2);
-    const d = r.range(5, NODE_RADIUS);
+    const d = r.range(CLEARING_RADIUS, NODE_RADIUS);
     const x = Math.round(cx + Math.cos(a) * d);
     const y = Math.round(cy + Math.sin(a) * d);
     if (x < 1 || y < 1 || x >= w - 1 || y >= h - 1) continue;
@@ -513,6 +598,9 @@ function ensureNodes(
     const t = tiles[y * w + x];
     if (t.prop) continue;
     if (!nodeGround(prop, t.terrain)) continue;
+    // The guarantee stops at the clearing. Fifty-five trees are owed to the
+    // kingdom, not to the one part of the island kept open for it to stand on.
+    if (clearingEdge(clear, x, y) < 0) continue;
     placeNode(tiles, w, x, y, prop, salt);
     count++;
   }
@@ -521,7 +609,8 @@ function ensureNodes(
   // The darts ran out of luck — usually a seed with very little of the right
   // ground near the middle. Fill the rest from the outside in, keeping clear of
   // the founding clearing exactly as the random pass does.
-  for (const c of candidateTiles(tiles, w, h, cx, cy, prop, 5, NODE_RADIUS)) {
+  const outside = (x: number, y: number) => clearingEdge(clear, x, y) >= 0;
+  for (const c of candidateTiles(tiles, w, h, cx, cy, prop, CLEARING_RADIUS, NODE_RADIUS, outside)) {
     if (count >= want) break;
     placeNode(tiles, w, c.x, c.y, prop, salt);
     count++;

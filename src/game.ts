@@ -76,7 +76,7 @@ import {
   updateTerrain,
 } from './world/terrain';
 import { toScreenX, toScreenY } from './world/iso';
-import { Camera } from './render/camera';
+import { Camera, ZOOM_HOME, ZOOM_START } from './render/camera';
 import { Renderer, type RenderOptions } from './render/renderer';
 import { BAND_META, MOONSET, SUNSET, bandOf, celestial, clockFor } from './render/sky';
 import { audio } from './audio/audio';
@@ -192,7 +192,7 @@ export class Game {
     this.settings = loadSettings();
 
     this.centerOnHeart();
-    this.camera.zoomIndex = 1;
+    this.camera.zoomIndex = ZOOM_START;
     this.rebuildTileFlags();
     rebuildHabitat(this.state);
     this.attachInput(canvas);
@@ -257,6 +257,10 @@ export class Game {
     // previous kingdom's. The pacing came in with the state and is left alone.
     rebuildHabitat(state);
     this.rebuildTileFlags();
+    // Kingdoms are not all the same size: this one may be an island generated
+    // before the island grew, or the first 44×44 one after a session that
+    // resumed a 40×40 save.
+    this.renderer.setMapSize(state.w, state.h);
     this.renderer.invalidateGround();
     this.centerOnHeart();
     if (state.founding.stage === 'arriving' && state.founderId) {
@@ -506,6 +510,37 @@ export class Game {
   }
 
   private render(realDt: number): void {
+    /*
+     * Overview is the picture with nothing written on it. Not a setting and not
+     * clean view — those are the player asking for less; this is a scale at
+     * which a name tag is a name tag over an island four inches across. The
+     * selection, the tools and the hover all keep their state and come straight
+     * back on the way in, which is what makes it a place to look from rather
+     * than a mode to be in.
+     */
+    if (this.camera.overview) {
+      this.renderer.render(
+        this.state,
+        this.camera,
+        {
+          showBubbles: false,
+          showNames: false,
+          showActivity: false,
+          showMarks: false,
+          showGrid: false,
+          selection: { kind: null, id: 0 },
+          hover: null,
+          hoverPx: null,
+          ghost: null,
+          marker: null,
+          range: null,
+          demolish: false,
+        },
+        realDt,
+      );
+      return;
+    }
+
     const opts: RenderOptions = {
       showBubbles: this.settings.showBubbles,
       showNames: this.settings.showNames && !this.cleanMode,
@@ -712,11 +747,11 @@ export class Game {
       const dx = e.clientX - this.lastPointer.x;
       const dy = e.clientY - this.lastPointer.y;
       const was = this.hover;
-      this.hover = this.tileUnder(e.clientX, e.clientY);
-      this.hoverPx = this.worldUnder(e.clientX, e.clientY);
+      this.setHover(e.clientX, e.clientY);
       // There is no hover on a touchscreen, only a drag that has not finished.
       // A finger passing over the sun would otherwise leave the tip up.
-      this.skyHover = e.pointerType === 'touch' ? null : this.skyUnder(e.clientX, e.clientY);
+      this.skyHover =
+        e.pointerType === 'touch' || this.camera.overview ? null : this.skyUnder(e.clientX, e.clientY);
       // Hovering does not normally concern the interface — the ghost is drawn
       // by the renderer, which reads `hover` every frame anyway. It concerns it
       // for exactly one thing: the placement hint counts the trees under the
@@ -806,7 +841,7 @@ export class Game {
     if (this.pinchDist > 0 && span > 0) {
       const ratio = span / this.pinchDist;
       if (ratio > 1.3 || ratio < 0.77) {
-        this.camera.zoomBy(ratio > 1 ? 1 : -1, this.worldUnder(mid.x, mid.y));
+        this.zoomBy(ratio > 1 ? 1 : -1, this.worldUnder(mid.x, mid.y));
         this.pinchDist = span;
         this.notify();
       }
@@ -840,11 +875,10 @@ export class Game {
       // reports — 120 on a Mac, 53 on some Windows mice. Spinning fast still
       // moves fast, because a fast spin is simply more notches.
       if (e.deltaY !== 0) {
-        this.camera.zoomBy(e.deltaY < 0 ? 1 : -1, anchor);
+        this.zoomBy(e.deltaY < 0 ? 1 : -1, anchor);
         this.notify();
       }
-      this.hover = this.tileUnder(e.clientX, e.clientY);
-      this.hoverPx = this.worldUnder(e.clientX, e.clientY);
+      this.setHover(e.clientX, e.clientY);
       return;
     }
 
@@ -856,11 +890,20 @@ export class Game {
     while (Math.abs(this.zoomAcc) >= step) {
       const dir = this.zoomAcc < 0 ? 1 : -1;
       this.zoomAcc -= this.zoomAcc < 0 ? -step : step;
-      this.camera.zoomBy(dir, anchor);
+      this.zoomBy(dir, anchor);
       this.notify();
     }
-    this.hover = this.tileUnder(e.clientX, e.clientY);
-    this.hoverPx = this.worldUnder(e.clientX, e.clientY);
+    this.setHover(e.clientX, e.clientY);
+  }
+
+  /**
+   * The cursor's tile and its world point — and neither, out in Overview.
+   * Nothing there answers to a cursor, and a hover left standing would be
+   * waiting on the map the moment the view came back down.
+   */
+  private setHover(cssX: number, cssY: number): void {
+    this.hover = this.camera.overview ? null : this.tileUnder(cssX, cssY);
+    this.hoverPx = this.camera.overview ? null : this.worldUnder(cssX, cssY);
   }
 
   /** True when the tile under the cursor changes what the placement hint says. */
@@ -884,11 +927,65 @@ export class Game {
 
   /** Zoom a step from the interface, anchored on the middle of the view. */
   zoomStep(delta: number): void {
-    this.camera.zoomBy(delta);
+    this.zoomBy(delta);
+    this.notify();
+  }
+
+  /**
+   * Every zoom the player asks for comes through here, so that the one step
+   * with a threshold in it is not three separate near-misses in the wheel, the
+   * pinch and the view pad.
+   */
+  private zoomBy(delta: number, anchor?: { x: number; y: number }): void {
+    const was = this.camera.overview;
+    this.camera.zoomBy(delta, anchor);
+    if (this.camera.overview === was) return;
+    if (this.camera.overview) this.enterOverview();
+    else this.notify();
+  }
+
+  /**
+   * Stepping out. The island is framed rather than left wherever the view
+   * happened to be: Overview is a picture of a small kingdom in a large sea,
+   * and a picture of the corner of one is not that.
+   */
+  private enterOverview(): void {
+    const g = this.state;
+    this.camera.stopFollowing();
+    this.syncCursor();
+    this.camera.glideToTile(g.w / 2, g.h / 2);
+    this.hover = null;
+    this.hoverPx = null;
+    this.skyHover = null;
+    this.notify();
+  }
+
+  /**
+   * Back down to the map, looking at a particular tile — the one that was
+   * tapped, normally, since out here the map is the only control there is.
+   * Without one, whatever was in the middle of the view stays there.
+   */
+  exitOverview(x?: number, y?: number): void {
+    if (!this.camera.overview) return;
+    this.camera.zoomIndex = ZOOM_HOME;
+    if (x !== undefined && y !== undefined) this.camera.centerOnTile(x, y);
+    this.syncCursor();
+    audio.tick();
     this.notify();
   }
 
   private handleClick(cssX: number, cssY: number): void {
+    /*
+     * The whole picture is the way out, including the water: aiming at an
+     * island the size of a coin and being told nothing happened is not an
+     * answer. A click past the coast comes down on the nearest tile to it,
+     * which is the coast — where somebody pointing at the sea meant to look.
+     */
+    if (this.camera.overview) {
+      const t = this.nearestTile(cssX, cssY);
+      this.exitOverview(t.x, t.y);
+      return;
+    }
     if (this.tool.kind === 'camp') {
       const t = this.tileUnder(cssX, cssY);
       if (!t) return;
@@ -951,6 +1048,16 @@ export class Game {
     audio.tick();
     this.notify();
     if (hit.kind === 'building') this.onBuildingClicked?.(hit.id);
+  }
+
+  /** The same, but never null: whatever tile the point is on or nearest to. */
+  private nearestTile(cssX: number, cssY: number): { x: number; y: number } {
+    const rect = this.renderer.canvas.getBoundingClientRect();
+    const g = this.renderer.screenToGrid(cssX - rect.left, cssY - rect.top);
+    return {
+      x: clamp(Math.round(g.x), 0, this.state.w - 1),
+      y: clamp(Math.round(g.y), 0, this.state.h - 1),
+    };
   }
 
   private tileUnder(cssX: number, cssY: number): { x: number; y: number } | null {
@@ -1560,7 +1667,10 @@ export class Game {
   }
 
   private syncCursor(): void {
-    this.renderer.canvas.classList.toggle('tool-active', this.tool.kind !== 'none');
+    // A crosshair over an island the size of a coin is the tool claiming to be
+    // armed when nothing out here can be placed. It comes back with the map.
+    const armed = this.tool.kind !== 'none' && !this.camera.overview;
+    this.renderer.canvas.classList.toggle('tool-active', armed);
   }
 
   select(kind: Selection['kind'], id: number): void {

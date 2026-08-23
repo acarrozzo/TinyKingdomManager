@@ -151,6 +151,21 @@ body {
   pointer-events: none;
   transform: translateY(-6px);
 }
+/*
+ * Overview. Everything goes, including the one control clean view keeps: out
+ * here there is nothing to press, and a button floating over an ocean is the
+ * wrong picture entirely. The way back is the island — the whole screen is the
+ * control, so none of it needs to say so.
+ */
+#ui.overview > * {
+  opacity: 0;
+  pointer-events: none;
+  /* Hidden rather than merely transparent, or Tab would walk a keyboard
+     through a dock nobody can see. Held back until the fade has finished, so
+     the interface still leaves rather than blinking out. */
+  visibility: hidden;
+  transition: opacity 0.3s ease, visibility 0s linear 0.3s;
+}
 
 .hide-in-clean {
   transition: opacity 0.35s ease, transform 0.35s ease;

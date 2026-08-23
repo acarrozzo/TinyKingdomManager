@@ -24,7 +24,7 @@
 import type { Building, GameState } from '../types';
 import { BUILDINGS, buildingName } from '../sim/defs';
 import { foundingDone } from '../sim/founding';
-import type { Game } from '../game';
+import type { Game, Selection } from '../game';
 import { audio } from '../audio/audio';
 import {
   deleteSlot,
@@ -97,6 +97,12 @@ export class UI {
 
   private env: UIEnv = { compact: false, short: false, touch: false };
   private modal: ModalKind = null;
+  /**
+   * What was open when the view went out to Overview, waiting to be given back.
+   * Null whenever the map is where the player is, which is also how the two
+   * halves of the swap tell each other apart.
+   */
+  private beforeOverview: { modal: ModalKind; buildOpen: boolean; selection: Selection } | null = null;
   private modalTab = 0;
   /** What is currently mounted in the modal host, so a redraw can update in place. */
   private modalMount = '';
@@ -279,7 +285,8 @@ export class UI {
          * was the one panel that would not.
          */
         case 'escape':
-          if (this.modal) this.setModal(null);
+          if (this.game.camera.overview) this.game.exitOverview();
+          else if (this.modal) this.setModal(null);
           else if (this.game.candidate || this.game.demolishTarget) this.game.clearPending();
           else if (this.game.tool.kind !== 'none') this.game.cancelTool();
           else if (this.buildOpen) this.toggleBuild();
@@ -352,6 +359,11 @@ export class UI {
   /** Cheap values, safe to run every frame. */
   tick(now: number): void {
     const g = this.g;
+    // Every frame, not only on `notify`. The camera is moved by gestures that
+    // report themselves and by screenshot harnesses that do not, and an
+    // interface still standing over an Overview is the more obvious wrong of
+    // the two.
+    this.syncOverview();
     // Until the camp is finished there is no kingdom stock to speak of — the
     // wood is in the founder's arms — so the whole meter goes rather than
     // sitting there reading 0/0 and quietly lying about what "0" means.
@@ -364,7 +376,7 @@ export class UI {
      * the top bar comes up to the edge behind it. The clock in the top bar
      * carries on saying what time it is throughout.
      */
-    const noStrip = this.game.camera.zoomIndex === 0;
+    const noStrip = this.game.camera.zoom <= 1;
     if (this.root.classList.contains('no-daystrip') !== noStrip) {
       this.root.classList.toggle('no-daystrip', noStrip);
       this.measure();
@@ -387,6 +399,7 @@ export class UI {
 
   /** Full rebuild of everything structural. */
   refresh(): void {
+    this.syncOverview();
     this.root.classList.toggle('clean', this.game.cleanMode);
     this.closeWhatIsCovered();
     /*
@@ -405,6 +418,38 @@ export class UI {
     this.refreshPanels();
     this.renderModal();
     this.renderIntro();
+  }
+
+  /**
+   * Overview takes the interface away and gives it back.
+   *
+   * Not by hiding it and hoping: what is open is state, so it is genuinely put
+   * down on the way out and picked up again on the way in. A panel left open
+   * behind an invisible scrim is a keyboard trap in a room nobody can see, and
+   * a kingdom that comes back with everything shut is not the kingdom the
+   * player left.
+   *
+   * The selection travels with the building panel, because closing that panel
+   * is what drops the highlight from the map — restoring the one without the
+   * other would reopen a card about nothing.
+   */
+  private syncOverview(): void {
+    const on = this.game.camera.overview;
+    this.root.classList.toggle('overview', on);
+    const was = this.beforeOverview;
+    if (on === !!was) return;
+    if (on) {
+      this.beforeOverview = { modal: this.modal, buildOpen: this.buildOpen, selection: this.game.selection };
+      if (this.modal) this.setModal(null);
+      this.buildOpen = false;
+    } else if (was) {
+      this.beforeOverview = null;
+      this.buildOpen = was.buildOpen;
+      if (was.modal === 'building' && was.selection.kind === 'building') {
+        this.game.select('building', was.selection.id);
+      }
+      if (was.modal) this.setModal(was.modal);
+    }
   }
 
   private refreshPanels(): void {

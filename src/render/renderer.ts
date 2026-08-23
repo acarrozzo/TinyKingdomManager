@@ -197,8 +197,8 @@ export class Renderer {
   private bctx: CanvasRenderingContext2D;
   private light: HTMLCanvasElement;
   private lctx: CanvasRenderingContext2D;
-  private ground: HTMLCanvasElement;
-  private gctx: CanvasRenderingContext2D;
+  private ground!: HTMLCanvasElement;
+  private gctx!: CanvasRenderingContext2D;
   /**
    * Cast shadows are collected here in solid black and laid over the world in
    * one pass. Drawing each one straight onto the world at its own alpha would
@@ -218,8 +218,8 @@ export class Renderer {
    * have thrown itself away on every frame of a drag or a follow, which is
    * precisely when the machine is busiest.
    */
-  private staticShade: HTMLCanvasElement;
-  private ssctx: CanvasRenderingContext2D;
+  private staticShade!: HTMLCanvasElement;
+  private ssctx!: CanvasRenderingContext2D;
 
   private terrain!: TerrainSheet;
   private props!: PropSheet;
@@ -266,6 +266,18 @@ export class Renderer {
   private time = 0;
   /** 0 in full daylight, 1 at the darkest point of the night. */
   private darkness = 0;
+  /**
+   * What the sky has to be multiplied by to come out the size it always is.
+   *
+   * Everything above the horizon is drawn in buffer pixels, and in Overview a
+   * buffer pixel is half a screen pixel — so left alone, the sun would shrink
+   * along with the island and the one thing Overview is for would be lost. It
+   * is 1 at every ordinary zoom, and the whole sky is scaled rather than the
+   * sun alone: the arc it travels, the depth of the gradient, the haze on the
+   * water and the spread of the stars are one picture, and enlarging a single
+   * part of it would read as a mistake rather than as distance.
+   */
+  private skyK = 1;
 
   constructor(canvas: HTMLCanvasElement, mapW: number, mapH: number) {
     this.canvas = canvas;
@@ -276,14 +288,32 @@ export class Renderer {
     this.lctx = this.light.getContext('2d')!;
     this.shade = mkCanvas(64, 64);
     this.sctx = ctxOf(this.shade);
+    this.setMapSize(mapW, mapH);
+    this.resize();
+  }
+
+  /**
+   * Cuts the map-sized layers to the kingdom in hand.
+   *
+   * Kingdoms are not all one size any more: islands are generated at 44×44 and
+   * the ones made before they grew are 40×40 and still load. Sized once at
+   * construction, a session that resumed an old kingdom and then started a new
+   * one would draw the new island's far corner off the end of a layer built for
+   * the old one — and the two edges that fell off are the two furthest from
+   * where the player is looking, which is a bug that hides.
+   */
+  setMapSize(mapW: number, mapH: number): void {
+    const w = (mapW + mapH) * HALF_W;
+    const h = (mapW + mapH) * HALF_H;
+    if (this.ground && this.ground.width === w && this.ground.height === h) return;
     this.offX = mapH * HALF_W;
     this.offY = HALF_H;
-    this.ground = mkCanvas((mapW + mapH) * HALF_W, (mapW + mapH) * HALF_H);
+    this.ground = mkCanvas(w, h);
     this.gctx = ctxOf(this.ground);
     // Room for the longest shadow a corner tile can throw off the map's edge.
-    this.staticShade = mkCanvas(this.ground.width + SHADE_MARGIN * 2, this.ground.height + SHADE_MARGIN * 2);
+    this.staticShade = mkCanvas(w + SHADE_MARGIN * 2, h + SHADE_MARGIN * 2);
     this.ssctx = ctxOf(this.staticShade);
-    this.resize();
+    this.invalidateGround();
   }
 
   /** Season change or a terrain edit; the ground layer is rebuilt next frame. */
@@ -312,10 +342,30 @@ export class Renderer {
     const dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
     const cssW = this.canvas.clientWidth || window.innerWidth;
     const cssH = this.canvas.clientHeight || window.innerHeight;
-    // Integer scale keeps every art pixel a perfect square on screen.
-    const scale = Math.max(1, Math.round(zoom * dpr));
+    /*
+     * Integer scale keeps every art pixel a perfect square on screen — at every
+     * zoom the game is played at.
+     *
+     * Overview is the exception and is meant to be. Below 1× the buffer comes
+     * out *larger* than the display and the blit is a downsample, which on a
+     * retina screen is exactly 2:1 and costs nothing, and on an ordinary one is
+     * a real resampling of the art. That is the trade Overview makes: it is a
+     * silhouette of an island in an ocean, not somewhere to look at a roof.
+     */
+    let scale = zoom < 1 ? zoom * dpr : Math.max(1, Math.round(zoom * dpr));
     const backingW = Math.round(cssW * dpr);
     const backingH = Math.round(cssH * dpr);
+    /*
+     * A guard rather than a policy. The buffer below 1× is the viewport in art
+     * pixels — two screens wide and two deep, whatever the device ratio — and
+     * on a 4K display running at ratio 1 that is thirty-three million pixels,
+     * three times over for the world, the light and the shadows. Give up a
+     * little of the step rather than most of a gigabyte; on any ordinary
+     * display it never comes near.
+     */
+    const budget = 24e6;
+    const asked = (backingW / scale) * (backingH / scale);
+    if (asked > budget) scale *= Math.sqrt(asked / budget);
     const bufW = Math.ceil(backingW / scale);
     const bufH = Math.ceil(backingH / scale);
 
@@ -340,7 +390,10 @@ export class Renderer {
     this.cssH = cssH;
     this.bufW = bufW;
     this.bufH = bufH;
-    this.display.imageSmoothingEnabled = false;
+    // Only ever true in Overview, where it is a downsample rather than an
+    // enlargement: nearest-neighbour throws away every other row of a wall and
+    // the island crawls with aliasing as it pans.
+    this.display.imageSmoothingEnabled = scale < 1;
   }
 
   /** CSS pixel position → fractional grid coordinates. */
@@ -367,6 +420,10 @@ export class Renderer {
     if (this.groundDirty) this.bakeGround(g);
 
     const b = this.bctx;
+    // Off the scale the buffer actually came out at rather than off the zoom
+    // that was asked for, so a buffer the guard above trimmed still gets a sky
+    // the size of the one it is standing in for.
+    this.skyK = cam.zoom < 1 ? this.dpr / this.scale : 1;
     // How far north the camera may look is a share of the view's own height,
     // and only the renderer knows what that is.
     cam.viewH = this.bufH;
@@ -408,7 +465,7 @@ export class Renderer {
     this.drawWeather(g);
 
     // Blit the world buffer, upscaled with hard pixel edges.
-    this.display.imageSmoothingEnabled = false;
+    this.display.imageSmoothingEnabled = this.scale < 1;
     this.display.setTransform(1, 0, 0, 1, 0, 0);
     this.display.clearRect(0, 0, this.canvas.width, this.canvas.height);
     this.display.drawImage(
@@ -537,11 +594,12 @@ export class Renderer {
      * screen for most of the day on a phone, where the same zoom covers a
      * quarter of the ground.
      */
-    const half = clamp(this.bufW * 0.42, ARC_HALF_MIN, ARC_HALF_MAX);
+    const k = this.skyK;
+    const half = clamp(this.bufW * 0.42, ARC_HALF_MIN * k, ARC_HALF_MAX * k);
     return {
       x: c.az * half - this.viewX,
-      y: hy - c.alt * ARC_RISE,
-      r: c.body === 'sun' ? SUN_R : MOON_R,
+      y: hy - c.alt * ARC_RISE * k,
+      r: (c.body === 'sun' ? SUN_R : MOON_R) * k,
       body: c.body,
       alt: c.alt,
     };
@@ -565,7 +623,7 @@ export class Renderer {
     // Nailed to the horizon rather than to the top of the screen: how much sky
     // is on show depends on where the camera is, but the gradient through it
     // must not stretch and squash as that changes.
-    const grad = b.createLinearGradient(0, hy - SKY_DEPTH, 0, hy);
+    const grad = b.createLinearGradient(0, hy - SKY_DEPTH * this.skyK, 0, hy);
     grad.addColorStop(0, sky.zenith);
     grad.addColorStop(1, sky.horizon);
     b.fillStyle = grad;
@@ -603,8 +661,9 @@ export class Renderer {
      * few rows of sky cost nothing to cover, since the haze is the sky's own
      * horizon colour and laying it over itself changes nothing.
      */
-    const top = hy - 10;
-    const haze = b.createLinearGradient(0, top, 0, top + HAZE);
+    const hazeDepth = HAZE * this.skyK;
+    const top = hy - 10 * this.skyK;
+    const haze = b.createLinearGradient(0, top, 0, top + hazeDepth);
     // Very nearly opaque at the rim, so the first row of sea is the sky's own
     // colour and there is no step to see at all where the two meet.
     for (const [at, a] of [
@@ -617,25 +676,27 @@ export class Renderer {
     ] as const)
       haze.addColorStop(at, `rgba(${r},${gr},${bl},${a})`);
     b.fillStyle = haze;
-    b.fillRect(0, top, this.bufW, Math.min(HAZE, this.bufH - top));
+    b.fillRect(0, top, this.bufW, Math.min(hazeDepth, this.bufH - top));
   }
 
   private drawStars(bottom: number, hy: number, amount: number): void {
     const b = this.bctx;
     // The field is anchored to the world and repeats, so panning slides the
     // stars along with everything else instead of leaving them stuck on glass.
-    const drift = ((this.viewX % STAR_PERIOD) + STAR_PERIOD) % STAR_PERIOD;
+    const k = this.skyK;
+    const period = STAR_PERIOD * k;
+    const drift = ((this.viewX % period) + period) % period;
     for (let i = 0; i < STAR_COUNT; i++) {
-      const y = Math.round(-8 - hash2(i, 7, 812) * 430 - this.viewY);
+      const y = Math.round(-8 * k - hash2(i, 7, 812) * 430 * k - this.viewY);
       if (y < 0 || y >= bottom) continue;
       // Haze eats the ones near the rim, which is what stops the starfield
       // ending in a hard line along the top of the sea.
-      const fade = clamp((hy - y) / 46, 0, 1);
+      const fade = clamp((hy - y) / (46 * k), 0, 1);
       if (fade <= 0.02) continue;
       const twinkle = 0.6 + 0.4 * Math.sin(this.time * 1.4 + i * 2.3);
       b.fillStyle = `rgba(238,243,255,${(0.2 + 0.55 * hash2(i, 11, 813)) * amount * fade * twinkle})`;
-      for (let x = hash2(i, 3, 811) * STAR_PERIOD - drift; x < this.bufW; x += STAR_PERIOD) {
-        if (x >= -1) b.fillRect(Math.round(x), y, 1, 1);
+      for (let x = hash2(i, 3, 811) * period - drift; x < this.bufW; x += period) {
+        if (x >= -1) b.fillRect(Math.round(x), y, Math.ceil(k), Math.ceil(k));
       }
     }
   }
@@ -668,12 +729,12 @@ export class Renderer {
   private drawGlimmer(x: number, hy: number, amount: number): void {
     const b = this.bctx;
     const top = Math.max(0, hy);
-    const run = HAZE * 0.7;
+    const run = HAZE * 0.7 * this.skyK;
     for (let i = 0; i < run; i++) {
       const y = top + i;
       if (y >= this.bufH) break;
       const k = i / run;
-      const w = 2 + k * 46;
+      const w = (2 + k * 46) * this.skyK;
       const wob = Math.sin(this.time * 1.1 + i * 0.9) * (1 + k * 3);
       const shimmer = 0.62 + 0.38 * Math.sin(this.time * 2 + i * 1.7);
       b.fillStyle = `rgba(255,214,150,${0.4 * amount * (1 - k) * shimmer})`;
@@ -1564,12 +1625,12 @@ export class Renderer {
       // sky's colour, and handing it straight back to the ambient tint put the
       // hard line back in a different place.
       const mid = `rgb(${Math.round(tint.r * damp + (255 - tint.r * damp) * 0.5)},${Math.round(tint.g * damp + (255 - tint.g * damp) * 0.5)},${Math.round(tint.b * damp + (255 - tint.b * damp) * 0.5)})`;
-      const fade = l.createLinearGradient(0, bottom - 24, 0, bottom + LIGHT_FADE);
+      const fade = l.createLinearGradient(0, bottom - 24 * this.skyK, 0, bottom + LIGHT_FADE * this.skyK);
       fade.addColorStop(0, '#ffffff');
       fade.addColorStop(0.36, mid);
       fade.addColorStop(1, ambient);
       l.fillStyle = fade;
-      l.fillRect(0, 0, this.bufW, Math.min(this.bufH, bottom + HAZE));
+      l.fillRect(0, 0, this.bufW, Math.min(this.bufH, bottom + HAZE * this.skyK));
     }
 
     const darkness = this.darkness;
@@ -1581,7 +1642,7 @@ export class Renderer {
       // only time the light pass is adding anything at all.
       const body = this.skyBody(g);
       if (body) {
-        const r = body.body === 'sun' ? 46 : 26;
+        const r = (body.body === 'sun' ? 46 : 26) * this.skyK;
         const glow = l.createRadialGradient(body.x, body.y, 0, body.x, body.y, r);
         const c = body.body === 'sun' ? '#ffb867' : '#b9c8ff';
         glow.addColorStop(0, applyAlpha(c, (body.body === 'sun' ? 0.7 : 0.3) * darkness));
@@ -1655,25 +1716,30 @@ export class Renderer {
   private drawWeather(g: GameState): void {
     if (g.weather <= 0.01 || g.weatherKind === 'clear') return;
     const b = this.bctx;
-    const count = Math.round(this.bufW * this.bufH * 0.0009 * g.weather);
+    // Weather is between the player and the world rather than in it, so it is
+    // counted and sized per *screen* pixel. Left in buffer pixels, Overview's
+    // quadrupled buffer turned a shower into a whiteout.
+    const k = this.skyK;
+    const drop = Math.ceil(k);
+    const count = Math.round((this.bufW / k) * (this.bufH / k) * 0.0009 * g.weather);
     if (g.weatherKind === 'rain') {
       b.fillStyle = `rgba(180,205,225,${0.35 * g.weather})`;
       for (let i = 0; i < count; i++) {
         const seedX = hash2(i, 3, 91);
         const seedY = hash2(i, 7, 93);
-        const x = (seedX * this.bufW + this.time * 22 + seedY * 40) % this.bufW;
-        const y = (seedY * this.bufH + this.time * 150) % this.bufH;
-        b.fillRect(Math.round(x), Math.round(y), 1, 4);
+        const x = (seedX * this.bufW + this.time * 22 * k + seedY * 40) % this.bufW;
+        const y = (seedY * this.bufH + this.time * 150 * k) % this.bufH;
+        b.fillRect(Math.round(x), Math.round(y), drop, 4 * drop);
       }
     } else {
       b.fillStyle = `rgba(248,250,255,${0.75 * g.weather})`;
       for (let i = 0; i < count; i++) {
         const seedX = hash2(i, 3, 91);
         const seedY = hash2(i, 7, 93);
-        const drift = Math.sin(this.time * 0.7 + seedX * 9) * 10;
-        const x = (seedX * this.bufW + drift + this.time * 6) % this.bufW;
-        const y = (seedY * this.bufH + this.time * 22) % this.bufH;
-        b.fillRect(Math.round((x + this.bufW) % this.bufW), Math.round(y), 1, 1);
+        const drift = Math.sin(this.time * 0.7 + seedX * 9) * 10 * k;
+        const x = (seedX * this.bufW + drift + this.time * 6 * k) % this.bufW;
+        const y = (seedY * this.bufH + this.time * 22 * k) % this.bufH;
+        b.fillRect(Math.round((x + this.bufW) % this.bufW), Math.round(y), drop, drop);
       }
     }
   }
