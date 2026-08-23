@@ -220,9 +220,10 @@ src/
   ui/
     ui.ts             interface shell and panel state
     context.ts        UI environment and shared helpers
+    icons.ts          the interface's own pixel icon set
     daystrip.ts       time-of-day strip
     hud.ts            resources, clock and storage display
-    nav.ts            desktop and compact navigation
+    nav.ts            the action cluster and the view pad
     goals.ts          objectives and goal views
     build.ts          build list and placement interface
     inspector.ts      villager, animal and tile cards
@@ -686,7 +687,7 @@ Touch uses pointer events:
 - the canvas uses its own touch handling;
 - `setPointerCapture` remains guarded because unsupported captures can throw.
 
-The view pad provides zoom out, zoom in and recenter. It must never be covered by another panel; compact layouts may hide it while a sheet is open.
+The view pad provides zoom in, zoom out and recenter, as a vertical column at the right edge directly above the action cluster — the same geometry on every screen. It must never be covered by another panel; compact layouts may hide it while a sheet is open. It is positioned off the measured `--dock-h`, so it rides up when the dock grows a placement bar.
 
 Disabled zoom controls still need usable explanatory labels, so their tooltips cannot depend on the disabled button receiving pointer events.
 
@@ -739,24 +740,45 @@ On compact screens, the same building content becomes a bottom sheet.
 
 A modal normally closes the build rail because the scrim makes that rail unusable. A desktop building card is the exception because it has no scrim.
 
-Build is the primary action. Other navigation primarily opens views of the kingdom.
+### The action cluster
 
-Everything attached to the bottom edge belongs in the shared `.dock` layout. Position interface elements using measured layout variables rather than hard-coded offsets.
+There is one set of destinations and it is the same on every screen: **Kingdom**, **People**, **Build**, in the bottom-right corner, with Build nearest the corner.
+
+Build is the only verb the game has. It is the largest control on screen, the only filled one, and being filled must go on meaning that — do not fill anything else.
+
+The other two are places to look. Kingdom holds everything that is a matter of record rather than a matter of doing: the journal, the wildlife, what to do next, and the settings, as tabs of one panel. Four buttons for four things opened once an hour is furniture, not navigation.
+
+`KTAB` in `nav.ts` names the tabs, so an entry point that wants a particular one asks for it by name rather than by number. Settings is three sections stacked in one scroll rather than three more tabs; tabs inside tabs is the shape of an interface that has stopped deciding what matters.
+
+Do not add a fourth destination without removing one. If something new belongs to the kingdom's record, it is a tab.
+
+Everything attached to the bottom edge belongs in the shared `.dock` layout. Position interface elements using measured layout variables rather than hard-coded offsets. The tool hint stays centred over the map because it is about the map; the cluster goes to the right-hand end because that is where the hand is.
 
 Resource chips may wrap to their own row on narrow screens. This decision is based on width, not merely compact mode.
 
 ### The resource strip
 
-A chip carries one number: how much of that resource is in storage. No capacity, no ratio, no meter.
+Thirteen resources, four chips. Thirteen numbers are not thirteen questions.
 
-Room is a state rather than an arithmetic problem at this level, so it is shown as two marks:
+`STRIP` in `hud.ts` is the authority for what the strip shows and in what order. Two shapes:
+
+- a **single** is one resource with its own number — wood and stone, because they are what everything costs and they matter from the first minute to the last;
+- a **group** is one question with several resources behind it. Food carries prepared meals; Goods carries the metal chain. The chip’s number answers the question, and the members open on hover or a tap.
+
+A group’s headline counts its `headline` members if it has them and all of them otherwise. Food’s headline is prepared food only: wheat in a barn is not supper, and a chip counting it would say the kingdom was fed when it was not.
+
+A chip carries one number and no capacity, no ratio, no meter. Room is a state rather than an arithmetic problem at this level, so it is shown as two marks:
 
 - nearly full at 90% of capacity, subtle;
 - full, stronger.
 
-They are worth telling apart. One is a nudge with time to act on it; the other means production of that resource has stopped. Folding them together makes every warning read as an emergency.
+They are worth telling apart. One is a nudge with time to act on it; the other means production of that resource has stopped. Folding them together makes every warning read as an emergency. A group wears the worst mark of anything behind it, including resources outside its headline — a full ore compartment means the mine has stopped, whatever the meal count says.
 
-Exact capacity, the per-building breakdown, and the stored/bench/carried/owned split belong in the hover, the stores sheet and the building’s own panel — the places with room to be precise.
+A resource appears once the kingdom can produce it and stays once shown; a group with nothing behind it yet is not drawn at all. Wood and stone are always drawn, because a kingdom with none of either is a kingdom in trouble and hiding the chip would hide the trouble.
+
+Exact capacity, the per-building breakdown, and the stored/bench/carried/owned split belong in the hover, the storage sheet and the building’s own panel — the places with room to be precise. The storage sheet is sectioned by the same groups in the same order, and a chip opens it at its own section.
+
+The strip must fit one row at every width and every point in the game. If a new resource does not fit, it joins a group; it does not get a chip.
 
 ### Live panels
 
@@ -797,7 +819,10 @@ Accessibility behavior lives in `ui/a11y.ts`.
 - Vite serves `index.html` for unknown paths. Do not use a fake same-origin route to seed `localStorage`; the app will boot and may autosave over it.
 - A new game must begin during work hours so the founder performs the opening.
 - `noUnusedLocals` and `noUnusedParameters` are enabled.
-- Emoji are unreliable in headless screenshots. Important controls require text labels.
+- The interface draws its own icons. `ui/icons.ts` bakes every one of them into a stylesheet at boot, and nothing in `src/ui/` should contain an emoji. Art icons keep their own colours and are a `background-image`; glyph icons are a silhouette used as a `mask-image` over `currentColor`, so a button going gold takes its icon with it. Sizes are 12px and 24px and nothing between, or the art resamples.
+- The simulation still writes a small character on journal entries and toasts, and that is its own voice, not the interface's. `iconFor()` recognises the ones it knows and falls back to drawing the character, so a new one added in `sim/` shows something rather than nothing.
+- A native `<option>` is text and cannot hold an icon. Job dropdowns carry names alone.
+- Emoji are unreliable in headless screenshots, which is one of the reasons the icons are drawn rather than borrowed. Important controls still require text labels.
 - Hashing uses `Math.imul`. Plain multiplication can lose the coordinate terms above JavaScript’s safe integer precision.
 - Required world-generation counts need deterministic fallback placement after random scatter.
 - The rules used to count valid generation candidates must match the rules used to place them.

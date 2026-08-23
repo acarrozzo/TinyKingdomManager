@@ -16,8 +16,42 @@
   --good: #93d189;
   --warn: #eaa464;
   --bad: #e08272;
+  /*
+   * Surfaces, as a set rather than one colour used everywhere. A panel floats
+   * over the map, a row inside it sits on the panel, and a control sits on the
+   * row; each one needs to be distinguishable from the thing under it, and the
+   * old single `--panel` meant a select and the sheet behind it were the same
+   * shade with a hairline between them.
+   */
+  --raise: rgba(255, 255, 255, 0.045);
+  --raise-hi: rgba(255, 255, 255, 0.08);
+  --sink: rgba(0, 0, 0, 0.26);
+  /* The line of light along the top edge of anything that floats. It is what
+     stops a dark panel on a dark map from reading as a hole. */
+  --lip: inset 0 1px 0 rgba(255, 236, 200, 0.07);
+
+  /*
+   * The type scale. Five sizes and no others: the interface had drifted to
+   * eleven, most of them a half-pixel apart, which is not a scale — it is a
+   * series of individual decisions nobody can keep in step.
+   */
+  --t-micro: 10.5px;
+  --t-small: 11.5px;
+  --t-body: 12.5px;
+  --t-lead: 14px;
+  --t-title: 17px;
+
+  /* Spacing, on a four-pixel rhythm. */
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 24px;
+
   --radius: 12px;
+  --radius-sm: 8px;
   --shadow: 0 8px 28px rgba(0, 0, 0, 0.42);
+  --shadow-lift: 0 14px 44px rgba(0, 0, 0, 0.5);
   --font: ui-rounded, "Segoe UI", "SF Pro Text", system-ui, -apple-system, sans-serif;
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 
@@ -120,6 +154,99 @@ body {
 
 .hide-in-clean {
   transition: opacity 0.35s ease, transform 0.35s ease;
+}
+
+/* ----------------------------------------------------------------- icons
+   Baked at boot by `ui/icons.ts`, which writes one rule per icon into its own
+   stylesheet. Two families and they behave differently on purpose: art icons
+   are objects and keep their own colours, glyph icons are symbols and take the
+   colour of whatever they sit in, so a button going gold takes its icon with
+   it. Both are drawn on a twelve-pixel grid at 2x, and the sizes below are the
+   only ones allowed — anything between them would resample the art. */
+
+.px {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  flex: none;
+  vertical-align: -1px;
+}
+.px-lg {
+  width: 24px;
+  height: 24px;
+  vertical-align: -6px;
+}
+.px-xl {
+  width: 36px;
+  height: 36px;
+}
+.pxi {
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 100% 100%;
+  image-rendering: pixelated;
+}
+.pxg {
+  background-color: currentColor;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+}
+/* An icon the set has no drawing for yet, shown as whatever character the
+   simulation wrote. Sized down a shade so an emoji does not tower over the
+   drawn ones beside it. */
+.px-fallback {
+  display: inline-block;
+  font-size: 11px;
+  line-height: 12px;
+  opacity: 0.85;
+}
+
+/*
+ * Where the drawn icons sit inside other things. Each of these was already a
+ * line of text with a picture at the front of it; the picture is now a box
+ * rather than a character, so the line has to be told to lay itself out as a
+ * row and leave a gap. Doing it here rather than at every call site keeps the
+ * markup to `${icon(name)}` and nothing else.
+ */
+.build-item .name,
+.build-item .cost .cq,
+.build-item .tally,
+.kv .k,
+.kv .v,
+.pcard .nm,
+.people-row > .link,
+.storerow .amt,
+.res-strip .res,
+.morerow .t,
+.toolbar-hint .mk,
+.entry .ic,
+.btn .px,
+.navbtn .ic {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+/* The buttons that carry a picture and a word need the same, and a button is a
+   flex row already as soon as it holds two things. */
+#ui .btn {
+  gap: 6px;
+}
+.goal .mark .px {
+  width: 9px;
+  height: 9px;
+}
+.entry .ic {
+  justify-content: center;
+}
+/* A recipe reads left to right through its arrow, which is the one glyph in
+   here that is genuinely typographic rather than a picture of something. */
+.recipe .arrow {
+  color: var(--faint);
+  margin: 0 2px;
 }
 
 /* Visible only to a screen reader: labels for controls that show an icon. */
@@ -249,58 +376,58 @@ body {
   min-width: 0;
   display: flex;
 }
-/* The cue that there is more strip than screen. */
-.stripwrap .moreres {
-  display: none;
-}
-.stripwrap.overflowing .moreres {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  position: absolute;
-  right: 0;
-  top: 0;
-  bottom: 0;
-  width: 34px;
-  padding-right: 7px;
-  border-radius: 0 999px 999px 0;
-  background: linear-gradient(90deg, rgba(30, 26, 21, 0), rgba(30, 26, 21, 0.96) 62%);
-  color: var(--accent);
-  font-size: 15px;
-  pointer-events: none;
-}
 
+/*
+ * A chip. Four of them at most, so each one can afford its name at every width
+ * a desktop has — the strip used to drop the names on a phone because thirteen
+ * chips left no room for words, and the words are most of what made a chip
+ * legible.
+ */
 .res {
   position: relative;
   display: flex;
   align-items: center;
+  text-align: left;
   gap: 5px;
-  padding: 2px 5px;
-  margin: -2px 0;
-  border-radius: 7px;
+  padding: 3px 7px;
+  margin: -3px 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: inherit;
+  font-family: inherit;
   font-variant-numeric: tabular-nums;
   font-size: 12.5px;
-  transition: background 0.14s ease, color 0.14s ease;
+  cursor: pointer;
+  transition: background 0.14s ease, border-color 0.14s ease, color 0.14s ease;
 }
 .res:hover {
   background: var(--accent-dim);
+  border-color: rgba(232, 182, 97, 0.24);
   color: #fff3dc;
-}
-.res:hover .icon {
-  filter: saturate(1.1);
-}
-.res .icon {
-  font-size: 13px;
-  line-height: 1;
-  filter: saturate(0.9);
 }
 .res .nm {
   color: var(--dim);
   font-size: 11.5px;
 }
+.res:hover .nm {
+  color: var(--ink);
+}
 .res .val {
-  min-width: 18px;
+  min-width: 16px;
   font-weight: 600;
+}
+/* The mark that a chip has more behind it. It turns to face down on hover, so
+   the chip says which way the detail is about to arrive from. */
+.res .cv {
+  width: 9px;
+  height: 9px;
+  opacity: 0.5;
+  margin-left: -1px;
+  transition: opacity 0.14s ease, transform 0.14s ease;
+}
+.res:hover .cv {
+  opacity: 1;
+  transform: translateY(1px);
 }
 .res.locked {
   display: none;
@@ -365,9 +492,8 @@ body {
   gap: 5px;
   font-variant-numeric: tabular-nums;
 }
-.pop-pill .icon {
-  font-size: 13px;
-  line-height: 1;
+.pop-pill .px {
+  opacity: 0.85;
 }
 .pop-pill .val {
   font-weight: 600;
@@ -411,15 +537,21 @@ body {
   border-radius: 10px;
   background: var(--panel-solid);
   box-shadow: var(--shadow);
-  font-size: 11.5px;
+  font-size: var(--t-small);
   line-height: 1.5;
   color: var(--dim);
   white-space: normal;
+  /* A chip is a <button> now, and a button centres its text — which quietly
+     centred every line of every tooltip hanging off one. */
+  text-align: left;
   pointer-events: none;
 }
 #ui .res:hover .tip,
 #ui .pop-pill:hover .tip {
   display: flex;
+}
+#ui .res.grp .tip {
+  max-width: 320px;
 }
 /* The one tip that is not hung off a control: it belongs to a thing in the
    sky, so it is placed in the page rather than under a parent. */
@@ -455,6 +587,58 @@ body {
 #ui .tip .tip-line b {
   color: var(--ink);
   font-weight: 600;
+}
+#ui .tip .tip-line.warnline {
+  color: var(--warn);
+}
+
+/*
+ * A resource inside a group's hover: name, a bar of how full its compartment
+ * is, and the figure. The bar is the reason the grouping does not lose
+ * anything — four rows of it say in one glance what four separate chips said
+ * across the whole width of the screen, and say the room as well, which the
+ * chips never could.
+ */
+#ui .tip .res-row {
+  align-items: center;
+  gap: 9px;
+  color: var(--dim);
+}
+#ui .tip .res-row .rn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 84px;
+  color: var(--ink);
+}
+#ui .tip .res-row .rb {
+  flex: 1;
+  min-width: 34px;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.09);
+  overflow: hidden;
+}
+#ui .tip .res-row .rb > i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--dim);
+}
+#ui .tip .res-row .rv {
+  min-width: 52px;
+  text-align: right;
+  color: var(--ink);
+  font-weight: 600;
+}
+#ui .tip .res-row.near .rb > i {
+  background: var(--accent);
+}
+#ui .tip .res-row.full .rb > i {
+  background: var(--warn);
+}
+#ui .tip .res-row.full .rv {
+  color: var(--warn);
 }
 .bar {
   width: 62px;
@@ -602,12 +786,19 @@ button {
 
 /* ------------------------------------------------------------- view pad */
 
+/*
+ * Zoom and recentre, as a column directly above the action cluster, on every
+ * screen. It used to be a row in the desktop corner and a column on a phone,
+ * which meant the two layouts disagreed about where looking at the map
+ * happened — and on a desktop it sat exactly where Build now wants to be.
+ */
 .viewpad {
   position: absolute;
   right: calc(10px + var(--safe-r));
-  bottom: calc(12px + var(--safe-b));
+  bottom: calc(14px + var(--dock-h));
   z-index: 20;
   display: flex;
+  flex-direction: column;
   align-items: center;
   gap: 6px;
 }
@@ -682,7 +873,7 @@ button {
   background: var(--panel);
   border: 1px solid var(--edge);
   border-radius: var(--radius);
-  box-shadow: var(--shadow);
+  box-shadow: var(--shadow), var(--lip);
   backdrop-filter: blur(10px);
   overflow: hidden;
 }
@@ -741,10 +932,16 @@ button {
  * through a modal's scrim.
  *
  *   day strip 14 · rails and sheets 15 · objectives 16 · view pad 20 ·
- *   modals 24 · dock 25 · toasts 28 · hover tips 40
+ *   toasts 22 · modals 24 · dock 25 · hover tips 40
  *
- * The dock stays above the modal deliberately: on a phone the bottom navigation
- * is how you get from one sheet to another, so it must not be dimmed by one.
+ * The dock stays above the modal deliberately: the navigation is how you get
+ * from one panel to another, so it must not be dimmed by one.
+ *
+ * Toasts sit below the modal, which is a change: they used to be top of the
+ * ladder and painted straight across an open roster. A toast is the kingdom
+ * mentioning something; a panel is the player having asked about something,
+ * and the mention can wait — they run for seven seconds and the panel does not.
+ *
  * The tips are last because a tooltip nobody can read is not a tooltip.
  */
 #ui .side {
@@ -753,11 +950,11 @@ button {
 #ui .goals {
   z-index: 16;
 }
+#ui .toasts {
+  z-index: 22;
+}
 #ui .modal-host {
   z-index: 24;
-}
-#ui .toasts {
-  z-index: 28;
 }
 
 .side {
@@ -766,7 +963,10 @@ button {
      fixed 62 put the build rail straight through it. */
   top: calc(var(--top-h) + 16px + var(--safe-t));
   bottom: 14px;
-  width: 252px;
+  /* Wider than it was, because each build entry now carries a picture of the
+     building beside its text. At 252 the picture took a fifth of the row and
+     "Woodcutter's Lodge" broke across two lines to pay for it. */
+  width: 316px;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -798,9 +998,9 @@ button {
 }
 .side.right {
   right: calc(10px + var(--safe-r));
-  width: 274px;
-  /* Clears the view controls in the corner below. */
-  bottom: 62px;
+  width: 288px;
+  /* Clears the view controls and the action cluster in the corner below. */
+  bottom: calc(20px + var(--dock-h));
 }
 /*
  * Wider while a building is in it. A roster row is three columns — who they
@@ -841,12 +1041,47 @@ button {
   padding: 2px 5px 6px;
 }
 
-.build-item {
+/*
+ * An entry is a picture and a column of text beside it. The picture is the
+ * building as it will actually stand, which turns a price list back into a
+ * decision about how the place will look.
+ */
+.build-item .bpic {
+  flex: none;
+  width: 58px;
+  height: 46px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  background: var(--sink);
+  border: 1px solid var(--edge);
+  overflow: hidden;
+}
+.build-item .bpic canvas {
   display: block;
+  image-rendering: pixelated;
+}
+.build-item .btext {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+.build-item.locked .bpic canvas {
+  /* Not yet available, and the picture says so before the words do. */
+  opacity: 0.4;
+  filter: grayscale(0.55);
+}
+
+.build-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
   width: 100%;
   text-align: left;
-  padding: 7px 8px;
-  border-radius: 9px;
+  padding: 8px;
+  border-radius: 10px;
   border: 1px solid transparent;
   transition: background 0.13s ease, border-color 0.13s ease;
 }
@@ -863,6 +1098,7 @@ button {
   align-items: baseline;
   justify-content: space-between;
   gap: 8px;
+  margin-bottom: 3px;
 }
 .build-item .name {
   font-weight: 600;
@@ -889,11 +1125,25 @@ button {
   line-height: 1.4;
   margin-top: 3px;
 }
+/*
+ * Two lines that looked identical and mean opposite things. "Not enough in
+ * storage yet" is a thing to do something about; "the kingdom keeps one" is a
+ * rule of the game being explained. Painting both of them in the colour used
+ * for failure made a healthy build list read as a screen full of errors, which
+ * is how a player learns to stop reading it.
+ */
 .build-item .warnline {
   display: block;
-  margin-top: 4px;
-  font-size: 10.5px;
-  color: var(--bad);
+  margin-top: var(--s1);
+  font-size: var(--t-micro);
+  color: var(--warn);
+}
+.build-item .noteline {
+  display: block;
+  margin-top: var(--s1);
+  font-size: var(--t-micro);
+  color: var(--faint);
+  line-height: 1.45;
 }
 /* How many of this kind stand, out of how many the commons currently allows.
    Shown whether or not the kingdom is at the ceiling: knowing there is room for
@@ -949,18 +1199,47 @@ button {
 .insp .title {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   justify-content: space-between;
 }
+/* The person, drawn by the code that draws them on the map. A card about
+   somebody with no picture of them on it was asking the reader to hold a name
+   and a figure in the same head with nothing joining the two. */
+.insp .ipic {
+  flex: none;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  width: 38px;
+  height: 44px;
+  border-radius: var(--radius-sm);
+  background: var(--sink);
+  border: 1px solid var(--edge);
+  overflow: hidden;
+}
+.insp .ipic canvas {
+  display: block;
+  image-rendering: pixelated;
+}
+.insp .itx {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
 .insp .name {
-  font-size: 16px;
+  font-size: var(--t-title);
   font-weight: 700;
   letter-spacing: 0.1px;
 }
 .insp .sub {
-  font-size: 11.5px;
+  font-size: var(--t-small);
   color: var(--dim);
   margin-top: 2px;
+}
+.insp .itx .sub {
+  margin-top: 0;
 }
 .insp .section {
   margin-top: 12px;
@@ -1235,16 +1514,25 @@ button.tag {
  * meant measuring each box and telling the next how far up to sit, and a hint
  * that ran to four lines on a phone was written straight over by it.
  */
+/*
+ * Everything pinned to the bottom edge, in one column: the active-tool bar,
+ * then the actions. Stacking them by hand meant measuring each one and telling
+ * the next how far up to sit, and a hint that ran to four lines on a phone was
+ * written straight over by the thing above it.
+ *
+ * The hint stays centred over the map, because it is about the map. The actions
+ * go to the right-hand end, because that is where the hand is.
+ */
 .dock {
   position: absolute;
-  left: calc(8px + var(--safe-l));
-  right: calc(8px + var(--safe-r));
+  left: calc(10px + var(--safe-l));
+  right: calc(10px + var(--safe-r));
   bottom: 0;
-  padding-bottom: var(--safe-b);
+  padding-bottom: calc(12px + var(--safe-b));
   z-index: 25;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: stretch;
   gap: 8px;
 }
 .tool-hint-host:empty,
@@ -1253,10 +1541,11 @@ button.tag {
 }
 .tool-hint-host {
   max-width: min(560px, 100%);
-  margin-bottom: 14px;
+  margin: 0 auto 12px;
 }
 .nav-host {
-  width: 100%;
+  display: flex;
+  justify-content: flex-end;
 }
 .toolbar-hint {
   display: flex;
@@ -1330,44 +1619,57 @@ button.tag {
   background: var(--edge);
 }
 
-/* The phone's navigation. Five destinations, labelled, thumb-sized. */
-.bottomnav {
+/*
+ * The three destinations, bottom right, the same on every screen.
+ *
+ * Separate buttons rather than one bar: a bar implies a set of equals, and
+ * these are not equals. Build is the only one of the three that changes the
+ * kingdom, so it is wider, taller and the only thing on screen wearing a fill —
+ * which is the whole point of calling something primary. The other two are
+ * places to go and look, and they are shaped like it.
+ */
+.actions {
   display: flex;
-  align-items: stretch;
-  justify-content: space-between;
-  gap: 2px;
-  padding: 4px 4px 5px;
-  background: rgba(24, 20, 16, 0.94);
-  border: 1px solid var(--edge);
-  border-radius: 16px;
-  box-shadow: var(--shadow);
-  backdrop-filter: blur(12px);
+  align-items: flex-end;
+  justify-content: flex-end;
+  gap: 8px;
 }
 .navbtn {
-  flex: 1;
-  min-width: 44px;
-  min-height: 46px;
+  position: relative;
+  min-width: 62px;
+  min-height: 56px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 2px;
-  padding: 4px 2px;
-  border-radius: 12px;
+  gap: 4px;
+  padding: 8px 12px 7px;
+  border-radius: 14px;
   color: var(--dim);
-  border: 1px solid transparent;
+  background: var(--panel);
+  border: 1px solid var(--edge);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(10px);
+  transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease, transform 0.1s ease;
 }
 .navbtn .ic {
-  font-size: 16px;
+  display: flex;
+  align-items: center;
   line-height: 1;
 }
 .navbtn .lb {
-  font-size: 10px;
-  letter-spacing: 0.2px;
+  font-size: 10.5px;
+  letter-spacing: 0.25px;
+  font-weight: 600;
+}
+.navbtn:hover {
+  background: rgba(48, 41, 33, 0.94);
+  border-color: var(--edge-strong);
+  color: var(--ink);
 }
 .navbtn.on {
   background: var(--accent-dim);
-  border-color: rgba(232, 182, 97, 0.42);
+  border-color: rgba(232, 182, 97, 0.5);
   color: var(--accent);
 }
 
@@ -1375,18 +1677,18 @@ button.tag {
    rides the icon rather than the corner of the button: the phone's buttons are
    a column with a label under them, and a corner badge would sit on the word. */
 .navpip {
-  display: inline-block;
-  min-width: 15px;
-  margin-left: 2px;
+  position: absolute;
+  top: 5px;
+  right: 7px;
+  min-width: 16px;
   padding: 0 4px;
   border-radius: 999px;
   background: var(--accent);
   color: #221c14;
   font-size: 10px;
   font-weight: 700;
-  line-height: 15px;
+  line-height: 16px;
   text-align: center;
-  vertical-align: top;
 }
 /* The same fact in the roster: which of these names is the new one. */
 .newtag {
@@ -1403,22 +1705,36 @@ button.tag {
   text-transform: uppercase;
   vertical-align: middle;
 }
-/* Build leads the five. Four of them are places to look at the kingdom and one
-   of them changes it, and a thumb should be able to tell which without reading. */
+/*
+ * Build. Filled, larger, and in the corner — the one control the game is
+ * actually asking you to press, and the only filled thing in the interface, so
+ * that being filled continues to mean something.
+ */
 .navbtn.primary {
-  color: var(--accent);
-  border-color: rgba(232, 182, 97, 0.22);
-  background: rgba(232, 182, 97, 0.06);
+  min-width: 82px;
+  min-height: 66px;
+  color: #2a2116;
+  background: linear-gradient(180deg, #eec070, #d9a34a);
+  border-color: rgba(255, 232, 184, 0.45);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.42), 0 0 0 1px rgba(120, 82, 26, 0.5);
 }
 .navbtn.primary .lb {
-  font-weight: 600;
+  font-size: 11.5px;
+  font-weight: 700;
 }
+.navbtn.primary:hover {
+  color: #2a2116;
+  background: linear-gradient(180deg, #f6cd80, #e2ae56);
+  border-color: rgba(255, 240, 208, 0.6);
+}
+/* Pressed in while the list is up, rather than lit further: it is already the
+   brightest thing here, so the only direction left to say "open" is inward. */
 .navbtn.primary.on {
-  background: rgba(232, 182, 97, 0.28);
-  border-color: rgba(232, 182, 97, 0.6);
+  background: linear-gradient(180deg, #c8943f, #dba94f);
+  box-shadow: inset 0 2px 5px rgba(80, 52, 12, 0.5), 0 0 0 1px rgba(120, 82, 26, 0.5);
 }
 .navbtn:active {
-  background: rgba(255, 255, 255, 0.06);
+  transform: translateY(1px);
 }
 
 /* --------------------------------------------------------------- toasts */
@@ -1430,6 +1746,9 @@ button.tag {
   bottom: calc(16px + var(--dock-h) + var(--goals-h));
   left: 50%;
   transform: translateX(-50%);
+  /* Under a modal rather than over it. A toast is the kingdom mentioning
+     something; a panel is the player asking about something, and the mention
+     can wait. They used to paint straight across an open roster. */
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -1440,14 +1759,23 @@ button.tag {
   background: var(--panel);
   border: 1px solid var(--edge);
   border-radius: 999px;
-  padding: 8px 15px;
-  font-size: 12.5px;
+  padding: 7px 14px;
+  /* Capped rather than left to run: some of these sentences are long, and on a
+     phone an uncapped toast grew to four lines of enormous type across the
+     middle of the kingdom. It is a note, not an announcement. */
+  max-width: min(460px, calc(100vw - 28px));
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--dim);
   box-shadow: var(--shadow);
   backdrop-filter: blur(8px);
   display: flex;
   gap: 8px;
   align-items: center;
   animation: rise 0.35s ease;
+}
+.toast .px {
+  opacity: 0.9;
 }
 .toast.good {
   border-color: rgba(147, 209, 137, 0.4);
@@ -1614,18 +1942,26 @@ button.tag {
 
 .entry {
   display: flex;
+  align-items: baseline;
   gap: 11px;
-  padding: 8px 0;
+  padding: 6px 0;
   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-  font-size: 12.5px;
+  font-size: var(--t-body);
   line-height: 1.5;
 }
+/*
+ * Wide enough for the longest date the game can write, and told not to wrap.
+ * "Year 1, Autumn · Day 18" breaking after the comma turned every other row of
+ * the journal into two, which made a list of small events look like a list of
+ * paragraphs.
+ */
 .entry .when {
-  width: 122px;
+  width: 138px;
   flex-shrink: 0;
   color: var(--faint);
-  font-size: 11px;
-  padding-top: 1px;
+  font-size: var(--t-small);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 .entry .ic {
   width: 18px;
@@ -1669,6 +2005,9 @@ button.tag {
   margin-top: 0;
 }
 .bsec > .bh {
+  display: flex;
+  align-items: center;
+  gap: 7px;
   font-size: 10.5px;
   text-transform: uppercase;
   letter-spacing: 0.7px;
@@ -1841,14 +2180,44 @@ button.tag {
   color: var(--accent);
 }
 
+/*
+ * The roster. It carried four columns of text and nothing to look at, which
+ * made twenty villagers a spreadsheet of names — and the whole point of these
+ * people is that you can tell them apart on the map. The little likeness is
+ * drawn by the code that draws them out there, hat and shirt and all, so the
+ * row and the figure walking about are recognisably the same person.
+ */
 .people-row {
   display: grid;
-  grid-template-columns: 1.5fr 1.2fr 1fr auto;
+  grid-template-columns: 1.6fr 1.2fr 1fr auto;
   gap: 9px;
   align-items: center;
-  padding: 7px 0;
+  padding: 5px 0;
   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-  font-size: 12.5px;
+  font-size: var(--t-body);
+}
+.people-row .who {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  text-align: left;
+}
+.people-row .who .pic {
+  flex: none;
+  image-rendering: pixelated;
+}
+.people-row .who .nm {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.people-row.head > span:first-child {
+  padding-left: 31px;
 }
 .people-row.head {
   color: var(--faint);
@@ -1930,6 +2299,9 @@ button.tag {
   margin-bottom: 3px;
 }
 .storerow .nm {
+  display: flex;
+  align-items: center;
+  gap: 7px;
   font-weight: 600;
   font-size: 12.5px;
 }
@@ -2023,19 +2395,51 @@ button.tag {
   font-size: 16px;
 }
 
+/*
+ * The job dropdowns, which are most of what the roster and a building's panel
+ * are made of. Left as the browser drew them they were the one part of the
+ * interface still wearing the operating system's clothes — a grey system
+ * chrome control sitting in a warm dark panel — so the platform arrow comes
+ * off and the game draws its own, on the same pixel grid as every other icon.
+ *
+ * They stay native `<select>` elements. A hand-rolled listbox would have to
+ * reimplement keyboard handling, typeahead and the phone's own picker sheet,
+ * and would break the rule that these panels must not redraw while a dropdown
+ * is open — which is enforced by asking the document whether a `<select>` has
+ * focus.
+ */
 select {
+  appearance: none;
+  -webkit-appearance: none;
   font-family: inherit;
-  font-size: 12px;
+  font-size: var(--t-body);
   color: var(--ink);
-  background: rgba(0, 0, 0, 0.3);
+  background-color: var(--sink);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' shape-rendering='crispEdges'%3E%3Cg fill='%23bcb09b'%3E%3Crect x='1' y='4' width='10' height='1'/%3E%3Crect x='2' y='5' width='8' height='1'/%3E%3Crect x='3' y='6' width='6' height='1'/%3E%3Crect x='4' y='7' width='4' height='1'/%3E%3Crect x='5' y='8' width='2' height='1'/%3E%3C/g%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  background-size: 12px 12px;
   border: 1px solid var(--edge);
-  border-radius: 7px;
-  padding: 5px 7px;
+  border-radius: var(--radius-sm);
+  padding: 6px 26px 6px 9px;
   outline: none;
   max-width: 100%;
+  cursor: pointer;
+  transition: background-color 0.14s ease, border-color 0.14s ease;
+}
+select:hover {
+  background-color: rgba(0, 0, 0, 0.36);
+  border-color: var(--edge-strong);
 }
 select:focus {
   border-color: rgba(232, 182, 97, 0.5);
+  background-color: rgba(0, 0, 0, 0.4);
+}
+/* The list itself is the platform's, and on a dark page the platform picks
+   white unless it is told the page is dark. */
+select option {
+  background: var(--panel-solid);
+  color: var(--ink);
 }
 
 .slot {
@@ -2205,14 +2609,27 @@ kbd {
 
 @media (max-width: 1080px) {
   .side.left {
-    width: 228px;
+    width: 284px;
   }
   .side.right {
-    width: 244px;
+    width: 262px;
   }
-  /* The strip has to stay one row: wrapping it pushes the clock onto a second
-     line and the side rails down with it. The names come back with the width,
-     and on a touchscreen the strip opens a sheet that says them all anyway. */
+}
+
+/*
+ * Where the chips give up their names.
+ *
+ * The strip has to stay one row: wrapping it pushes the clock onto a second
+ * line and the side rails down with it. It used to give the names up at 1080,
+ * which was right when it carried thirteen chips and is far too early now that
+ * it carries four — a phone held sideways was hiding words across 844 pixels
+ * with room to spare. Four named chips, the people pill and the clock come to
+ * something under 760 together, so that is where the words go and not before.
+ *
+ * By width and not by `.compact`, because this is a fact about how much room
+ * there is rather than about what kind of machine it is.
+ */
+@media (max-width: 780px) {
   .res .nm {
     display: none;
   }
@@ -2257,14 +2674,11 @@ kbd {
   min-width: 0;
 }
 /*
- * Held upright there is not room for the chips and a clock across 390 pixels,
- * so the chips take a line of their own beneath people-and-Vibes and the hour.
- * Sharing the line meant the strip — the only thing in the row that can shrink
- * — was squeezed down to a couple of pixels while the rest ran on underneath.
- * Which gives way is not a thing to leave to whichever numbers happen to be
- * longest today, and it matters more now that every chip carries its capacity
- * as well as its amount. Sideways there is width for all of it, and vertical
- * space is the thing in short supply, so this is by width rather than
+ * Held upright the chips still take a line of their own under people-and-Vibes
+ * and the hour — four of them with numbers is more than 390 pixels has left
+ * over — but it is now one line rather than one line and a hidden scroll with
+ * eight more resources down it. Sideways there is width for all of it, and
+ * vertical space is the thing in short supply, so this is by width rather than
  * by `.compact`.
  */
 @media (max-width: 560px) {
@@ -2272,6 +2686,9 @@ kbd {
     order: 2;
     flex-basis: 100%;
     min-width: 0;
+  }
+  #ui.compact .res-strip {
+    justify-content: space-between;
   }
 }
 #ui.compact .res-strip::-webkit-scrollbar {
@@ -2282,23 +2699,11 @@ kbd {
 }
 #ui.compact .res {
   font-size: 11.5px;
-  gap: 3px;
-  padding: 1px 3px;
+  gap: 4px;
+  padding: 3px 5px;
 }
-#ui.compact .res .icon {
-  font-size: 11.5px;
-}
-#ui.compact .res .nm {
-  display: none;
-}
-/*
- * The chips carry "180/250" now, which is wider than "180" was and the reason
- * the strip scrolls sooner on a phone than it used to. The names are already
- * hidden here; the pair of numbers is what must not be, since on a small screen
- * the strip is the only place the room shows at a glance.
- */
 #ui.compact .res .val {
-  min-width: 30px;
+  min-width: 14px;
 }
 #ui.compact .clock .t {
   font-size: 12.5px;
@@ -2328,21 +2733,18 @@ kbd {
 }
 
 /*
- * Zoom and recentre stack up the right-hand edge, clear of the navigation. On
- * a touchscreen these are the only way to move the map with one hand, so
- * nothing is ever allowed to sit on top of them.
+ * On a touchscreen these are the only way to move the map with one hand, so
+ * nothing is ever allowed to sit on top of them — hence the number above the
+ * dock rather than under it. Where they sit is settled once, for every screen,
+ * up in `.viewpad`.
  */
 #ui.compact .viewpad {
-  flex-direction: column-reverse;
-  right: calc(8px + var(--safe-r));
-  bottom: calc(14px + var(--dock-h));
   gap: 7px;
   z-index: 26;
 }
 #ui.compact .vbtn {
   width: 44px;
   height: 44px;
-  font-size: 18px;
 }
 /* Never over a sheet: the pad is for looking at the map, and a sheet means the
    player is doing something else. It comes back the moment the sheet closes. */
@@ -2370,8 +2772,10 @@ kbd {
 #ui.compact.build-open .side.right {
   display: none;
 }
+/* Tight against the top edge: the header is a label and a way out, and on a
+   phone it was costing a hundred pixels of the sheet it introduces. */
 #ui.compact .panel h3 {
-  padding: 12px 13px 10px;
+  padding: 6px 8px 6px 14px;
   font-size: 12px;
 }
 /* No Esc key on a phone, so every sheet gets a real way out. */
@@ -2382,7 +2786,7 @@ kbd {
   display: inline-flex;
   justify-content: center;
   min-height: 44px;
-  min-width: 60px;
+  min-width: 44px;
 }
 
 #ui.compact .tool-hint-host {
@@ -2417,6 +2821,14 @@ kbd {
   top: calc(var(--top-h) + 54px + var(--safe-t));
   bottom: auto;
   max-width: calc(100vw - 24px);
+}
+/* Tighter still on a phone, and squared off rather than a pill — a pill that
+   has to wrap stops looking like one. */
+#ui.compact .toast {
+  border-radius: 12px;
+  padding: 7px 11px;
+  font-size: var(--t-small);
+  max-width: min(420px, calc(100vw - 28px));
 }
 #ui.compact.has-hint .toasts {
   top: calc(var(--top-h) + 12px + var(--safe-t));
@@ -2489,12 +2901,20 @@ kbd {
 
 /* Phone landscape: 390 tall, and half of that is furniture if it is allowed. */
 #ui.compact.short .navbtn {
-  min-height: 44px;
+  min-height: 46px;
   flex-direction: row;
-  gap: 6px;
+  gap: 7px;
+  padding: 6px 12px;
+}
+#ui.compact.short .navbtn.primary {
+  min-height: 52px;
 }
 #ui.compact.short .navbtn .lb {
   font-size: 11px;
+}
+#ui.compact.short .navpip {
+  position: static;
+  margin-left: -3px;
 }
 #ui.compact.short .side.left,
 #ui.compact.short .side.right {

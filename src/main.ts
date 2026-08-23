@@ -3,8 +3,13 @@
 import './ui/style.css';
 import { Game } from './game';
 import { UI } from './ui/ui';
+import { iconSheet, installIcons } from './ui/icons';
 import { audio } from './audio/audio';
 import { listSlots, loadFromSlot, loadSettings, newSlotId } from './save/save';
+
+// The interface draws its own icons; they have to exist before anything asks
+// for one, and baking them is a few milliseconds once.
+installIcons();
 
 const canvas = document.getElementById('stage') as HTMLCanvasElement;
 const uiRoot = document.getElementById('ui') as HTMLElement;
@@ -39,4 +44,4 @@ document.addEventListener('visibilitychange', () => {
 });
 
 // Handy for poking at a kingdom from the console.
-(window as unknown as { tkm: unknown }).tkm = { game, ui };
+(window as unknown as { tkm: unknown }).tkm = { game, ui, iconSheet };

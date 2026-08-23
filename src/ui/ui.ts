@@ -38,9 +38,10 @@ import {
 import { buildingById, newGame } from '../sim/state';
 import { Focus, keepFocus } from './a11y';
 import { cap, el, esc, setHtml, type UIEnv } from './context';
+import { iconFor } from './icons';
 import { DayStrip } from './daystrip';
 import { Hud, populationBody, storesBody } from './hud';
-import { bottomNavMarkup, moreBody, toolbarMarkup, viewPadMarkup, type ModalKind, type NavState } from './nav';
+import { KINGDOM_TABS, KTAB, actionsMarkup, viewPadMarkup, type ModalKind, type NavState } from './nav';
 import { goalChipMarkup, goalPanelMarkup, goalsBody } from './goals';
 import { buildListMarkup, placementBarMarkup, toolHintMarkup } from './build';
 import { animalCard, inspectorTitle, tileCard, villagerCard } from './inspector';
@@ -72,18 +73,20 @@ function panelHead(parts: PanelParts): string {
   return `${esc(parts.title)}${parts.sub ? `<span class="msub">${parts.sub}</span>` : ''}`;
 }
 
-/** Panels that cover the map and take the keyboard with them while they are up. */
-const TRUE_MODALS: ModalKind[] = [
-  'journal',
-  'wildlife',
-  'people',
-  'settings',
-  'building',
-  'stores',
-  'population',
-  'goals',
-  'more',
+/**
+ * The line under the Kingdom panel's title, per tab. Each one says what the tab
+ * is for rather than repeating its name, which the tab strip below has already
+ * said in bigger type.
+ */
+const KINGDOM_SUBS = [
+  'Everything that has happened here',
+  'What has been seen, and what has not',
+  'What the kingdom is working towards',
+  'Saved kingdoms, viewing and sound',
 ];
+
+/** Panels that cover the map and take the keyboard with them while they are up. */
+const TRUE_MODALS: ModalKind[] = ['people', 'kingdom', 'building', 'stores', 'population'];
 
 export class UI {
   private root: HTMLElement;
@@ -105,10 +108,11 @@ export class UI {
   private lastRender = 0;
   /** The selection the inspector last drew, so a new one can close what covers it. */
   private lastSelection = '';
+  /** Which section of the storage sheet the chip that opened it was about. */
+  private storesAt = '';
 
   // Long-lived hosts.
   private topbar!: HTMLElement;
-  private toolbarHost!: HTMLElement;
   private sideLeft!: HTMLElement;
   private sideRight!: HTMLElement;
   private goalsHost!: HTMLElement;
@@ -135,8 +139,6 @@ export class UI {
     this.topbar = el('div', 'topbar hide-in-clean');
     this.root.appendChild(this.topbar);
     this.hud = new Hud(this.topbar, game);
-    this.toolbarHost = el('div', 'cluster toolbar');
-    (this.topbar.lastElementChild as HTMLElement).appendChild(this.toolbarHost);
 
     this.focus = new Focus(this.root);
     this.buildScaffolding();
@@ -291,7 +293,7 @@ export class UI {
           this.toggleBuild();
           break;
         case 'j':
-          this.setModal(this.modal === 'journal' ? null : 'journal');
+          this.setModal(this.modal === 'kingdom' ? null : 'kingdom', KTAB.journal);
           break;
         case 'p':
           this.setModal(this.modal === 'people' ? null : 'people');
@@ -399,7 +401,6 @@ export class UI {
       this.env.compact && (this.buildOpen || !!this.modal || inspecting),
     );
     this.renderViewPad();
-    this.renderToolbar();
     this.renderDock();
     this.refreshPanels();
     this.renderModal();
@@ -467,11 +468,6 @@ export class UI {
     };
   }
 
-  private renderToolbar(): void {
-    const html = this.env.compact ? '' : toolbarMarkup(this.navState());
-    keepFocus(this.toolbarHost, () => setHtml(this.toolbarHost, html));
-  }
-
   private renderViewPad(): void {
     setHtml(this.viewHost, viewPadMarkup(this.game));
   }
@@ -497,7 +493,10 @@ export class UI {
     setHtml(this.toolHost, bar);
     this.root.classList.toggle('has-hint', !!bar);
 
-    setHtml(this.navHost, this.env.compact ? bottomNavMarkup(this.navState()) : '');
+    // One cluster, both layouts. It is drawn through `keepFocus` because a
+    // player tabbing between Build and People should not be dropped every time
+    // the tool hint above it changes shape.
+    keepFocus(this.navHost, () => setHtml(this.navHost, actionsMarkup(this.navState())));
   }
 
   private renderToasts(): void {
@@ -507,7 +506,7 @@ export class UI {
     this.toastHost.dataset.sig = want;
     this.toastHost.innerHTML = g.toasts
       .map(
-        (t) => `<div class="toast ${t.tone}"><span aria-hidden="true">${t.icon}</span><span>${esc(t.text)}</span></div>`,
+        (t) => `<div class="toast ${t.tone}">${iconFor(t.icon)}<span>${esc(t.text)}</span></div>`,
       )
       .join('');
     // Toasts are confirmations, so they are worth saying out loud once.
@@ -577,6 +576,10 @@ export class UI {
       if (!setHtml(this.sideLeft, html)) return;
       const scroller = this.sideLeft.querySelector('.sheet-body') as HTMLElement | null;
       if (scroller) scroller.scrollTop = keep;
+      // Each entry carries a picture of the building, painted into the canvas
+      // the markup just put there — in the same task, so nothing is ever seen
+      // blank between the row appearing and its roof arriving.
+      paintPortraits(this.game, this.sideLeft);
     });
   }
 
@@ -631,6 +634,9 @@ export class UI {
       if (!setHtml(this.sideRight, next)) return;
       const scroller = this.sideRight.querySelector('.sheet-body') as HTMLElement | null;
       if (scroller) scroller.scrollTop = keep;
+      // A villager's card carries their likeness, painted in the same task the
+      // markup arrives in so it is never seen empty.
+      paintPortraits(this.game, this.sideRight);
     });
   }
 
@@ -782,6 +788,29 @@ export class UI {
     };
   }
 
+  /**
+   * What is behind the Kingdom door, tab by tab.
+   *
+   * Settings is three sections stacked in one scroll rather than three more
+   * tabs. Tabs inside tabs is the shape of an interface that has stopped
+   * deciding what matters, and the three of them together are shorter than the
+   * journal of a kingdom that has been running an hour.
+   */
+  private kingdomBody(): string {
+    switch (Math.min(this.modalTab, KINGDOM_TABS.length - 1)) {
+      case KTAB.wildlife:
+        return wildlifeBody(this.game);
+      case KTAB.goals:
+        return goalsBody(this.game);
+      case KTAB.settings:
+        return `<div class="bsec"><div class="bh">Kingdoms</div>${slotsBody(this.game)}</div>
+          <div class="bsec"><div class="bh">Viewing</div>${viewBody(this.game)}</div>
+          <div class="bsec"><div class="bh">Sound</div>${soundBody(this.game)}</div>`;
+      default:
+        return journalBody(this.game);
+    }
+  }
+
   /** The tab strip a panel wears, whichever host it is mounted in. */
   private tabStrip(tabNames: string[], active: number): string {
     return tabNames
@@ -857,13 +886,11 @@ export class UI {
         ({ title, sub, body, foot, pic, tabNames } = this.buildingParts(b));
         break;
       }
-      case 'journal':
-        title = 'Kingdom Journal';
-        body = journalBody(this.game);
-        break;
-      case 'wildlife':
-        title = 'Wildlife';
-        body = wildlifeBody(this.game);
+      case 'kingdom':
+        title = 'Kingdom';
+        tabNames = KINGDOM_TABS;
+        sub = KINGDOM_SUBS[Math.min(this.modalTab, KINGDOM_TABS.length - 1)];
+        body = this.kingdomBody();
         break;
       case 'people':
         title = 'People';
@@ -876,19 +903,6 @@ export class UI {
       case 'population':
         title = 'People & Vibes';
         body = populationBody(this.game);
-        break;
-      case 'goals':
-        title = 'What to do next';
-        body = goalsBody(this.game);
-        break;
-      case 'more':
-        title = 'More';
-        body = moreBody(this.game, this.env);
-        break;
-      case 'settings':
-        title = 'Kingdoms & Settings';
-        tabNames = ['Kingdoms', 'Viewing', 'Sound'];
-        body = this.modalTab === 0 ? slotsBody(this.game) : this.modalTab === 1 ? viewBody(this.game) : soundBody(this.game);
         break;
       default:
         break;
@@ -917,6 +931,14 @@ export class UI {
         ${foot ? `<div class="foot">${foot}</div>` : ''}
       </div></div>`);
     paintPortraits(this.game, this.modalHost);
+    // Opened from a particular chip: start where that chip was about. Done on
+    // the mount rather than every redraw, or the sheet would drag itself back
+    // up under a reader who had scrolled away from it.
+    if (this.modal === 'stores' && this.storesAt) {
+      const section = this.modalHost.querySelector(`[data-entry="${this.storesAt}"]`);
+      section?.scrollIntoView({ block: 'start' });
+      this.storesAt = '';
+    }
     const panel = this.modalHost.querySelector('.modal') as HTMLElement | null;
     if (panel) this.focus.enter(panel, TRUE_MODALS.includes(this.modal));
   }
@@ -1018,28 +1040,39 @@ export class UI {
       case 'modal-people':
         this.setModal(this.modal === 'people' ? null : 'people');
         break;
-      case 'modal-journal':
-        this.setModal(this.modal === 'journal' ? null : 'journal');
+      /*
+       * Four entry points, one panel. The journal, the wildlife, the objectives
+       * and the settings all live behind the Kingdom button now, so anything
+       * that used to open one of them opens that panel at the right tab — the
+       * goal chip's "all goals", the Vibes tip's advice, the keyboard.
+       */
+      case 'modal-kingdom':
+        this.setModal(this.modal === 'kingdom' ? null : 'kingdom', Number(target.dataset.i ?? KTAB.journal));
         break;
       case 'modal-wildlife':
-        this.setModal(this.modal === 'wildlife' ? null : 'wildlife');
-        break;
-      case 'modal-more':
-        this.setModal(this.modal === 'more' ? null : 'more');
+        this.setModal('kingdom', KTAB.wildlife);
         break;
       case 'modal-goals':
-        this.setModal(this.modal === 'goals' ? null : 'goals');
+        this.setModal('kingdom', KTAB.goals);
         break;
+      /*
+       * The chips open the storage sheet on every screen now, not only where
+       * there is no hover. The hover answers "how much and is it full"; the
+       * sheet answers "where is it, who made it, what is it for", and that is
+       * worth a click on a desktop as much as a tap on a phone.
+       *
+       * Whichever chip was pressed says which section to land on, so opening
+       * Goods does not put the reader at the top of Wood.
+       */
       case 'open-stores':
-        // A control wherever there is no hover to explain the chips — which is
-        // any touchscreen, not only a phone.
-        if (this.env.compact || this.env.touch) this.setModal(this.modal === 'stores' ? null : 'stores');
+        this.storesAt = target.dataset.entry ?? '';
+        this.setModal(this.modal === 'stores' ? null : 'stores');
         break;
       case 'open-population':
-        if (this.env.compact || this.env.touch) this.setModal(this.modal === 'population' ? null : 'population');
+        this.setModal(this.modal === 'population' ? null : 'population');
         break;
       case 'modal-settings':
-        this.setModal(this.modal === 'settings' ? null : 'settings', Number(target.dataset.i ?? 0));
+        this.setModal('kingdom', KTAB.settings);
         break;
       case 'collapse-goalchip':
         this.goalsCollapsed = true;

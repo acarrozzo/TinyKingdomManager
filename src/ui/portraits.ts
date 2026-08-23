@@ -10,7 +10,7 @@
  * same task as the insertion, so nothing is ever painted blank.
  */
 
-import type { Building, Season, Villager } from '../types';
+import type { Building, BuildingId, Season, Villager } from '../types';
 import { BUILDINGS } from '../sim/defs';
 import { drawVillager } from '../render/actors';
 import { drawMillSails, getBuildingSprite } from '../render/sprites';
@@ -78,4 +78,28 @@ export function paintBuilding(canvas: HTMLCanvasElement, b: Building, season: Se
   if (b.def === 'mill' && b.stage === 'done' && sprite.anchor) {
     drawMillSails(ctx, sprite.anchor.x, sprite.anchor.y, 0.6);
   }
+}
+
+/**
+ * A building the kingdom has not built yet, for the build list.
+ *
+ * Drawn from the definition rather than from an instance, because there is no
+ * instance — this is the picture beside a thing you are deciding whether to
+ * put up. It is the real sprite at one canvas pixel per art pixel, cropped to
+ * a fixed box around the bottom of the footprint rather than scaled to fit:
+ * a windmill is four times the width of a bench, and shrinking each one to the
+ * same square would mean resampling pixel art at a different fraction per row
+ * of the list. Cropping keeps every one of them hard-edged and keeps the sizes
+ * honestly different, which is itself worth knowing before you place one.
+ */
+export function paintBuildingDef(canvas: HTMLCanvasElement, def: BuildingId, season: Season, w: number, h: number): void {
+  const d = BUILDINGS[def];
+  const sprite = getBuildingSprite(def, d.w, d.h, 1, season, 1, 'done');
+  const ctx = prepare(canvas, w, h, 1);
+  // Centred across, and sitting on the floor of the box: the roof is the part
+  // that varies in height, and a row of buildings hung from their tops floats.
+  const x = Math.round((w - sprite.canvas.width) / 2);
+  const y = h - sprite.canvas.height;
+  ctx.drawImage(sprite.canvas, x, y);
+  if (def === 'mill' && sprite.anchor) drawMillSails(ctx, x + sprite.anchor.x, y + sprite.anchor.y, 0.6);
 }

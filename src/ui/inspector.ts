@@ -9,6 +9,7 @@
  */
 
 import type { GameState, JobId, Tile, Villager } from '../types';
+import { icon, iconFor } from './icons';
 import {
   BUILDINGS,
   JOB_META,
@@ -64,14 +65,17 @@ export function villagerCard(game: Game): string {
 
   return `<div class="insp">
     <div class="title">
-      <label class="sr-only" for="v-name">Name</label>
-      <input class="namefield" id="v-name" data-act="rename-villager" data-id="${v.id}" value="${esc(v.name)}" maxlength="28">
+      <span class="ipic"><canvas data-pic="villager" data-id="${v.id}" aria-hidden="true"></canvas></span>
+      <span class="itx">
+        <label class="sr-only" for="v-name">Name</label>
+        <input class="namefield" id="v-name" data-act="rename-villager" data-id="${v.id}" value="${esc(v.name)}" maxlength="28">
+        <span class="sub">${esc(activityLabel(v))}${v.id === g.founderId ? ' · <span style="color:var(--accent)">Founder</span>' : ''}</span>
+      </span>
     </div>
-    <div class="sub">${esc(activityLabel(v))}${v.id === g.founderId ? ' · <span style="color:var(--accent)">Founder</span>' : ''}</div>
 
     <div class="section">
       <div class="row" style="gap:5px">
-        <span class="tag accent">${trait.icon} ${trait.name}</span>
+        <span class="tag accent">${iconFor(trait.icon)}${trait.name}</span>
         <span class="tag">Arrived day ${v.arrived}</span>
         ${daysHere > 0 ? `<span class="tag">${daysHere} day${daysHere === 1 ? '' : 's'} here</span>` : ''}
       </div>
@@ -114,7 +118,7 @@ export function villagerCard(game: Game): string {
       }</span></div>
       <div class="kv"><span class="k">Rested</span><span class="v">${Math.round(v.energy * 100)}%</span></div>
       <div class="kv"><span class="k">Appetite</span><span class="v">${v.hunger > 0.7 ? 'Hungry' : v.hunger > 0.4 ? 'Peckish' : 'Fine'}</span></div>
-      ${v.carrying ? `<div class="kv"><span class="k">Carrying</span><span class="v">${RESOURCE_META[v.carrying.res].icon} ${Math.round(v.carrying.qty)}</span></div>` : ''}
+      ${v.carrying ? `<div class="kv"><span class="k">Carrying</span><span class="v">${icon(v.carrying.res)}${Math.round(v.carrying.qty)}</span></div>` : ''}
     </div>
 
     ${history ? `<div class="section"><div class="h">History</div>${history}</div>` : ''}
@@ -123,7 +127,7 @@ export function villagerCard(game: Game): string {
       <button class="btn small ${following ? 'on' : ''}" data-act="${following ? 'unfollow' : 'follow-villager'}" data-id="${v.id}"
         aria-pressed="${following}">${following ? '⦿ Following' : '⦿ Follow'}</button>
       <button class="btn small ${v.favorite ? 'on' : ''}" data-act="fav-villager" data-id="${v.id}"
-        aria-pressed="${v.favorite}">${v.favorite ? '★ Favourite' : '☆ Favourite'}</button>
+        aria-pressed="${v.favorite}">${icon(v.favorite ? 'star' : 'starOff')}Favourite</button>
       <button class="btn small" data-act="goto" data-x="${Math.round(v.x)}" data-y="${Math.round(v.y)}">Centre</button>
     </div>
   </div>`;
@@ -133,7 +137,7 @@ export function jobOptionsFor(game: Game, v: Villager): string {
   const g = game.state;
   // The other rows read "trade — where"; a General Worker's where is nowhere in
   // particular, and saying so is shorter than the select is wide.
-  let out = `<option value="0" ${v.workplace === 0 ? 'selected' : ''}>${JOB_META.general.icon} ${JOB_META.general.name} — no post</option>`;
+  let out = `<option value="0" ${v.workplace === 0 ? 'selected' : ''}>${JOB_META.general.name} — no post</option>`;
   for (const b of g.buildings) {
     if (b.stage !== 'done') continue;
     const def = BUILDINGS[b.def];
@@ -143,7 +147,7 @@ export function jobOptionsFor(game: Game, v: Villager): string {
     const mine = v.workplace === b.id;
     if (!mine && taken >= slots) continue;
     const meta = JOB_META[def.job];
-    out += `<option value="${b.id}" ${mine ? 'selected' : ''}>${meta.icon} ${meta.name} — ${esc(def.name)} (${taken}/${slots})</option>`;
+    out += `<option value="${b.id}" ${mine ? 'selected' : ''}>${meta.name} — ${esc(def.name)} (${taken}/${slots})</option>`;
   }
   return out;
 }
@@ -180,7 +184,7 @@ export function animalCard(game: Game): string {
       <button class="btn small ${following ? 'on' : ''}" data-act="${following ? 'unfollow' : 'follow-animal'}" data-id="${a.id}"
         aria-pressed="${following}">${following ? '⦿ Following' : '⦿ Follow'}</button>
       <button class="btn small ${a.favorite ? 'on' : ''}" data-act="fav-animal" data-id="${a.id}"
-        aria-pressed="${a.favorite}">${a.favorite ? '★ Favourite' : '☆ Favourite'}</button>
+        aria-pressed="${a.favorite}">${icon(a.favorite ? 'star' : 'starOff')}Favourite</button>
     </div>
   </div>`;
 }
@@ -210,7 +214,7 @@ export function tileCard(game: Game): string {
       // it, so saying "stone left" would promise a delivery that never comes.
       rows.push(
         `<div class="kv"><span class="k">${RESOURCE_META[yields].name} ${prop.worked ? 'left' : 'in it'}</span>
-          <span class="v">${RESOURCE_META[yields].icon} ${Math.floor(tile.amount)}</span></div>`,
+          <span class="v">${icon(yields)}${Math.floor(tile.amount)}</span></div>`,
       );
     }
     if (tile.regrow > 0) {

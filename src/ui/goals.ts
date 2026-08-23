@@ -8,7 +8,7 @@
  * — one line on a phone until you ask for the rest.
  */
 
-import { RESOURCE_META } from '../sim/defs';
+import { icon } from './icons';
 import { carriedByFounder } from '../sim/goals';
 import { foundingDone } from '../sim/founding';
 import { fmtDuration } from '../core/util';
@@ -21,7 +21,7 @@ export function goalPanelMarkup(game: Game): string {
   const pending = g.goals.filter((x) => !x.done);
 
   if (pending.length === 0) {
-    return `<div class="panel"><div class="goal done"><span class="mark" aria-hidden="true">✓</span>
+    return `<div class="panel"><div class="goal done"><span class="mark">${icon('check')}</span>
       <span><span class="t">Everything on the list is done</span>
       <span class="d">The kingdom is yours to keep tending.</span></span></div>
       <div class="goal-more"><span>${g.villagers.length} villagers · ${fmtDuration(g.played)} played</span>
@@ -54,13 +54,13 @@ export function goalChipMarkup(game: Game, collapsed: boolean): string {
   const next = g.goals.find((x) => !x.done);
   if (collapsed) {
     return `<button class="goalchip mini" data-act="expand-goalchip" aria-label="Show what to do next">
-      <span aria-hidden="true">✦</span></button>`;
+      ${icon('vibes')}</button>`;
   }
   const title = next ? next.title : 'Everything on the list is done';
   // During founding the founder's arms are the whole treasury, and how much is
   // in them is the only progress there is to show.
   const carried = foundingDone(g) ? 0 : carriedByFounder(g);
-  const aside = carried > 0 ? `${RESOURCE_META.wood.icon} ${carried}` : '';
+  const aside = carried > 0 ? `${icon('wood')}${carried}` : '';
 
   return `<div class="goalchip">
       <button class="gc-main" data-act="modal-goals" aria-label="What to do next: ${esc(title)}">
@@ -81,7 +81,7 @@ export function goalsBody(game: Game): string {
   const rest = pending.slice(1);
 
   const line = (title: string, desc: string, state: 'now' | 'next' | 'done') =>
-    `<div class="goal ${state}"><span class="mark" aria-hidden="true">${state === 'done' ? '✓' : ''}</span>
+    `<div class="goal ${state}"><span class="mark">${state === 'done' ? icon('check') : ''}</span>
       <span><span class="t">${esc(title)}</span>${desc ? `<span class="d">${esc(desc)}</span>` : ''}</span></div>`;
 
   return `${
@@ -111,7 +111,7 @@ function footLine(game: Game): string {
     const carried = carriedByFounder(g);
     // The founder's arms are the treasury until the camp is built, so the one
     // number worth showing during founding is what is in them.
-    return carried > 0 ? `Carrying ${RESOURCE_META.wood.icon} ${carried} wood` : 'Nothing gathered yet';
+    return carried > 0 ? `Carrying ${carried} wood` : 'Nothing gathered yet';
   }
   const done = g.goals.filter((x) => x.done).length;
   return `${done} of ${g.goals.length} done · ${g.villagers.length} villager${g.villagers.length === 1 ? '' : 's'} · ${fmtDuration(g.played)} played`;

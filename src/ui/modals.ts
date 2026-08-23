@@ -12,7 +12,8 @@
  * existing nodes rather than replacing the panel.
  */
 
-import type { Building, Recipe, ResourceId, SpeciesId, Villager } from '../types';
+import type { Building, BuildingId, Recipe, ResourceId, SpeciesId, Villager } from '../types';
+import { icon, iconFor } from './icons';
 import {
   BUILDINGS,
   JOB_META,
@@ -44,7 +45,7 @@ import { FPS_CHOICES, listSlots } from '../save/save';
 import { relocateCostLine } from './build';
 import { activityLabel, cap, esc, type UIEnv } from './context';
 import { jobOptionsFor } from './inspector';
-import { paintBuilding, paintVillager } from './portraits';
+import { paintBuilding, paintBuildingDef, paintVillager } from './portraits';
 
 // ---------------------------------------------------------------------------
 // A building
@@ -128,7 +129,7 @@ function rosterRow(v: Villager, what: string, note: string, control: string): st
   return `<div class="brow">
     <button class="who" data-act="select-villager" data-id="${v.id}">
       <canvas class="pic" data-pic="villager" data-id="${v.id}" aria-hidden="true"></canvas>
-      <span class="nm">${v.favorite ? '★ ' : ''}${esc(v.name)}</span>
+      <span class="nm">${v.favorite ? icon('star') : ''}${esc(v.name)}</span>
     </button>
     <span class="what">${esc(what)}${note ? ` <span class="muted">· ${esc(note)}</span>` : ''}</span>
     <span class="ctl">${control}</span>
@@ -144,12 +145,21 @@ export function paintPortraits(game: Game, host: HTMLElement): void {
   const g = game.state;
   for (const node of host.querySelectorAll('canvas[data-pic]')) {
     const canvas = node as HTMLCanvasElement;
-    const id = Number(canvas.dataset.id);
-    if (canvas.dataset.pic === 'villager') {
-      const v = villagerById(g, id);
+    const kind = canvas.dataset.pic;
+    if (kind === 'villager') {
+      const v = villagerById(g, Number(canvas.dataset.id));
       if (v) paintVillager(canvas, v);
+    } else if (kind === 'def') {
+      // A building nobody has built yet, in the build list.
+      paintBuildingDef(
+        canvas,
+        canvas.dataset.def as BuildingId,
+        g.season,
+        Number(canvas.dataset.w),
+        Number(canvas.dataset.h),
+      );
     } else {
-      const b = buildingById(g, id);
+      const b = buildingById(g, Number(canvas.dataset.id));
       if (b) paintBuilding(canvas, b, g.season);
     }
   }
@@ -265,7 +275,7 @@ function workerOptions(game: Game, b: Building): string {
     const where = post
       ? `${JOB_META[v.job].name.toLowerCase()} at the ${BUILDINGS[post.def].name.toLowerCase()}`
       : 'general worker, unattached';
-    const warn = rank === 'Expert' || rank === 'Master' ? ` ⚠ ${rank}` : '';
+    const warn = rank === 'Expert' || rank === 'Master' ? ` — ${rank}` : '';
     out += `<option value="${v.id}">${esc(v.name)} — ${esc(where)}${warn}</option>`;
   }
   return out;
@@ -324,16 +334,16 @@ function focusPicker(b: Building, heading: string, note: string): string {
 /** One recipe as a row of tags: everything in, everything out, and how long. */
 function recipeRow(r: Recipe, active: boolean): string {
   const ins = (Object.keys(r.inputs) as ResourceId[])
-    .map((res) => `<span class="tag">${RESOURCE_META[res].icon} ${r.inputs[res]} ${esc(RESOURCE_META[res].name)}</span>`)
+    .map((res) => `<span class="tag">${icon(res)}${r.inputs[res]} ${esc(RESOURCE_META[res].name)}</span>`)
     .join('<span class="muted" aria-hidden="true">+</span>');
   const outs = (Object.keys(r.outputs) as ResourceId[])
     .map(
       (res) =>
-        `<span class="tag accent">${RESOURCE_META[res].icon} ${r.outputs[res]} ${esc(RESOURCE_META[res].name)}</span>`,
+        `<span class="tag accent">${icon(res)}${r.outputs[res]} ${esc(RESOURCE_META[res].name)}</span>`,
     )
     .join('');
   return `<div class="row tiny" style="gap:6px;margin-bottom:6px;opacity:${r.locked ? 0.45 : active ? 1 : 0.7}">
-    ${ins}<span class="muted" aria-hidden="true">→</span>${outs}
+    ${ins}<span class="arrow" aria-hidden="true">→</span>${outs}
     <span class="muted">${r.locked ? 'nobody here has seen any' : `${Math.round(r.seconds)}s`}</span></div>`;
 }
 
@@ -363,7 +373,7 @@ function storageSection(game: Game, b: Building): string {
   const benchCap = inputCapOf(b.def, b.level);
   const row = (res: ResourceId, qty: number, cap: number, gain: number | null) => {
     const full = cap > 0 && qty >= cap;
-    return `<div class="kv"><span class="k">${RESOURCE_META[res].icon} ${esc(RESOURCE_META[res].name)}</span>
+    return `<div class="kv"><span class="k">${icon(res)}${esc(RESOURCE_META[res].name)}</span>
       <span class="v" style="color:${full ? 'var(--warn)' : 'inherit'}">${Math.floor(qty)} / ${cap}${
         gain ? `<span class="muted tiny"> · +${gain} if improved</span>` : ''
       }</span></div>`;
@@ -405,7 +415,7 @@ function storageSection(game: Game, b: Building): string {
         ? `<div class="tiny muted" style="margin:10px 0 5px">Closed, and being carried out</div>
            ${leaving
              .map(
-               (res) => `<div class="kv"><span class="k">${RESOURCE_META[res].icon} ${esc(RESOURCE_META[res].name)}</span>
+               (res) => `<div class="kv"><span class="k">${icon(res)}${esc(RESOURCE_META[res].name)}</span>
                  <span class="v">${Math.floor(b.store[res] ?? 0)}</span></div>`,
              )
              .join('')}
@@ -453,7 +463,7 @@ function buildingWork(game: Game, b: Building): string {
 
     out += `<div class="bsec"><div class="bh">Makes</div>
       ${recipes.map((r) => recipeRow(r, r === current)).join('')}
-      <div class="need" style="margin-top:4px"><span aria-hidden="true">🔨</span>
+      <div class="need" style="margin-top:4px">${icon('build')}
         <span class="track"><i style="width:${Math.round(Math.min(1, b.progress) * 100)}%;background:var(--good)"></i></span>
         <span class="num">${Math.round(Math.min(1, b.progress) * 100)}%</span></div>
       <div style="margin-top:8px">${wantRows}</div>
@@ -512,7 +522,7 @@ function buildingWork(game: Game, b: Building): string {
     const horizon = !reachable && b.level < def.maxLevel;
     out += `<div class="bsec"><div class="bh">Getting out</div>
       <div class="row tiny" style="gap:6px;margin-bottom:8px">${gets
-        .map((res) => `<span class="tag accent">${RESOURCE_META[res].icon} ${esc(RESOURCE_META[res].name)}</span>`)
+        .map((res) => `<span class="tag accent">${icon(res)}${esc(RESOURCE_META[res].name)}</span>`)
         .join('')}</div>
       <div class="kv"><span class="k">Rock within ${reach} tiles</span><span class="v">${rock}</span></div>
       <div class="kv"><span class="k">Which makes the work</span><span class="v">${pace}% of full pace</span></div>
@@ -577,7 +587,7 @@ function siteBody(game: Game, b: Building): string {
   const rows = needs
     .map((n) => {
       const pct = n.need > 0 ? Math.min(100, (n.have / n.need) * 100) : 100;
-      return `<div class="need"><span aria-hidden="true">${RESOURCE_META[n.res].icon}</span>
+      return `<div class="need">${icon(n.res)}
         <span class="track"><i style="width:${pct}%"></i></span>
         <span class="num">${Math.floor(n.have)}/${n.need} ${esc(RESOURCE_META[n.res].name.toLowerCase())}</span></div>`;
     })
@@ -600,7 +610,7 @@ function siteBody(game: Game, b: Building): string {
         : ''
     }
     <div class="needs">${rows}
-      <div class="need"><span aria-hidden="true">🔨</span><span class="track"><i style="width:${labourPct}%;background:var(--good)"></i></span>
+      <div class="need">${icon('build')}<span class="track"><i style="width:${labourPct}%;background:var(--good)"></i></span>
       <span class="num">${Math.round(labourPct)}% built</span></div></div>
     <div class="tiny muted" style="margin-top:9px;line-height:1.55">${
       crew.length > 0
@@ -715,7 +725,7 @@ function improveSection(game: Game, b: Building): string {
     .map(({ res, qty }) => {
       const have = Math.floor(totalOf(g, res) - (reserved[res] ?? 0));
       const met = have >= qty;
-      return `<div class="kv"><span class="k">${met ? '✓' : '○'} ${RESOURCE_META[res].icon} ${esc(
+      return `<div class="kv"><span class="k">${icon(met ? 'check' : 'starOff')}${icon(res)}${esc(
         RESOURCE_META[res].name,
       )}</span>
         <span class="v" style="color:${met ? 'var(--good)' : 'var(--faint)'}">${Math.max(0, have)} of ${qty}</span></div>`;
@@ -726,7 +736,7 @@ function improveSection(game: Game, b: Building): string {
     .upgradeRequirements(b)
     .map(
       (r) =>
-        `<div class="kv"><span class="k">${r.met ? '✓' : '○'} ${esc(r.label)}</span>
+        `<div class="kv"><span class="k">${icon(r.met ? 'check' : 'starOff')}${esc(r.label)}</span>
           <span class="v" style="color:${r.met ? 'var(--good)' : 'var(--faint)'}">${r.met ? 'done' : 'not yet'}</span></div>`,
     )
     .join('');
@@ -852,7 +862,7 @@ export function buildingFoot(game: Game, b: Building): string {
   const cost = upgradeable
     ? game
         .upgradeCost(b)
-        .map((c) => `${RESOURCE_META[c.res].icon}${c.qty}`)
+        .map((c) => `${icon(c.res)}${c.qty}`)
         .join(' ')
     : '';
   // A greyed-out button with no reason on it is the one thing here people would
@@ -872,14 +882,14 @@ export function buildingFoot(game: Game, b: Building): string {
     upgradeable
       ? `<button class="btn small ${canUp ? 'primary' : ''}" data-act="upgrade" data-id="${b.id}" ${canUp ? '' : 'disabled'}
           title="${esc(`Improve this building${why}`)}"
-          aria-label="${esc(`Improve this building${why}`)}">⬆️ Improve ${cost}</button>`
+          aria-label="${esc(`Improve this building${why}`)}">${icon('up')}Improve ${cost}</button>`
       : ''
   }
     ${
       movable
         ? `<button class="btn small" data-act="relocate" data-id="${b.id}"
             title="${esc(`Move it somewhere else — costs ${plainRelocateCost(b)}, and it keeps working until the new one is ready`)}"
-            aria-label="${esc(`Move this ${def.name.toLowerCase()} somewhere else`)}">🧭 Move ${relocateCostLine(b.def)}</button>`
+            aria-label="${esc(`Move this ${def.name.toLowerCase()} somewhere else`)}">${icon('compass')}Move ${relocateCostLine(b.def)}</button>`
         : ''
     }
     <button class="btn small" data-act="goto" data-x="${b.x}" data-y="${b.y}">Show me</button>
@@ -904,7 +914,7 @@ export function journalBody(game: Game): string {
     .reverse()
     .map(
       (e) => `<div class="entry"><span class="when">Year ${e.year}, ${cap(e.season)} · Day ${e.day}</span>
-        <span class="ic" aria-hidden="true">${e.icon}</span><span>${esc(e.text)}</span></div>`,
+        <span class="ic">${iconFor(e.icon)}</span><span>${esc(e.text)}</span></div>`,
     )
     .join('');
 }
@@ -977,7 +987,7 @@ export function peopleBody(game: Game, env: UIEnv): string {
         return `<div class="pcard">
           <button class="who" data-act="select-villager" data-id="${v.id}">
             <canvas class="pic" data-pic="villager" data-id="${v.id}" aria-hidden="true"></canvas>
-            <span class="tx"><span class="nm">${v.favorite ? '★ ' : ''}${esc(v.name)}${v.id === g.founderId ? ' <span class="muted tiny">founder</span>' : ''}${isNew(v)}</span>
+            <span class="tx"><span class="nm">${v.favorite ? icon('star') : ''}${esc(v.name)}${v.id === g.founderId ? ' <span class="muted tiny">founder</span>' : ''}${isNew(v)}</span>
               <span class="ac">${esc(activityLabel(v))}${b ? ` · <span style="color:${RANK_COLOR[b.rank]}">${b.rank} ${esc(b.job)}</span>` : ''}</span></span>
             <span class="go" aria-hidden="true">›</span>
           </button>
@@ -996,7 +1006,10 @@ export function peopleBody(game: Game, env: UIEnv): string {
     .map((v) => {
       const b = best(v);
       return `<div class="people-row">
-        <button class="link plain" data-act="select-villager" data-id="${v.id}">${v.favorite ? '★ ' : ''}${esc(v.name)}${v.id === g.founderId ? ' <span class="muted tiny">founder</span>' : ''}${isNew(v)}</button>
+        <button class="link plain who" data-act="select-villager" data-id="${v.id}">
+          <canvas class="pic" data-pic="villager" data-id="${v.id}" aria-hidden="true"></canvas>
+          <span class="nm">${v.favorite ? icon('star') : ''}${esc(v.name)}${v.id === g.founderId ? ' <span class="muted tiny">founder</span>' : ''}${isNew(v)}</span>
+        </button>
         <select data-act="assign" data-id="${v.id}" aria-label="Job for ${esc(v.name)}">${jobOptionsFor(game, v)}</select>
         <span class="tiny" style="color:${b ? RANK_COLOR[b.rank] : 'var(--faint)'}">${b ? `${b.rank} ${esc(b.job)}` : '—'}</span>
         <button class="btn small" data-act="follow-villager" data-id="${v.id}">Watch</button>
@@ -1005,7 +1018,7 @@ export function peopleBody(game: Game, env: UIEnv): string {
     .join('');
 
   return `${summary()}
-    <div class="people-row head"><span>Name</span><span>Job</span><span>Best trade</span><span></span></div>
+    <div class="people-row head"><span>Who</span><span>Job</span><span>Best trade</span><span></span></div>
     ${rows}
     <div class="hint">Experience is earned by doing a job, and it is kept for good. Moving a master farmer to the mill does not erase what they learned in the field.</div>`;
 }
@@ -1028,7 +1041,7 @@ export function slotsBody(game: Game): string {
 
   return `${list || '<div class="muted tiny">No saved kingdoms yet.</div>'}
     <div class="row" style="margin-top:14px">
-      <button class="btn small primary" data-act="new-kingdom">✦ Start a new kingdom</button>
+      <button class="btn small primary" data-act="new-kingdom">${icon('vibes')}Start a new kingdom</button>
       <button class="btn small" data-act="save-now">Save now</button>
       <span class="spacer"></span>
       <button class="btn small" data-act="export">Export file</button>
@@ -1041,7 +1054,7 @@ export function slotsBody(game: Game): string {
 function speedControl(game: Game): string {
   const g = game.state;
   const opts: { label: string; speed: number; tip: string }[] = [
-    { label: '❚❚', speed: 0, tip: 'Pause (space)' },
+    { label: icon('pause'), speed: 0, tip: 'Pause (space)' },
     { label: '1×', speed: 1, tip: 'Normal speed (1)' },
     { label: '2×', speed: 2, tip: 'Double speed (2)' },
     { label: '4×', speed: 4, tip: 'Four times speed (3)' },
@@ -1088,7 +1101,11 @@ export function viewBody(game: Game): string {
     <label class="check" style="margin-bottom:11px"><input type="checkbox" data-act="set-names" ${s.showNames ? 'checked' : ''}> Show names over favourites</label>
     <label class="check" style="margin-bottom:11px"><input type="checkbox" data-act="set-activity" ${s.showActivity ? 'checked' : ''}> Show what everyone is doing</label>
     <div class="hint">Drawing the island is nearly all of the work this game asks of a computer, so a lower setting is much kinder to a laptop — and it changes nothing about the kingdom, which goes on at the same rate either way. Whatever you pick, the map stays at full speed while you are dragging it or placing something.</div>
-    <div class="hint">Clean viewing mode (<kbd>H</kbd>) hides the whole interface and leaves the kingdom running on its own. Double-click anyone to follow them about.</div>`;
+    <div class="row" style="margin-top:14px">
+      <button class="btn small" data-act="clean-on">${icon('eye')}Clean view</button>
+      <span class="tiny muted">Hides the whole interface and leaves the kingdom running on its own. <kbd>H</kbd> brings it back.</span>
+    </div>
+    <div class="hint">Double-click anyone to follow them about.</div>`;
 }
 
 export function soundBody(game: Game): string {

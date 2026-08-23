@@ -99,17 +99,22 @@ into an undifferentiated orange field.
 **Everything is inspectable.** Click a person, an animal, a building — or bare
 ground, which tells you what the terrain is, what is standing on it, how much is
 left in it, and what you have seen living on ground like that. A small badge
-over each villager's head says what they are doing at that moment. The top bar
-carries one number per resource — how much is in storage — with a quiet mark
-when a compartment is nearly full and a louder one when it is. Hovering a
-resource opens the detail: which buildings are holding it and how much room each
-has left, how much is stored against how much is on workshop benches or in
-somebody's arms, and where the resource comes from and what it is for.
+over each villager's head says what they are doing at that moment.
+
+The top bar carries four chips, not thirteen. Wood and stone keep their own
+numbers, because they are what everything costs. Food carries one figure — meals
+ready to eat — and Goods carries what the mine and forge have between them; both
+open, on hover or a tap, into the resources behind them with a bar apiece for
+how full each compartment is. A quiet mark says a compartment is nearly full and
+a louder one says it is. Opening a chip takes you to the same thing at length:
+which buildings are holding it and how much room each has left, how much is
+stored against how much is on workshop benches or in somebody's arms, and where
+the resource comes from and what it is for.
 
 **Clean viewing mode** (`H`). Hides the entire interface except a small time and
 season chip. This is the point of the whole thing.
 
-**Drawing** (Settings → Viewing). How often the island is repainted — Smooth,
+**Drawing** (Kingdom → Settings). How often the island is repainted — Smooth,
 Easy or Gentle. Drawing is nearly the whole cost of running this, so the lower
 settings are markedly kinder to a laptop left open all day; the kingdom itself
 runs at the same rate whichever you pick, and the map returns to full speed
@@ -117,7 +122,9 @@ while you are dragging it or placing something.
 
 **Journal and goals.** The kingdom keeps a dated written record of its own
 history. Thirteen onboarding goals and milestones gradually unlock the build
-menu rather than presenting it all on day one.
+menu rather than presenting it all on day one. Both live under **Kingdom**,
+along with the wildlife you have seen and the settings — three buttons in the
+bottom-right corner and nothing else to learn, whatever you are playing on.
 
 **Saving.** Named save slots in `localStorage`, autosaving every 30 seconds and
 on close, plus JSON export/import for backups.
@@ -144,13 +151,14 @@ unlocks, per-building job slots, the goal list — are all in place.
 | Click | Select a villager, animal, building or tile |
 | Double-click | Follow someone with the camera |
 | **Build** | Pick a building, then click where it goes; removing is at the foot of the same panel |
+| Bottom right | Kingdom · People · **Build** — the same three on a desktop and a phone |
 | `B` | Build menu |
-| `P` / `J` | People · Journal |
+| `P` / `J` | People · the kingdom's journal |
 | `H` | Clean viewing mode |
 | `Space` | Pause |
-| `1` `2` `3` | 1× · 2× · 4× (also in Settings → Viewing) |
+| `1` `2` `3` | 1× · 2× · 4× (also under Kingdom → Settings) |
 | `Esc` | Cancel the current tool, or close a panel |
-| Bottom-right pad | Zoom out, zoom in, recentre — the whole of the controls on a touchscreen |
+| Right-edge pad | Zoom in, zoom out, recentre — the whole of the controls on a touchscreen |
 | Right-click | Cancel the current tool |
 
 ---
@@ -163,7 +171,10 @@ production bundle is about 49 kB gzipped.
 **All art is generated in code.** There are no image files. Terrain, trees,
 buildings, crops and props are drawn pixel by pixel into offscreen canvases at
 load, from a season-aware palette; villagers and animals are drawn per frame
-because they are tiny and every one of them has their own colouring. This is
+because they are tiny and every one of them has their own colouring. The
+interface is drawn the same way — every icon in it is a twelve-by-twelve grid
+baked at boot, so a button can tint its own icon and nothing is left to whatever
+emoji the operating system happens to have. This is
 what lets a season change recolour the entire world for free, and it means the
 whole game is a single self-contained bundle.
 
@@ -197,7 +208,7 @@ src/
   render/           palette, procedural sprites, actors, camera, renderer
   audio/            WebAudio synthesis
   save/             slots, serialisation, export/import
-  ui/               DOM interface and styles
+  ui/               DOM interface, its own pixel icon set, and styles
   game.ts           clock, input, and everything the player can do
 ```
 

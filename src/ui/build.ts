@@ -16,13 +16,14 @@ import { buildingById } from '../sim/state';
 import { buildingName } from '../sim/defs';
 import type { Game } from '../game';
 import { esc, type UIEnv } from './context';
+import { icon, iconFor } from './icons';
 
-/** "🪵 20 wood · 🪨 10 stone", or a dash for the free ones. */
+/** "20 wood · 10 stone", each with its own picture, or a dash for the free ones. */
 export function costLine(def: BuildingId): string {
   const entries = Object.entries(BUILDINGS[def].cost);
   if (entries.length === 0) return '—';
   return entries
-    .map(([res, qty]) => `<span class="cq">${RESOURCE_META[res].icon} ${qty} ${esc(RESOURCE_META[res].name.toLowerCase())}</span>`)
+    .map(([res, qty]) => `<span class="cq">${icon(res)}${qty} ${esc(RESOURCE_META[res].name.toLowerCase())}</span>`)
     .join('<span class="cdot"> · </span>');
 }
 
@@ -35,6 +36,13 @@ function unlockedBy(g: GameState, key: string | undefined): string | null {
   }
   return null;
 }
+
+/**
+ * How big the picture beside each entry is, in art pixels. Wide enough for a
+ * lodge to be recognisable and short enough that the list stays a list.
+ */
+const THUMB_W = 58;
+const THUMB_H = 46;
 
 export function buildListMarkup(game: Game, env: UIEnv): string {
   const g = game.state;
@@ -60,25 +68,34 @@ export function buildListMarkup(game: Game, env: UIEnv): string {
       : '';
     // What a comfort is worth. The economy is shown plainly, and Vibes are part
     // of it: a bench that quietly did something would be the wrong game.
-    const vibes = def.vibes ? `<span class="tally vibe">✦ ${def.vibes} Vibes</span>` : '';
+    const vibes = def.vibes ? `<span class="tally vibe">${icon('vibes')}${def.vibes} Vibes</span>` : '';
+    /*
+     * The building itself, drawn by the same code that draws it on the map.
+     * A list of names and prices is a shop; this is a game about how a place
+     * comes to look, and the roof is a bigger part of choosing a cabin than the
+     * twenty wood is.
+     */
+    const pic = `<span class="bpic"><canvas data-pic="def" data-def="${id}" data-w="${THUMB_W}" data-h="${THUMB_H}" aria-hidden="true"></canvas></span>`;
     const html = full
       ? `<div class="build-item locked" aria-disabled="true">
+          ${pic}<span class="btext">
           <span class="row1"><span class="name">${esc(def.name)}</span>${tally}${vibes}</span>
           <span class="desc">${esc(def.desc)}</span>
-          <span class="warnline">${esc(
+          <span class="noteline">${esc(
             def.unique
               ? 'The kingdom keeps one. Open it on the map to move it somewhere better.'
               : def.maxTotal !== undefined
                 ? 'That is as many as the kingdom keeps. Remove one to put it elsewhere.'
                 : 'Improving the commons allows another.',
-          )}</span></div>`
+          )}</span></span></div>`
       : `<button class="build-item ${on ? 'on' : ''} ${affordable ? '' : 'short'}"
           data-act="build" data-def="${id}" aria-pressed="${on}">
+          ${pic}<span class="btext">
           <span class="row1"><span class="name">${esc(def.name)}</span>
           <span class="cost">${costLine(id)}</span></span>
           <span class="desc">${esc(def.desc)}</span>
           ${tally}${vibes}
-          ${affordable ? '' : `<span class="warnline">Not enough in storage yet</span>`}</button>`;
+          ${affordable ? '' : `<span class="warnline">Not enough in storage yet</span>`}</span></button>`;
     const list = groups.get(def.category) ?? [];
     list.push(html);
     groups.set(def.category, list);
@@ -87,7 +104,7 @@ export function buildListMarkup(game: Game, env: UIEnv): string {
   let body = '';
   for (const [cat, items] of groups) {
     const meta = CATEGORY_META[cat];
-    body += `<div class="build-group"><div class="label">${meta.icon} ${esc(meta.name)}</div>${items.join('')}</div>`;
+    body += `<div class="build-group"><div class="label">${iconFor(meta.icon)}${esc(meta.name)}</div>${items.join('')}</div>`;
   }
 
   if (!foundingDone(g)) {
@@ -109,7 +126,7 @@ export function buildListMarkup(game: Game, env: UIEnv): string {
       const def = BUILDINGS[id];
       const how = unlockedBy(g, def.unlock);
       return `<div class="build-item locked" aria-disabled="true">
-        <span class="row1"><span class="name">🔒 ${esc(def.name)}</span>
+        <span class="row1"><span class="name">${icon('lock')}${esc(def.name)}</span>
         <span class="cost">${costLine(id)}</span></span>
         <span class="desc">${how ? `Unlocks when you ${lowerFirst(how)}.` : 'Unlocks as the kingdom grows.'}</span>
       </div>`;
@@ -127,7 +144,7 @@ export function buildListMarkup(game: Game, env: UIEnv): string {
   const removing = tool.kind === 'demolish';
   body += `<div class="build-group build-remove">
     <button class="btn small ${removing ? 'on danger' : ''}" data-act="tool-demolish" aria-pressed="${removing}">
-      ⛏ ${removing ? `Removing — ${env.touch ? 'tap' : 'click'} a building` : 'Remove a building'}</button>
+      ${icon('miner')}${removing ? `Removing — ${env.touch ? 'tap' : 'click'} a building` : 'Remove a building'}</button>
     <div class="tiny muted" style="margin-top:7px;line-height:1.5">Half the materials come back, and you are asked to confirm first. You can also remove one from its own panel.</div>
   </div>`;
   return body;
@@ -148,7 +165,7 @@ export function placementBarMarkup(game: Game, env: UIEnv): string {
     if (b) {
       const def = BUILDINGS[b.def];
       return bar({
-        icon: '⛏',
+        icon: 'miner',
         title: `Remove the ${def.name.toLowerCase()}?`,
         state: 'warn',
         body: 'Half of what it cost comes back to wherever that material is kept. Anyone working or sleeping there will find somewhere else.',
@@ -163,7 +180,7 @@ export function placementBarMarkup(game: Game, env: UIEnv): string {
     const problem = spot ? game.campProblem(spot.x, spot.y) : null;
     const chosen = !!spot && !problem;
     return bar({
-      icon: '📍',
+      icon: 'pin',
       title: 'Choose where the kingdom begins',
       state: spot ? (problem ? 'bad' : 'good') : 'plain',
       body: spot
@@ -184,7 +201,7 @@ export function placementBarMarkup(game: Game, env: UIEnv): string {
       const ready = !!spot && !problem;
       const name = buildingName(b.def, b.level);
       return bar({
-        icon: '🧭',
+        icon: 'compass',
         title: `Move the ${name.toLowerCase()} · ${plainCost(b.def)}`,
         state: spot ? (problem ? 'bad' : 'good') : 'plain',
         body: spot
@@ -202,7 +219,7 @@ export function placementBarMarkup(game: Game, env: UIEnv): string {
     const problem = spot ? game.placeProblem(tool.def, spot.x, spot.y) : null;
     const ready = !!spot && !problem;
     return bar({
-      icon: '🔨',
+      icon: 'build',
       title: `${def.name} · ${costLine(tool.def)}`,
       state: spot ? (problem ? 'bad' : 'good') : 'plain',
       body: spot
@@ -273,7 +290,7 @@ export function toolHintMarkup(game: Game, env: UIEnv): string {
 
   if (t.kind === 'demolish') {
     return bar({
-      icon: '⛏',
+      icon: 'miner',
       title: 'Removing',
       state: game.blockReason ? 'bad' : 'plain',
       body: game.blockReason ?? 'Click a building to take it down. You will be asked to confirm.',
@@ -285,7 +302,7 @@ export function toolHintMarkup(game: Game, env: UIEnv): string {
     // No Done button: there is nothing else to be doing yet, so offering to put
     // the marker away would only be a way of getting stuck.
     return bar({
-      icon: '📍',
+      icon: 'pin',
       title: 'Choose where the kingdom begins',
       state: game.blockReason ? 'bad' : 'plain',
       body:
@@ -300,7 +317,7 @@ export function toolHintMarkup(game: Game, env: UIEnv): string {
     if (!b) return '';
     const name = buildingName(b.def, b.level);
     return bar({
-      icon: '🧭',
+      icon: 'compass',
       title: `Moving the ${name.toLowerCase()}`,
       state: game.blockReason ? 'bad' : 'plain',
       body:
@@ -313,7 +330,7 @@ export function toolHintMarkup(game: Game, env: UIEnv): string {
   const def = BUILDINGS[t.def];
   const short = !game.canAffordNew(t.def);
   return bar({
-    icon: '🔨',
+    icon: 'build',
     title: `Placing a ${def.name}`,
     state: game.blockReason || short ? 'bad' : 'plain',
     body:
@@ -351,16 +368,17 @@ function plainCost(def: BuildingId): string {
   return entries.map(([res, qty]) => `${qty} ${RESOURCE_META[res].name.toLowerCase()}`).join(' and ');
 }
 
-/** "🪵 30 wood", for the footer button and the move bar. Moving costs a full set. */
+/** "30 wood and 20 stone", for the footer button and the move bar. Moving costs a full set. */
 export function relocateCostLine(def: BuildingId): string {
   const entries = Object.entries(relocateCost(def));
   if (entries.length === 0) return '—';
   return entries
-    .map(([res, qty]) => `${RESOURCE_META[res].icon} ${qty} ${esc(RESOURCE_META[res].name.toLowerCase())}`)
+    .map(([res, qty]) => `${qty} ${esc(RESOURCE_META[res].name.toLowerCase())}`)
     .join(' · ');
 }
 
 interface BarParts {
+  /** An icon name from `ui/icons`, not a character. */
   icon: string;
   title: string;
   title2?: string;
@@ -375,12 +393,12 @@ interface BarParts {
  * a red border is not a reason.
  */
 function bar(p: BarParts): string {
-  const mark = p.state === 'good' ? '✓' : p.state === 'bad' ? '✕' : p.state === 'warn' ? '!' : '';
+  const mark = p.state === 'good' ? 'check' : p.state === 'bad' ? 'close' : p.state === 'warn' ? 'warn' : '';
   return `<div class="toolbar-hint ${p.state}" role="group" aria-label="${esc(p.title)}">
-    <span class="ic" aria-hidden="true">${p.icon}</span>
+    <span class="ic">${icon(p.icon, '', 'lg')}</span>
     <span class="txt">
       <b>${p.title}${p.title2 ? ` <span class="muted">${p.title2}</span>` : ''}</b>
-      <span class="say">${mark ? `<span class="mk" aria-hidden="true">${mark}</span>` : ''}${esc(p.body)}</span>
+      <span class="say">${mark ? `<span class="mk">${icon(mark)}</span>` : ''}${esc(p.body)}</span>
     </span>
     ${p.actions ? `<span class="acts">${p.actions}</span>` : ''}
   </div>`;
