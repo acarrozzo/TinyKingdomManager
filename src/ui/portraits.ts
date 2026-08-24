@@ -59,8 +59,22 @@ export function paintVillager(canvas: HTMLCanvasElement, v: Villager): void {
   drawVillager(ctx, still, FACE_W / 2, FACE_FEET, false, false);
 }
 
-/** The building itself, at one canvas pixel per art pixel. */
-export function paintBuilding(canvas: HTMLCanvasElement, b: Building, season: Season): void {
+/**
+ * The building itself, at one canvas pixel per art pixel.
+ *
+ * Given a `box` it is cropped into one of that size instead of drawn at its
+ * own — the same treatment the build list gives a building it does not have
+ * yet, and for the same reason. A windmill is several times the height of a
+ * bench, and a list that scaled each one into a matching square would resample
+ * pixel art by a different fraction per row. Cropping keeps every one of them
+ * hard-edged, and keeps a lodge honestly bigger than a hut.
+ */
+export function paintBuilding(
+  canvas: HTMLCanvasElement,
+  b: Building,
+  season: Season,
+  box?: { w: number; h: number },
+): void {
   const def = BUILDINGS[b.def];
   const sprite = getBuildingSprite(
     b.def,
@@ -71,13 +85,19 @@ export function paintBuilding(canvas: HTMLCanvasElement, b: Building, season: Se
     b.seed,
     b.stage === 'done' ? 'done' : 'site',
   );
-  const ctx = prepare(canvas, sprite.canvas.width, sprite.canvas.height, 1);
-  ctx.drawImage(sprite.canvas, 0, 0);
+  const w = box?.w ?? sprite.canvas.width;
+  const h = box?.h ?? sprite.canvas.height;
+  const ctx = prepare(canvas, w, h, 1);
+  // Centred across and sitting on the floor of the box: the roof is the part
+  // that varies in height, and a row of buildings hung from their tops floats.
+  const x = box ? Math.round((w - sprite.canvas.width) / 2) : 0;
+  const y = box ? h - sprite.canvas.height : 0;
+  ctx.drawImage(sprite.canvas, x, y);
   // Sails are not baked into the sprite because they turn. Held at a fixed
   // angle here: this panel redraws a few times a second, and a windmill
   // stepping round at that rate looks broken rather than alive.
   if (b.def === 'mill' && b.stage === 'done' && sprite.anchor) {
-    drawMillSails(ctx, sprite.anchor.x, sprite.anchor.y, 0.6);
+    drawMillSails(ctx, x + sprite.anchor.x, y + sprite.anchor.y, 0.6);
   }
 }
 

@@ -25,7 +25,9 @@ import {
   TRAIT_IDS,
   buildingName,
   inputCapOf,
+  skillMul,
   storesOf,
+  traitJobMul,
 } from './defs';
 import { generateMap, tileAt } from '../world/terrain';
 import { makeName } from './names';
@@ -833,6 +835,18 @@ export function isNight(dayT: number): boolean {
 
 export function xpOf(v: Villager, job: JobId): number {
   return v.xp[job] ?? 0;
+}
+
+/**
+ * How fast somebody works a trade, practice and nature together.
+ *
+ * Both halves are `defs`' own tuning, and this is the product the simulation
+ * multiplies a stint of work by. The interface prints it beside a rank, which
+ * is the whole reason it lives here rather than in a panel: a figure the player
+ * is shown and a figure the kingdom uses must be the same figure.
+ */
+export function paceOf(v: Villager, job: JobId): number {
+  return skillMul(xpOf(v, job)) * traitJobMul(v.trait, job);
 }
 
 export function addXp(v: Villager, job: JobId, amount: number): void {

@@ -35,7 +35,7 @@ import {
   newSlotId,
   renameSlot,
 } from '../save/save';
-import { buildingById, newGame } from '../sim/state';
+import { buildingById, newGame, villagerById } from '../sim/state';
 import { Focus, keepFocus } from './a11y';
 import { cap, el, esc, setHtml, type UIEnv } from './context';
 import { iconFor } from './icons';
@@ -51,12 +51,20 @@ import {
   buildingTabs,
   journalBody,
   paintPortraits,
-  peopleBody,
   slotsBody,
   soundBody,
   viewBody,
   wildlifeBody,
 } from './modals';
+import {
+  PEOPLE_TABS,
+  natureTip,
+  peopleBody,
+  peopleSub,
+  type PeopleFilter,
+  type PeopleSort,
+  type PeopleView,
+} from './people';
 
 /** The pieces a panel is assembled from, wherever it is about to be drawn. */
 interface PanelParts {
@@ -116,6 +124,18 @@ export class UI {
   private lastSelection = '';
   /** Which section of the storage sheet the chip that opened it was about. */
   private storesAt = '';
+  /**
+   * What the roster is showing. Kept here rather than read back off the chips,
+   * because the panel is a live view and rebuilds its own markup several times
+   * a second — a filter that lived in the DOM would be forgotten every redraw.
+   */
+  private people: PeopleView = { filter: 'all', sort: 'arrived' };
+  /**
+   * Whose name is being changed in the roster, if anybody's. One at a time:
+   * the row swaps its link for a field, and the live redraw already stands
+   * down while a field in the panel has focus, so nothing is yanked mid-word.
+   */
+  private renamingId = 0;
 
   // Long-lived hosts.
   private topbar!: HTMLElement;
@@ -130,6 +150,9 @@ export class UI {
   private modalHost!: HTMLElement;
   private introHost!: HTMLElement;
   private skyTip!: HTMLElement;
+  private hoverTip!: HTMLElement;
+  /** What the floating tip is currently about, so hovering along a row is free. */
+  private tipKey = '';
   private cleanT!: HTMLElement;
 
   constructor(root: HTMLElement, game: Game) {
@@ -204,6 +227,11 @@ export class UI {
     // other tip in here it is positioned rather than hung off a `:hover`.
     this.skyTip = el('div', 'tip skytip hide-in-clean');
     this.root.appendChild(this.skyTip);
+    // The same bubble the resource chips wear, but placed rather than hung: a
+    // roster row lives inside a scrolling panel, and a tip parented to one
+    // would be cut off by the panel's own edge the moment you neared it.
+    this.hoverTip = el('div', 'tip hovertip hide-in-clean');
+    this.root.appendChild(this.hoverTip);
 
     this.modalHost = el('div', 'modal-host');
     this.root.appendChild(this.modalHost);
@@ -219,6 +247,103 @@ export class UI {
     this.root.addEventListener('click', (e) => this.onClick(e));
     this.root.addEventListener('change', (e) => this.onChangeEvent(e));
     this.root.addEventListener('keydown', (e) => this.onRootKey(e));
+    /*
+     * The floating tip. Delegated rather than bound per row, because the panel
+     * it appears over rewrites its own markup a few times a second and any
+     * listener attached to a row would be thrown away with it.
+     *
+     * The `scroll` listener captures, because a tip placed against the viewport
+     * does not follow the list it came from — and the roster is a list you
+     * scroll with the cursor still resting on a row.
+     */
+    this.root.addEventListener('pointerover', (e) => this.onHover(e));
+    this.root.addEventListener('pointerout', (e) => this.onHover(e));
+    this.root.addEventListener('focusout', (e) => this.onBlur(e));
+    this.root.addEventListener('scroll', () => this.hideTip(), true);
+  }
+
+  // -------------------------------------------------------------------------
+  // The floating tip
+  // -------------------------------------------------------------------------
+
+  /**
+   * Shows whatever the pointer has landed on, if it has asked for a tip.
+   *
+   * Keyed on what it is about rather than on the node, so moving across a chip
+   * — over its icon, its label and the chip itself — does not rebuild and
+   * re-place the same bubble three times.
+   */
+  private onHover(e: Event): void {
+    // Touch has no hover, and the stylesheet hides every `.tip` on a compact
+    // screen anyway; placing one there would only be arithmetic nobody sees.
+    if (this.env.touch || this.env.compact) return;
+    const host = (e.target as HTMLElement | null)?.closest?.('[data-tip]') as HTMLElement | null;
+    if (!host || e.type === 'pointerout') {
+      this.hideTip();
+      return;
+    }
+    const kind = host.dataset.tip!;
+    const id = Number(host.dataset.id ?? 0);
+    const key = `${kind}:${id}`;
+    if (key === this.tipKey) return;
+
+    let html = '';
+    if (kind === 'nature') {
+      const v = villagerById(this.game.state, id);
+      if (v) html = natureTip(v);
+    }
+    if (!html) {
+      this.hideTip();
+      return;
+    }
+    this.tipKey = key;
+    setHtml(this.hoverTip, html);
+    this.hoverTip.classList.add('on');
+    this.placeTip(host.getBoundingClientRect());
+  }
+
+  /**
+   * Under the thing it describes, or above it when there is no room below.
+   *
+   * Clamped to the window on both axes: the roster reaches the bottom of a tall
+   * panel, and a bubble that hung off the screen there would be describing the
+   * one row nobody could read.
+   */
+  private placeTip(at: DOMRect): void {
+    const w = this.hoverTip.offsetWidth;
+    const h = this.hoverTip.offsetHeight;
+    const below = at.bottom + 8;
+    const top = below + h > window.innerHeight - 8 ? Math.max(8, at.top - h - 8) : below;
+    const x = Math.max(8, Math.min(window.innerWidth - w - 8, at.left - 8));
+    this.hoverTip.style.left = `${Math.round(x)}px`;
+    this.hoverTip.style.top = `${Math.round(top)}px`;
+  }
+
+  private hideTip(): void {
+    if (!this.tipKey) return;
+    this.tipKey = '';
+    this.hoverTip.classList.remove('on');
+  }
+
+  /**
+   * Leaving a name field puts the row back to a name.
+   *
+   * Every way out of a rename arrives here — return, clicking away, or the
+   * panel redrawing the field out from under the cursor — so this is the single
+   * place the edit ends. The `change` event beside it only commits the name.
+   *
+   * The redraw is deferred a task because of that last case: replacing the
+   * panel's markup is what blurred the field, and rendering again from inside
+   * that assignment writes markup the outer one is about to overwrite. Waiting
+   * until the current task is done lets the swap finish and then corrects it.
+   */
+  private onBlur(e: Event): void {
+    const from = e.target as HTMLElement | null;
+    if (!from?.classList?.contains('namefield')) return;
+    this.hideTip();
+    if (!this.renamingId) return;
+    this.renamingId = 0;
+    queueMicrotask(() => this.renderModal());
   }
 
   /**
@@ -344,7 +469,29 @@ export class UI {
 
   /** Left and right move between tabs, which is what a tab strip promises. */
   private onRootKey(e: KeyboardEvent): void {
-    const tab = (e.target as HTMLElement).closest('[role="tab"]') as HTMLElement | null;
+    const target = e.target as HTMLElement;
+    /*
+     * Escape out of a rename without keeping it. It is stopped here rather than
+     * left to bubble because the global Escape closes the panel, and losing the
+     * whole roster because you changed your mind about a name is not the trade
+     * anybody meant to make.
+     */
+    if (this.renamingId && target.classList.contains('namefield')) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        this.renamingId = 0;
+        this.renderModal();
+      }
+      // Return has no default worth keeping in a lone field, and blurring is
+      // what makes `change` fire.
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        target.blur();
+      }
+      return;
+    }
+    const tab = target.closest('[role="tab"]') as HTMLElement | null;
     if (!tab || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
     const tabs = [...(tab.parentElement?.querySelectorAll<HTMLElement>('[role="tab"]') ?? [])];
     const i = tabs.indexOf(tab);
@@ -356,6 +503,17 @@ export class UI {
     // Searched from the root rather than the modal host: the same tab strip
     // appears in the right margin when a building is open on a desktop.
     (this.root.querySelector(`[role="tab"][data-i="${this.modalTab}"]`) as HTMLElement | null)?.focus();
+  }
+
+  /**
+   * Puts the cursor in the name field the last redraw created, with the name
+   * selected so typing replaces it — which is what somebody pressing a pencil
+   * beside a name almost always means.
+   */
+  private focusRenameField(): void {
+    const field = this.modalHost.querySelector(`#rn-${this.renamingId}`) as HTMLInputElement | null;
+    field?.focus();
+    field?.select();
   }
 
   /** Redraws whichever host the open panel is mounted in. */
@@ -487,7 +645,9 @@ export class UI {
     // is on the shelf — so it keeps up, unless a dropdown in it is open. The
     // population sheet is the same: its arrival range shortens while it is open,
     // and a range that only moves when you close and reopen it reads as broken.
-    const live = this.modal === 'building' || this.modal === 'population';
+    // So is the roster: every row says what that person is doing this minute,
+    // and the jobs board is mostly a list of what is standing empty right now.
+    const live = this.modal === 'building' || this.modal === 'population' || this.modal === 'people';
     if (live && !(editing && this.modalHost.contains(active))) this.renderModal();
     this.measureSheet();
   }
@@ -779,6 +939,8 @@ export class UI {
       this.game.select(null, 0);
     }
     if (kind && this.game.demolishTarget) this.game.clearPending();
+    this.hideTip();
+    this.renamingId = 0;
     const opening = kind && kind !== this.modal;
     this.modal = kind;
     this.modalTab = tab;
@@ -961,10 +1123,14 @@ export class UI {
         sub = KINGDOM_SUBS[Math.min(this.modalTab, KINGDOM_TABS.length - 1)];
         body = this.kingdomBody();
         break;
-      case 'people':
+      case 'people': {
         title = 'People';
-        body = peopleBody(this.game, this.env);
+        tabNames = PEOPLE_TABS;
+        const ptab = Math.min(this.modalTab, PEOPLE_TABS.length - 1);
+        sub = peopleSub(this.game, ptab);
+        body = peopleBody(this.game, this.env, ptab, this.people, this.renamingId);
         break;
+      }
       case 'stores':
         title = 'Storage';
         body = storesBody(this.game);
@@ -1201,6 +1367,25 @@ export class UI {
       case 'fav-villager':
         game.toggleFavorite('villager', id);
         break;
+      /*
+       * The roster's own controls. Both only change what is on screen, so they
+       * repaint the panel and touch nothing in the kingdom.
+       */
+      case 'people-filter':
+        this.people.filter = (target.dataset.key ?? 'all') as PeopleFilter;
+        this.renderModal();
+        break;
+      /*
+       * Swap one row's name for a field, then put the cursor in it. The focus
+       * has to wait for the redraw: the node it is going into does not exist
+       * until the panel has been rebuilt around it.
+       */
+      case 'rename-start':
+        this.renamingId = id;
+        this.hideTip();
+        this.renderModal();
+        this.focusRenameField();
+        break;
       case 'fav-animal':
         game.toggleFavorite('animal', id);
         break;
@@ -1299,6 +1484,8 @@ export class UI {
     const id = Number(target.dataset.id ?? 0);
 
     switch (act) {
+      // Commits the name and nothing else. Ending the edit is `onBlur`'s job,
+      // and a committed field is always about to lose focus one way or another.
       case 'rename-villager':
         this.game.renameVillager(id, target.value);
         break;
@@ -1307,6 +1494,10 @@ export class UI {
         break;
       case 'assign':
         this.game.assign(id, Number(target.value));
+        break;
+      case 'people-sort':
+        this.people.sort = target.value as PeopleSort;
+        this.renderModal();
         break;
       // These three read the other way round: the row knows the building or the
       // resident, and the chosen option is the person or the house.

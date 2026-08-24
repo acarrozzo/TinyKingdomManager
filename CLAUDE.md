@@ -248,6 +248,7 @@ src/
     goals.ts          objectives and goal views
     build.ts          build list and placement interface
     inspector.ts      villager, animal and tile cards
+    people.ts         the roster and the jobs board
     modals.ts         building and kingdom-level panels
     a11y.ts           focus management and live regions
     portraits.ts      procedural art reused in interface canvases
@@ -268,7 +269,7 @@ scripts/
 `src/sim/defs.ts` is the normal home for:
 
 - building definitions, costs, levels and recipes;
-- jobs, traits and experience curves;
+- jobs, traits, trait effects and experience curves;
 - wildlife definitions;
 - movement and time tuning;
 - terrain, prop and resource descriptions;
@@ -838,9 +839,41 @@ Exact capacity, the per-building breakdown, and the stored/bench/carried/owned s
 
 The strip must fit one row at every width and every point in the game. If a new resource does not fit, it joins a group; it does not get a chip.
 
+### The People panel
+
+Two tabs, because the panel answers two questions that pull against each other.
+
+**Roster** is person-first: a star, a likeness, what they are doing, their nature, their post and how fast they work it. **Jobs** is place-first: every finished workplace, the empty ones sorted to the top, with the spare hands as a card of their own at the foot.
+
+`paceOf()` in `sim/state.ts` is the authority for how fast somebody works a trade — practice and nature multiplied together. The simulation multiplies a stint of work by it and the panel prints it, so the figure beside a name is the figure being used in the field. Never compute a second version of it for display. Condition — hunger, exhaustion — is deliberately *not* in it: what a person is worth at a trade does not change because they skipped lunch.
+
+`traitJobMul()` in `defs.ts` is the authority for what a nature is worth at a trade, and `TRAIT_META.perk` is the sentence that says so. Both must agree. A trait whose effect is economic says its number; one whose effect is ecological or a matter of leisure — Animal Friend, Curious — stays observational, because ecology is mysterious and the economy is not.
+
+The board shows what is standing empty and how many people are spare, and stops there. It puts no name forward, ranks nobody for you, and has no button that staffs the kingdom. Who works where is the player's judgement — a roster you press once and stop looking at is not a terrarium.
+
+Favourites pin to the top of every ordering. The filter bar appears only once there are enough people for a shortlist to mean anything.
+
+`workerOptions()` is shared with the building's own panel, which is the other place a job is filled from.
+
+#### The nature chip and its hover
+
+The roster's Nature column is a chip and nothing more; the sentence behind it lives in the hover, because two lines of prose per row turned twenty people into a wall of text. Only the part that changes — whether the nature is paying off in the job they currently hold — sits on the chip itself.
+
+`#ui .tip` is the interface's one tooltip. Most are hung off the control they describe and shown on `:hover` by the stylesheet. A tip that cannot be — one belonging to a row inside a panel that scrolls, or to something in the sky — takes the `.skytip`/`.hovertip` form instead: `position: fixed`, one long-lived node, placed by the shell. `data-tip` on an element names what it is about, and the shell's delegated hover builds it; delegation matters because the panel rewrites its own markup several times a second.
+
+Every tip is hidden on compact screens, because touch has no hover. Anything a tip says must therefore also be reachable without one — inline on the phone's card, or as `.sr-only` text beside the chip. A tooltip is never the sole home of a fact.
+
+#### Renaming from the roster
+
+One row at a time: the pencil beside a name swaps that row for a field. Not twenty always-editable inputs, which is a form rather than a roster, and which would take away the name as the way into somebody's card.
+
+Every exit — return, clicking away, or the panel redrawing the field out from under the cursor — arrives at `focusout`, so that is the single place an edit ends. `change` only commits the name.
+
+That redraw is deferred by a microtask, and it must stay deferred: replacing the panel's markup is itself what blurs the field, so rendering again from inside that assignment writes markup the outer render is about to overwrite. This is a general hazard with any handler that redraws in response to an event a redraw can cause.
+
 ### Live panels
 
-Building panels update several times per second.
+Building panels, the population sheet and the People panel update several times per second.
 
 - Do not redraw while a focused `<select>` is open.
 - Update existing panel content without restarting modal transitions.
@@ -872,6 +905,7 @@ Accessibility behavior lives in `ui/a11y.ts`.
 - Hidden full-height interface containers must use `pointer-events: none`, with pointer events restored only on their interactive children.
 - Scope pointer-event overrides strongly enough to beat `#ui > *`.
 - Use `setHtml()` for redraw guards. Serialized `innerHTML` is not stable enough for equality checks.
+- Never redraw a panel from inside a handler for an event that redrawing the panel fires. Replacing markup dispatches `focusout` on whatever was focused, synchronously, part-way through the `innerHTML` assignment; a nested render there is silently overwritten. Defer it a task.
 - Preserve the explicit `z-index` ladder in `style.css`; do not rely on document order.
 - The dock intentionally remains above compact modals because bottom navigation switches sheets.
 - Vite serves `index.html` for unknown paths. Do not use a fake same-origin route to seed `localStorage`; the app will boot and may autosave over it.

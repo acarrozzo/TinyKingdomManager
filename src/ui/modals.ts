@@ -43,8 +43,8 @@ import { fmtDuration } from '../core/util';
 import type { Game } from '../game';
 import { FPS_CHOICES, listSlots } from '../save/save';
 import { relocateCostLine } from './build';
-import { activityLabel, cap, esc, type UIEnv } from './context';
-import { jobOptionsFor } from './inspector';
+import { activityLabel, cap, esc } from './context';
+import { workerOptions } from './people';
 import { paintBuilding, paintBuildingDef, paintVillager } from './portraits';
 
 // ---------------------------------------------------------------------------
@@ -160,7 +160,11 @@ export function paintPortraits(game: Game, host: HTMLElement): void {
       );
     } else {
       const b = buildingById(g, Number(canvas.dataset.id));
-      if (b) paintBuilding(canvas, b, g.season);
+      // A box only where the caller asked for one; the panel header wants the
+      // building at its own size and the jobs board wants it in a thumbnail.
+      const w = Number(canvas.dataset.w);
+      const h = Number(canvas.dataset.h);
+      if (b) paintBuilding(canvas, b, g.season, w && h ? { w, h } : undefined);
     }
   }
 }
@@ -260,23 +264,6 @@ function buildingPeople(game: Game, b: Building): string {
 
   if (!def.slots && !def.housing) {
     out += `<div class="bsec"><div class="tiny muted" style="line-height:1.55">Nobody is assigned here — it is not that sort of building. People come and go of their own accord.</div></div>`;
-  }
-  return out;
-}
-
-/** Every villager who could take a place here, labelled with what it would cost. */
-function workerOptions(game: Game, b: Building): string {
-  const g = game.state;
-  let out = `<option value="0" selected>Put someone to work here…</option>`;
-  const people = g.villagers.filter((v) => v.workplace !== b.id).sort((p, q) => p.name.localeCompare(q.name));
-  for (const v of people) {
-    const post = buildingById(g, v.workplace);
-    const rank = post ? rankOf(xpOf(v, v.job)) : null;
-    const where = post
-      ? `${JOB_META[v.job].name.toLowerCase()} at the ${BUILDINGS[post.def].name.toLowerCase()}`
-      : 'general worker, unattached';
-    const warn = rank === 'Expert' || rank === 'Master' ? ` — ${rank}` : '';
-    out += `<option value="${v.id}">${esc(v.name)} — ${esc(where)}${warn}</option>`;
   }
   return out;
 }
@@ -944,83 +931,6 @@ export function wildlifeBody(game: Game): string {
 
   return `<div class="muted tiny" style="margin-bottom:11px">${g.discovered.size} of ${SPECIES_ORDER.length} kinds seen. What turns up depends on what the land looks like.</div>
     <div class="grid">${cards}</div>${namedList}`;
-}
-
-/**
- * The roster. Four columns on a desktop, where they fit; stacked cards on a
- * phone, where they do not — squeezing a name, a job dropdown, a rank and a
- * button into 340 pixels makes all four illegible rather than one of them.
- */
-export function peopleBody(game: Game, env: UIEnv): string {
-  const g = game.state;
-  const people = g.villagers.slice().sort((a, b) => a.arrived - b.arrived || a.id - b.id);
-
-  /**
-   * Somebody who has never had their card opened. It sits beside the name in
-   * both shapes of the roster, and it is the same fact the mark on the map and
-   * the count on the People button are showing — opening the card clears all
-   * three at once.
-   */
-  const isNew = (v: Villager) => (v.met ? '' : ' <span class="newtag">new</span>');
-
-  const summary = () => {
-    const unposted = g.villagers.filter((v) => v.workplace === 0).length;
-    const openSlots = g.buildings
-      .filter((b) => b.stage === 'done')
-      .reduce((n, b) => n + Math.max(0, jobSlots(b) - b.workers.length), 0);
-    return `<div class="row tiny muted" style="margin-bottom:11px;gap:14px">
-        <span>${g.villagers.length} villagers</span><span>${unposted} general worker${unposted === 1 ? '' : 's'}</span><span>${openSlots} open job${openSlots === 1 ? '' : 's'}</span>
-      </div>`;
-  };
-
-  const best = (v: Villager) => {
-    const top = (Object.keys(v.xp) as (keyof typeof v.xp)[]).sort((a, b) => (v.xp[b] ?? 0) - (v.xp[a] ?? 0))[0];
-    if (!top) return null;
-    const xp = xpOf(v, top);
-    return { rank: rankOf(xp), job: JOB_META[top].name.toLowerCase() };
-  };
-
-  if (env.compact) {
-    const cards = people
-      .map((v) => {
-        const b = best(v);
-        return `<div class="pcard">
-          <button class="who" data-act="select-villager" data-id="${v.id}">
-            <canvas class="pic" data-pic="villager" data-id="${v.id}" aria-hidden="true"></canvas>
-            <span class="tx"><span class="nm">${v.favorite ? icon('star') : ''}${esc(v.name)}${v.id === g.founderId ? ' <span class="muted tiny">founder</span>' : ''}${isNew(v)}</span>
-              <span class="ac">${esc(activityLabel(v))}${b ? ` · <span style="color:${RANK_COLOR[b.rank]}">${b.rank} ${esc(b.job)}</span>` : ''}</span></span>
-            <span class="go" aria-hidden="true">›</span>
-          </button>
-          <div class="pjob">
-            <select data-act="assign" data-id="${v.id}" aria-label="Job for ${esc(v.name)}">${jobOptionsFor(game, v)}</select>
-            <button class="btn small" data-act="follow-villager" data-id="${v.id}">Watch</button>
-          </div>
-        </div>`;
-      })
-      .join('');
-    return `${summary()}<div class="pcards">${cards}</div>
-      <div class="hint">Tap anyone to see their history, home and traits. Experience is kept for good — moving a master farmer to the mill does not erase what they learned in the field.</div>`;
-  }
-
-  const rows = people
-    .map((v) => {
-      const b = best(v);
-      return `<div class="people-row">
-        <button class="link plain who" data-act="select-villager" data-id="${v.id}">
-          <canvas class="pic" data-pic="villager" data-id="${v.id}" aria-hidden="true"></canvas>
-          <span class="nm">${v.favorite ? icon('star') : ''}${esc(v.name)}${v.id === g.founderId ? ' <span class="muted tiny">founder</span>' : ''}${isNew(v)}</span>
-        </button>
-        <select data-act="assign" data-id="${v.id}" aria-label="Job for ${esc(v.name)}">${jobOptionsFor(game, v)}</select>
-        <span class="tiny" style="color:${b ? RANK_COLOR[b.rank] : 'var(--faint)'}">${b ? `${b.rank} ${esc(b.job)}` : '—'}</span>
-        <button class="btn small" data-act="follow-villager" data-id="${v.id}">Watch</button>
-      </div>`;
-    })
-    .join('');
-
-  return `${summary()}
-    <div class="people-row head"><span>Who</span><span>Job</span><span>Best trade</span><span></span></div>
-    ${rows}
-    <div class="hint">Experience is earned by doing a job, and it is kept for good. Moving a master farmer to the mill does not erase what they learned in the field.</div>`;
 }
 
 export function slotsBody(game: Game): string {

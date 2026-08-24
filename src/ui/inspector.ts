@@ -24,8 +24,9 @@ import {
   TRAIT_META,
   buildingName,
   rankOf,
+  traitJobMul,
 } from '../sim/defs';
-import { buildingById, jobSlots, xpOf } from '../sim/state';
+import { buildingById, jobSlots, paceOf, xpOf } from '../sim/state';
 import { fishQuality } from '../world/terrain';
 import { fmtDuration } from '../core/util';
 import type { Game } from '../game';
@@ -50,9 +51,14 @@ export function villagerCard(game: Game): string {
           .map((j) => {
             const xp = xpOf(v, j);
             const rank = rankOf(xp);
+            // Practice and nature together, which is the figure the kingdom
+            // actually multiplies a stint of work by. A rank on its own does
+            // not distinguish two Masters, one of whom was born to it.
+            const speed = paceOf(v, j).toFixed(2);
             return `<div class="xp-row"><span class="job">${JOB_META[j].name}</span>
               <span class="track"><i style="width:${xp}%;background:${RANK_COLOR[rank]}"></i></span>
-              <span class="rank" style="color:${RANK_COLOR[rank]}">${rank}</span></div>`;
+              <span class="rank" style="color:${RANK_COLOR[rank]}">${rank}</span>
+              <span class="mul" title="${esc(`${speed}× the pace of an even day's work at this trade.`)}">${speed}×</span></div>`;
           })
           .join('');
 
@@ -80,6 +86,15 @@ export function villagerCard(game: Game): string {
         ${daysHere > 0 ? `<span class="tag">${daysHere} day${daysHere === 1 ? '' : 's'} here</span>` : ''}
       </div>
       <div class="tiny muted" style="margin-top:7px;line-height:1.5">${esc(trait.desc)}</div>
+      ${
+        // What it is actually worth, said plainly. Marked when it is paying off
+        // where they stand today rather than somewhere they do not work.
+        (() => {
+          const mul = traitJobMul(v.trait, v.job);
+          const here = mul > 1 ? ` <b>+${Math.round((mul - 1) * 100)}% at this trade.</b>` : '';
+          return `<div class="tiny ${here ? 'lift' : 'muted'}" style="margin-top:4px;line-height:1.5">${esc(trait.perk)}${here}</div>`;
+        })()
+      }
       ${
         // Personality and nothing else. Said as an observation rather than as a
         // requirement, because it is not one: they will eat the other quite

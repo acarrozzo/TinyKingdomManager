@@ -41,7 +41,6 @@ import {
   relocateCost,
   relocateLabour,
   richnessMul,
-  skillMul,
   upgradeCostOf,
   xpGain,
 } from './defs';
@@ -60,6 +59,7 @@ import {
   homeFor,
   inputRoom,
   isClaimed,
+  paceOf,
   preparedFood,
   releaseClaim,
   roomIn,
@@ -404,7 +404,7 @@ function doAct(g: GameState, v: Villager, step: Extract<Step, { t: 'act' }>, dt:
   v.activity = step.kind;
   if (step.face !== undefined) v.face = step.face;
 
-  const rate = step.xp ? skillMul(xpOf(v, step.xp)) * traitWorkMul(v, step.xp) : 1;
+  const rate = step.xp ? paceOf(v, step.xp) * conditionMul(v) : 1;
   const used = Math.min(dt, v.actLeft / rate);
   v.actLeft -= used * rate;
   if (step.xp) addXp(v, step.xp, xpGain(xpOf(v, step.xp), used));
@@ -419,14 +419,18 @@ function doAct(g: GameState, v: Villager, step: Extract<Step, { t: 'act' }>, dt:
   return -1;
 }
 
-function traitWorkMul(v: Villager, job: JobId): number {
+/**
+ * The part of somebody's work rate that is about today rather than about them.
+ *
+ * Kept apart from `paceOf`, which is practice and nature and is what the roster
+ * prints: what a person is worth at a trade does not change because they have
+ * skipped lunch. Going properly hungry is measured against the same threshold
+ * the kingdom's wellbeing is, so it means one thing whether you read it in a
+ * panel or watch it in the work rate. It slows people down and does nothing
+ * worse than that.
+ */
+function conditionMul(v: Villager): number {
   let m = 1;
-  if (v.trait === 'greenThumb' && job === 'farmer') m *= 1.2;
-  if (v.trait === 'crafty' && (job === 'cook' || job === 'miller')) m *= 1.2;
-  if (v.trait === 'steady') m *= 1.06;
-  // The same threshold the kingdom's wellbeing is judged on, so "going properly
-  // hungry" means one thing whether you read it in the panel or watch it in the
-  // work rate. It slows people down and does nothing worse than that.
   if (v.hunger >= SEVERE_HUNGER) m *= 0.78;
   if (v.energy < 0.15) m *= 0.85;
   return m;

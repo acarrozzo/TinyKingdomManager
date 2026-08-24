@@ -279,7 +279,6 @@ body {
 .kv .k,
 .kv .v,
 .pcard .nm,
-.people-row > .link,
 .storerow .amt,
 .res-strip .res,
 .morerow .t,
@@ -624,6 +623,25 @@ body {
 }
 #ui .skytip.on {
   display: flex;
+}
+/* The same escape hatch, for tips that hang off a row inside a panel that
+   scrolls. Placed against the viewport rather than under a parent, because a
+   parent with `overflow: auto` would clip it exactly when it is needed. */
+#ui .hovertip {
+  position: fixed;
+  top: 0;
+  left: 0;
+  max-width: 260px;
+}
+#ui .hovertip.on {
+  display: flex;
+}
+/* Both need to outrank `#ui .tip .tip-line`, which sets its own colour. */
+#ui .tip .tip-line.lift {
+  color: var(--good);
+}
+#ui .tip .tip-line.muted {
+  color: var(--faint);
 }
 #ui .tip .tip-head {
   display: flex;
@@ -1359,6 +1377,15 @@ button {
   font-size: 10.5px;
   flex-shrink: 0;
 }
+/* What the rank is worth, which two Masters do not always share. */
+.xp-row .mul {
+  width: 36px;
+  text-align: right;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--faint);
+  flex-shrink: 0;
+}
 
 .tag {
   display: inline-flex;
@@ -1395,7 +1422,11 @@ button.tag {
   letter-spacing: 0.3px;
 }
 
-.actions {
+/* The row of buttons at the foot of a card. Scoped to the card, because the
+   action cluster in the dock claims the same bare class further down this file
+   and would otherwise win on order — taking the wrap with it, which is what put
+   "Centre" off the right-hand edge of every villager. */
+.insp .actions {
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
@@ -2247,46 +2278,444 @@ button.tag {
  * people is that you can tell them apart on the map. The little likeness is
  * drawn by the code that draws them out there, hat and shirt and all, so the
  * row and the figure walking about are recognisably the same person.
+ *
+ * Six columns now, and the two that were added are the two the row was missing:
+ * a star, because keeping an eye on somebody is the reason to open this at all,
+ * and their nature, because it is the difference between two Journeymen. Four of
+ * the six carry a second line under the first, which is why the row is a grid of
+ * stacks rather than a table of cells.
  */
-.people-row {
+.prow {
   display: grid;
-  grid-template-columns: 1.6fr 1.2fr 1fr auto;
+  grid-template-columns: 26px minmax(166px, 1.5fr) minmax(112px, 0.9fr) minmax(0, 1.15fr) 74px auto;
   gap: 9px;
   align-items: center;
-  padding: 5px 0;
+  padding: 6px 0;
   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
   font-size: var(--t-body);
 }
-.people-row .who {
+.prow .who {
   display: flex;
   align-items: center;
   gap: 9px;
   min-width: 0;
   text-align: left;
 }
-.people-row .who .pic {
+/* The likeness is its own way into the card now, because the name beside it
+   turns into a field and a button you can put a cursor in is two controls. */
+.prow .figure {
   flex: none;
+  display: flex;
+  border-radius: 6px;
+}
+.prow .figure .pic {
   image-rendering: pixelated;
 }
-.people-row .who .nm {
-  display: inline-flex;
+.prow .figure:hover {
+  background: var(--raise-hi);
+}
+/* Name over what they are doing, so the column is one person rather than two
+   facts about one. The second line is the live half and changes constantly. */
+.prow .who .tx,
+.prow .rate {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.prow .nature {
+  min-width: 0;
+}
+.prow .nm {
+  display: flex;
   align-items: center;
   gap: 5px;
   min-width: 0;
+}
+/* The name is a link to the card and the pencil beside it swaps this one row
+   for a field. The pencil stays quiet until the row is under the cursor: it is
+   there for the rare afternoon somebody renames everybody, not for every read
+   of the list. */
+.prow .rename {
+  opacity: 0;
+}
+.prow:hover .rename,
+.prow .rename:focus-visible {
+  opacity: 1;
+}
+.nm.editing {
+  flex: 1;
+  min-width: 0;
+}
+.nm.editing .namefield {
+  padding: 3px 7px;
+  font-size: var(--t-body);
+  font-weight: 600;
+}
+/* The name is the part that runs out of room. Everything beside it is a mark
+   worth keeping — a name long enough to push "new" off the row would hide the
+   one fact that makes the row worth opening. */
+.prow .nm .n,
+.jrow .nm .n,
+.pcard .nm .n {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.people-row.head > span:first-child {
-  padding-left: 31px;
+.prow .nm .tag-n,
+.prow .nm .newtag,
+.jrow .nm .tag-n,
+.jrow .nm .newtag,
+.pcard .nm .tag-n,
+.pcard .nm .newtag {
+  flex: none;
 }
-.people-row.head {
+.prow .sub {
+  font-size: var(--t-micro);
+  color: var(--faint);
+  line-height: 1.35;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+/* A nature that is paying off where they stand today, rather than one that
+   would pay off somewhere else. Worth a colour: it is the whole reason the
+   column is there, and it is the only part of it that can change. The row's
+   own `.sub` colour is more specific than a bare class, so it is named again
+   rather than left to lose. */
+.lift,
+.prow .sub.lift {
+  color: var(--good);
+}
+/* What somebody is doing changes every few seconds and is never the reason the
+   row is being read, so it gets one line and no more. The nature beside it is
+   the opposite: it is why the column exists, and it is allowed two. */
+.prow .who .sub {
+  display: block;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.prow .rk {
+  font-weight: 600;
+  font-size: var(--t-small);
+}
+.prow .rate .sub {
+  font-variant-numeric: tabular-nums;
+}
+.prow .job select {
+  width: 100%;
+  min-width: 0;
+}
+.prow.head {
   color: var(--faint);
   font-size: 10.5px;
   text-transform: uppercase;
   letter-spacing: 0.6px;
   border-bottom-color: var(--edge);
   padding-bottom: 8px;
+}
+
+/* The star. Geometry from `.iconbtn`; only the lit state is its own. */
+.favbtn.on {
+  color: var(--accent);
+}
+.favbtn.on:hover {
+  color: var(--accent);
+}
+
+/*
+ * One nature, as a chip: the same picture the villager's own card carries.
+ *
+ * What it is worth is in the hover rather than under it. Two lines of prose per
+ * row turned twenty people into a wall of sentences, and the one part of it
+ * that changes — whether the nature is paying off in the job they hold — is
+ * short enough to sit on the chip itself.
+ */
+.tchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--t-small);
+  color: var(--dim);
+  min-width: 0;
+}
+.tchip .n {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tchip .pct {
+  flex: none;
+  color: var(--good);
+  font-weight: 600;
+  font-size: var(--t-micro);
+}
+.prow .tchip {
+  cursor: help;
+}
+
+/* A control that is only a picture: the star, the pencil. */
+.iconbtn {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  color: var(--faint);
+  transition: opacity 0.12s ease, color 0.12s ease, background 0.12s ease;
+}
+.iconbtn:hover {
+  background: var(--raise);
+  color: var(--ink);
+}
+
+/*
+ * The shortlists and the ordering, above the list they act on.
+ *
+ * Chips rather than a second dropdown because the useful ones carry a count,
+ * and "two people with no post" is the sentence that makes somebody press it.
+ */
+.pbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.pbar .chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  flex: 1;
+  min-width: 0;
+}
+.pbar .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--edge);
+  background: var(--raise);
+  color: var(--dim);
+  font-size: var(--t-small);
+  min-height: 28px;
+}
+.pbar .chip:hover {
+  background: var(--raise-hi);
+  color: var(--ink);
+}
+.pbar .chip.on {
+  border-color: rgba(232, 182, 97, 0.4);
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+.pbar .chip .n {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  opacity: 0.75;
+}
+.pbar .psort {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/*
+ * The jobs board: one card per workplace, the empty ones first.
+ *
+ * A card rather than a row because a workplace is a small stack — who is in it,
+ * who could be — and four of those stacks read as four places only if there is
+ * an edge around each one.
+ */
+.jcards {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.jcard {
+  border: 1px solid var(--edge);
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.028);
+  padding: 10px 12px 11px;
+}
+/* Somewhere standing empty. The same warm edge the map's attention mark uses,
+   because they are saying the same thing about the same building. */
+.jcard.open {
+  border-color: rgba(234, 164, 100, 0.34);
+  background: rgba(234, 164, 100, 0.05);
+}
+.jhead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--edge);
+  margin-bottom: 6px;
+}
+.jhead .tx {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+.jhead .nm {
+  font-weight: 600;
+  font-size: var(--t-lead);
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.jhead .sub {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--t-small);
+  color: var(--faint);
+}
+.jhead .cnt {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  font-size: var(--t-body);
+  color: var(--dim);
+  flex: none;
+}
+.jhead .cnt.warn {
+  color: var(--warn);
+}
+.jhead .bpic {
+  flex: none;
+  width: 58px;
+  height: 46px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  background: var(--sink);
+  border: 1px solid var(--edge);
+  overflow: hidden;
+}
+.jhead .bpic canvas {
+  display: block;
+  image-rendering: pixelated;
+}
+/* The spare hands have no building to show, so their card wears its trade. */
+.jhead .ghand {
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--raise);
+  color: var(--dim);
+}
+.jrow {
+  display: grid;
+  grid-template-columns: minmax(84px, 1.1fr) minmax(0, 1fr) auto auto;
+  gap: 9px;
+  align-items: center;
+  padding: 5px 0;
+  font-size: var(--t-body);
+}
+.jrow .who {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  text-align: left;
+  font-weight: 600;
+}
+.jrow .who .pic {
+  flex: none;
+  image-rendering: pixelated;
+}
+.jrow .nm {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+.jrow .what {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.jrow .rk {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.jrow .ctl {
+  display: flex;
+  gap: 5px;
+  justify-content: flex-end;
+}
+.jfill {
+  margin-top: 7px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.jfill select {
+  width: 100%;
+}
+
+/*
+ * Both of these on a phone.
+ *
+ * The bar stacks: the sort control is the width of its longest option, which
+ * on a 390-pixel screen left the chips beside it one to a line — a column of
+ * four buttons pretending to be a row.
+ *
+ * The star grows to a proper target. It is a 26-pixel square on a desktop
+ * because the row is dense and the cursor is exact, and neither is true of a
+ * thumb.
+ */
+#ui.compact .pbar {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+#ui.compact .pbar .psort {
+  justify-content: flex-end;
+}
+#ui.compact .pbar .chip {
+  min-height: 34px;
+}
+/* Big enough for a thumb, and the same 40 the sheets' own controls use. */
+#ui.compact .iconbtn {
+  width: 40px;
+  height: 40px;
+}
+/* On a phone the pencil has no hover to appear on, so it is simply there. */
+#ui.compact .rename {
+  opacity: 1;
+}
+/*
+ * The jobs board's rows fold the same way a building's roster does, and for the
+ * same reason: name, rank, what they are doing and two buttons is five things,
+ * and five things do not fit across a phone without every one of them becoming
+ * an ellipsis.
+ */
+#ui.compact .jrow {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 8px;
+  padding: 7px 0;
+}
+#ui.compact .jrow .what {
+  grid-column: 1;
+  grid-row: 2;
+}
+#ui.compact .jrow .rk {
+  grid-column: 2;
+  grid-row: 1;
+  text-align: right;
+}
+#ui.compact .jrow .ctl {
+  grid-column: 2;
+  grid-row: 2;
 }
 
 /* The phone's roster: a card each, name and doing-what first. */
@@ -2321,9 +2750,7 @@ button.tag {
 .pcard .nm {
   font-weight: 600;
   font-size: 13px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  min-width: 0;
 }
 .pcard .ac {
   font-size: 11px;
@@ -2336,8 +2763,29 @@ button.tag {
   color: var(--faint);
   font-size: 16px;
 }
+.pcard .pmeta {
+  display: flex;
+  align-items: center;
+  gap: 8px 10px;
+  flex-wrap: wrap;
+  padding: 0 11px 2px;
+  line-height: 1.4;
+}
+.pcard .pperk {
+  padding: 0 11px 9px;
+  line-height: 1.45;
+}
+/* Renaming takes the whole head of the card: the field wants the width, and
+   the row it replaces is a button that would fight it for the tap. */
+.pcard .pname {
+  padding: 10px 11px 8px;
+}
+.pcard .pname .nm {
+  display: flex;
+}
 .pcard .pjob {
   display: flex;
+  align-items: center;
   gap: 7px;
   padding: 0 11px 10px;
 }

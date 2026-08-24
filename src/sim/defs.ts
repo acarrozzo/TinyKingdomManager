@@ -346,16 +346,91 @@ export const JOB_META: Record<JobId, { name: string; icon: string; desc: string 
   smith: { name: 'Smith', icon: '🔥', desc: 'Smelts ore into iron bars at the forge, and iron bars into steel.' },
 };
 
-export const TRAIT_META: Record<TraitId, { name: string; icon: string; desc: string }> = {
-  greenThumb: { name: 'Green Thumb', icon: '🌿', desc: 'Crops seem to grow a little faster under their care.' },
-  animalFriend: { name: 'Animal Friend', icon: '🐇', desc: 'Wildlife does not startle when they walk past.' },
-  crafty: { name: 'Crafty', icon: '🔨', desc: 'Quick and tidy at a workbench or an oven.' },
-  curious: { name: 'Curious', icon: '🔍', desc: 'Wanders further than most, and notices things.' },
-  earlyRiser: { name: 'Early Riser', icon: '🌅', desc: 'Up before the rest of the kingdom.' },
-  nightOwl: { name: 'Night Owl', icon: '🌙', desc: 'Often still out well after dark.' },
-  outdoorsy: { name: 'Outdoorsy', icon: '🥾', desc: 'Crosses rough ground without slowing down much.' },
-  steady: { name: 'Steady', icon: '🧭', desc: 'Never hurries, never stops. Tires more slowly.' },
+/**
+ * The eight natures somebody can be born with.
+ *
+ * `desc` is how it looks from the outside and `perk` is what it actually does,
+ * in the plain terms the rest of the economy is described in. Both are wanted:
+ * "crops seem to grow faster under their care" is the sentence that makes a
+ * person a person, and "a fifth faster at the farm" is the one a player staffs
+ * a building on. The economy is transparent, so the number is not withheld —
+ * except where the effect is not an economic one at all. An Animal Friend and a
+ * Curious wanderer are told observationally, because what they change is
+ * ecology and leisure, and neither is anybody's output.
+ *
+ * Where the perk is a work rate, `traitJobMul` below is the authority for it
+ * and this copy must agree with that function.
+ */
+export const TRAIT_META: Record<TraitId, { name: string; icon: string; desc: string; perk: string }> = {
+  greenThumb: {
+    name: 'Green Thumb',
+    icon: '🌿',
+    desc: 'Crops seem to grow a little faster under their care.',
+    perk: 'A fifth faster at the farm.',
+  },
+  animalFriend: {
+    name: 'Animal Friend',
+    icon: '🐇',
+    desc: 'Wildlife does not startle when they walk past.',
+    perk: 'Animals let them come close instead of bolting.',
+  },
+  crafty: {
+    name: 'Crafty',
+    icon: '🔨',
+    desc: 'Quick and tidy at a workbench or an oven.',
+    perk: 'A fifth faster at the mill, the kitchen and a building site.',
+  },
+  curious: {
+    name: 'Curious',
+    icon: '🔍',
+    desc: 'Wanders further than most, and notices things.',
+    perk: 'Roams nearly twice as far when the day is their own.',
+  },
+  earlyRiser: {
+    name: 'Early Riser',
+    icon: '🌅',
+    desc: 'Up before the rest of the kingdom.',
+    perk: 'Works early rather than late. The same hours either way.',
+  },
+  nightOwl: {
+    name: 'Night Owl',
+    icon: '🌙',
+    desc: 'Often still out well after dark.',
+    perk: 'Works late rather than early. The same hours either way.',
+  },
+  outdoorsy: {
+    name: 'Outdoorsy',
+    icon: '🥾',
+    desc: 'Crosses rough ground without slowing down much.',
+    perk: 'Rough ground barely slows them down.',
+  },
+  steady: {
+    name: 'Steady',
+    icon: '🧭',
+    desc: 'Never hurries, never stops. Tires more slowly.',
+    perk: 'A shade faster at every trade, and tires more slowly.',
+  },
 };
+
+/**
+ * What somebody's nature is worth at a given trade, as a multiplier on their
+ * work rate.
+ *
+ * The single authority for it. The simulation multiplies work by this and the
+ * roster prints it, so the figure beside a name in the panel is the figure
+ * being used in the field — there is no second table to keep in step.
+ *
+ * Crafty's hand on a building site is not here: construction is measured in
+ * labour rather than in a stint at a trade, and it is applied where that labour
+ * is added. `TRAIT_META.crafty.perk` says both halves out loud.
+ */
+export function traitJobMul(trait: TraitId, job: JobId): number {
+  let m = 1;
+  if (trait === 'greenThumb' && job === 'farmer') m *= 1.2;
+  if (trait === 'crafty' && (job === 'cook' || job === 'miller')) m *= 1.2;
+  if (trait === 'steady') m *= 1.06;
+  return m;
+}
 
 export const TRAIT_IDS = Object.keys(TRAIT_META) as TraitId[];
 
