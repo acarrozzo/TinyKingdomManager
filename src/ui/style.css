@@ -2531,9 +2531,29 @@ button.tag {
  * an edge around each one.
  */
 .jcards {
-  display: flex;
-  flex-direction: column;
+  /* Two abreast wherever there is room for two. A workplace card is a short
+     stack, so a single column left the right-hand half of the panel empty and
+     pushed the fourth building below the fold; auto-fit rather than a fixed
+     two so the phone's sheet drops to one column without a second rule. */
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(292px, 1fr));
+  /* Each card its own height. Stretched to match its neighbour, a one-worker
+     card grows a pane of empty board under the last row, which on an open card
+     reads as something missing rather than as nothing to show. */
+  align-items: start;
   gap: 9px;
+}
+/* The spare hands are the foot of the board, not a fifth workplace, so they
+   keep the full width whatever the columns are doing — and since a kingdom
+   with anybody to spare tends to have several, their names run two across
+   rather than as one long column down the middle of an empty card. */
+.jcards .jcard.spare {
+  grid-column: 1 / -1;
+}
+.jspare {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(268px, 1fr));
+  column-gap: 18px;
 }
 .jcard {
   border: 1px solid var(--edge);
@@ -2611,12 +2631,19 @@ button.tag {
   background: var(--raise);
   color: var(--dim);
 }
+/*
+ * Name, rank, what they are doing and two buttons is five things, and five
+ * things do not fit across half a panel without every one of them becoming an
+ * ellipsis. So the row folds in two everywhere the board is drawn: the phone
+ * has never had the width, and since the cards went two abreast the desktop
+ * has not either.
+ */
 .jrow {
   display: grid;
-  grid-template-columns: minmax(84px, 1.1fr) minmax(0, 1fr) auto auto;
-  gap: 9px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 8px;
   align-items: center;
-  padding: 5px 0;
+  padding: 7px 0;
   font-size: var(--t-body);
 }
 .jrow .who {
@@ -2638,16 +2665,23 @@ button.tag {
   min-width: 0;
 }
 .jrow .what {
+  grid-column: 1;
+  grid-row: 2;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .jrow .rk {
+  grid-column: 2;
+  grid-row: 1;
+  text-align: right;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 .jrow .ctl {
+  grid-column: 2;
+  grid-row: 2;
   display: flex;
   gap: 5px;
   justify-content: flex-end;
@@ -2693,31 +2727,6 @@ button.tag {
 #ui.compact .rename {
   opacity: 1;
 }
-/*
- * The jobs board's rows fold the same way a building's roster does, and for the
- * same reason: name, rank, what they are doing and two buttons is five things,
- * and five things do not fit across a phone without every one of them becoming
- * an ellipsis.
- */
-#ui.compact .jrow {
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 4px 8px;
-  padding: 7px 0;
-}
-#ui.compact .jrow .what {
-  grid-column: 1;
-  grid-row: 2;
-}
-#ui.compact .jrow .rk {
-  grid-column: 2;
-  grid-row: 1;
-  text-align: right;
-}
-#ui.compact .jrow .ctl {
-  grid-column: 2;
-  grid-row: 2;
-}
-
 /* The phone's roster: a card each, name and doing-what first. */
 .pcards {
   display: flex;

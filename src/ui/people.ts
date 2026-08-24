@@ -506,14 +506,14 @@ function generalCard(game: Game): string {
   const g = game.state;
   const spare = g.villagers.filter((v) => v.workplace === 0);
   const rows = spare.map((v) => workerRow(game, v, 'general')).join('');
-  return `<div class="jcard">
+  return `<div class="jcard spare">
     <div class="jhead">
       <span class="bpic ghand" aria-hidden="true">${iconFor(JOB_META.general.icon, '', 'lg')}</span>
       <span class="tx"><span class="nm">General Workers</span>
         <span class="sub">No post — the kingdom's spare hands</span></span>
       <span class="cnt">${spare.length}</span>
     </div>
-    ${rows || '<div class="tiny muted" style="padding:4px 0">Everybody has a trade. Construction and restocking now wait on whoever has a quiet moment.</div>'}
+    ${rows ? `<div class="jspare">${rows}</div>` : '<div class="tiny muted" style="padding:4px 0">Everybody has a trade. Construction and restocking now wait on whoever has a quiet moment.</div>'}
     <div class="tiny muted" style="margin-top:6px;line-height:1.55">${esc(JOB_META.general.desc)}</div>
   </div>`;
 }
