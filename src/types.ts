@@ -19,7 +19,13 @@ export type ResourceId =
   | 'ironBar'
   | 'steelBar'
   | 'mithrilOre'
-  | 'mithrilBar';
+  | 'mithrilBar'
+  // The shore and what is made of it. Sand is the only raw material that does
+  // not come out of the ground or off a tree, and the telescope is the only
+  // resource whose destination is a person rather than a building.
+  | 'sand'
+  | 'glass'
+  | 'telescope';
 
 /** Roughly the order a kingdom meets them in, which is the order the strip shows. */
 export const RESOURCE_ORDER: ResourceId[] = [
@@ -36,6 +42,9 @@ export const RESOURCE_ORDER: ResourceId[] = [
   'steelBar',
   'mithrilOre',
   'mithrilBar',
+  'sand',
+  'glass',
+  'telescope',
 ];
 
 /**
@@ -69,6 +78,9 @@ export function emptyStock(): Stock {
     steelBar: 0,
     mithrilOre: 0,
     mithrilBar: 0,
+    sand: 0,
+    glass: 0,
+    telescope: 0,
   };
 }
 
@@ -107,6 +119,14 @@ export interface Tile {
    * that would rather be left alone for a bit. Meaningless on dry land.
    */
   fish: number;
+  /**
+   * The same idea on the shore: how rested a patch of sand is, 0..1, on sand
+   * tiles. Dug over and it goes thin for a while, then the tide puts it back.
+   * A beach is a ring and therefore finite, so it must never be a node that
+   * empties — `SAND_FLOOR` is what the most-worked patch still gives.
+   * Meaningless anywhere but sand.
+   */
+  sand: number;
   /** True when a villager has reserved this tile's node so others don't pile on. */
   claimed: number;
 }
@@ -129,7 +149,13 @@ export type JobId =
   // works the whole mine. Bread and fish are two recipes, not two professions.
   | 'cook'
   | 'fisher'
-  | 'smith';
+  | 'smith'
+  // Digs sand off the shore and melts it. One trade for both halves, the same
+  // way the miner both cuts the rock and carries it back.
+  | 'glassblower'
+  // Works the Observatory: builds telescopes by day and watches by night. The
+  // only trade whose work is worth anything after dark.
+  | 'astronomer';
 
 export type TraitId =
   | 'greenThumb'
@@ -159,6 +185,12 @@ export type BuildingId =
   | 'kitchen'
   | 'fishhut'
   | 'forge'
+  // Stands on the shore. Sand and coal in, glass out — the first building the
+  // kingdom has ever had a reason to put anywhere but the middle.
+  | 'glassworks'
+  // The last building. Makes telescopes, and is the only place in the kingdom
+  // where anything happens at night on purpose.
+  | 'observatory'
   | 'well'
   | 'bench'
   | 'lantern'
@@ -191,9 +223,13 @@ export interface UpgradeReq {
   label: string;
   met: (g: GameState) => boolean;
   /**
-   * Nothing in the game can satisfy this yet — the Kingdom Commons and the
-   * Mithril Mine both end on one. Shown rather than hidden, but the interface
-   * has to know not to describe the step beyond it as something to work towards.
+   * Nothing in the game can satisfy this. Shown rather than hidden, but the
+   * interface has to know not to describe the step beyond it as something to
+   * work towards.
+   *
+   * Nothing sets it at present: the Kingdom Commons and the Mithril Mine were
+   * the two that did, and both now run to the top. Kept because it is the right
+   * mechanism for the next horizon written down before it is built.
    */
   impossible?: boolean;
 }
@@ -283,6 +319,12 @@ export interface BuildingDef {
    * a decision about a shoreline rather than a box you drop anywhere.
    */
   fishes?: boolean;
+  /**
+   * Has to stand on dry land with beach inside its reach — the Glassworks, and
+   * only that. The third of the placement rules, and the one that finally gives
+   * the sand ring around the island something to be.
+   */
+  digsSand?: boolean;
   /**
    * What the focus picker says about leaving this building on Balanced. Per
    * building, because the forge's answer ("iron first, coal only when there are
@@ -439,7 +481,14 @@ export type ActivityKind =
   | 'watching'
   | 'idle'
   | 'arriving'
-  | 'fishing';
+  | 'fishing'
+  | 'digging'
+  /**
+   * Standing at the Observatory after dark, looking up. The only activity in
+   * the game that happens during sleeping hours on purpose, and the only one
+   * an enlightened villager will get out of bed for.
+   */
+  | 'stargazing';
 
 /** One executable step in a villager's plan. Plans are transient and never serialised. */
 export type Step =
@@ -448,14 +497,33 @@ export type Step =
   /** `store` and `input` both name a particular building; there is no shared pool. */
   | { t: 'take'; res: ResourceId; qty: number; from: 'store' | 'tile'; id?: number; x?: number; y?: number }
   /** Without `qty` the whole load goes; with it, the rest stays in their arms. */
-  | { t: 'give'; to: 'store' | 'input' | 'site'; id?: number; qty?: number }
+  /**
+   * `'person'` is the odd one and the only one whose `id` is a villager: a
+   * telescope is carried to somebody rather than to a building. It is also the
+   * only give that can fail to find its target, which is why `deliver` still
+   * has to be able to put the load back where it came from.
+   */
+  | { t: 'give'; to: 'store' | 'input' | 'site' | 'person'; id?: number; qty?: number }
   | { t: 'labour'; id: number }
   | { t: 'sleep' }
   | { t: 'say'; text: string }
   /** Deferred consequence, applied the instant the preceding action finishes. */
   | {
       t: 'effect';
-      kind: 'eat' | 'sow' | 'tend' | 'reap' | 'batch' | 'extract' | 'catch' | 'arrived' | 'settled';
+      kind:
+        | 'eat'
+        | 'sow'
+        | 'tend'
+        | 'reap'
+        | 'batch'
+        | 'extract'
+        | 'catch'
+        | 'arrived'
+        | 'settled'
+        /** A patch of shore was dug over; it goes thin and then comes back. */
+        | 'dig'
+        /** The telescope changed hands. One moment per person, ever. */
+        | 'enlighten';
       id?: number;
       slot?: number;
       /** Which material this stint at the rock face was for, or which recipe ran. */
@@ -505,6 +573,27 @@ export interface Villager {
    * map and a tag in the roster. Cleared by looking, and never set again.
    */
   met: boolean;
+  /**
+   * Somebody put a telescope in their hands, and it happened once. Not a track
+   * they progress along and not a stat — a fact about the person, which is what
+   * lets the roster state it plainly and never explain it again.
+   *
+   * Deliberately self-contained: `day` and a count, nothing pointing back into
+   * this kingdom's buildings or ids. The direction of travel is that one day an
+   * enlightened villager walks out of here to found somewhere else and takes
+   * this with them, and a portable shape costs nothing to choose now.
+   */
+  enlightened?: { day: number; found: number };
+  /**
+   * The player has asked for a telescope to be carried to this person. It is a
+   * request rather than a reservation: it survives a save, it is cleared the
+   * moment the handover happens, and it does nothing at all until there is a
+   * telescope somewhere for somebody to pick up.
+   *
+   * Who gets one is the player's decision and is meant to be. Nothing in the
+   * simulation ever sets this.
+   */
+  wantsTelescope?: boolean;
   history: { day: number; text: string }[];
   /** Personal schedule jitter in day fractions. */
   wakeOffset: number;
@@ -548,6 +637,53 @@ export type SpeciesId =
   | 'deer'
   | 'fox'
   | 'owl';
+
+/**
+ * What there is to find in the sky. Four kinds, and the difference between them
+ * is how they behave in time rather than how good they are: a constellation
+ * belongs to a season and is always there in it, a planet comes round again, a
+ * shower is a night or two a year, and a comet happens when it happens.
+ */
+export type SkyKind = 'constellation' | 'planet' | 'meteor' | 'comet';
+
+export interface SkyDef {
+  id: string;
+  name: string;
+  kind: SkyKind;
+  /** Seasons it can be found in. Absent means any night of the year. */
+  seasons?: Season[];
+  /** Relative chance against the other candidates on a given night. */
+  weight: number;
+  /**
+   * The brightest moon this will still show through, 0..1. A full moon washes
+   * out the faint things, which is why the moon phase already in `sky.ts`
+   * finally does something besides tell the time.
+   */
+  maxMoon: number;
+  /** Observational, never a formula. The wildlife panel's rule, applied here. */
+  hint: string;
+}
+
+/**
+ * One thing somebody saw, on a particular night, with their name on it. This is
+ * the Observatory's actual output — not a score, a line in the record.
+ */
+export interface SkyFind {
+  id: string;
+  day: number;
+  year: number;
+  season: Season;
+  /** Who was looking. */
+  by: number;
+  /**
+   * Their name as it was that night. Kept beside the id because a record of who
+   * saw what should not quietly rewrite itself when somebody is renamed years
+   * later, and because the id may one day belong to nobody.
+   */
+  byName: string;
+  /** Comets take the finder's name. Everything else uses the def's. */
+  name?: string;
+}
 
 export interface SpeciesDef {
   id: SpeciesId;
@@ -705,6 +841,19 @@ export interface GameState {
     /** Per-species spawn cooldown, in game seconds. */
     cooldown: Partial<Record<SpeciesId, number>>;
   };
+  /**
+   * The night sky, paced exactly like the wildlife above and for the same
+   * reason: it lives on the state so that it survives a save and is left behind
+   * when a different kingdom is opened. `finds` is the record and is the whole
+   * point — the Observatory's output is a log with names in it, not a number.
+   */
+  sky: {
+    finds: SkyFind[];
+    /** Game seconds until the next look. */
+    check: number;
+    /** Per-thing cooldown, so a planet found tonight is not found again tomorrow. */
+    cooldown: Record<string, number>;
+  };
   founderId: number;
   founding: Founding;
   /**
@@ -737,6 +886,16 @@ export interface GameState {
     mined: number;
     /** Bars off the forge, iron and steel alike. Same reasoning. */
     smelted: number;
+    /** Glass out of the works. An accomplishment; the Kingdom Commons asks for it. */
+    glassMade: number;
+    /** Telescopes built, ever. */
+    telescopes: number;
+    /**
+     * People who have been given one. This is the endgame's only counter and it
+     * is deliberately not on the top bar — it is counted on the people, in the
+     * roster, where the thing it counts actually lives.
+     */
+    enlightened: number;
   };
   nameSeq: number;
 }

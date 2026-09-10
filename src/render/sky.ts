@@ -15,6 +15,9 @@
 
 import { clamp } from '../core/util';
 import type { Season } from '../types';
+// The moon's cycle is a fact about the calendar rather than about the picture:
+// the simulation reads it too, because a bright moon hides the faint things.
+import { moonPhase } from '../sim/defs';
 
 /** Day-fraction 0 is first light; the clock reads it as 05:00. */
 export const CLOCK_OFFSET_HOURS = 5;
@@ -136,16 +139,6 @@ export function celestial(dayT: number, day: number): Celestial {
     phase: moonPhase(day),
     through,
   };
-}
-
-/**
- * An eight-day cycle, and deliberately never a new moon: an invisible moon is
- * one night in eight with nothing in the sky to read the hour from, which is a
- * worse trade than a crescent that is a little fuller than it ought to be.
- */
-function moonPhase(day: number): number {
-  const p = (((day - 1) % 8) + 8) % 8 / 8;
-  return 0.25 + 0.75 * (1 - Math.abs(0.5 - p) * 2);
 }
 
 // ---------------------------------------------------------------------------

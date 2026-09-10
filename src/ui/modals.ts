@@ -35,7 +35,8 @@ import {
   storesOf,
   upgradeReqsOf,
 } from '../sim/defs';
-import { buildingById, homeCapacity, jobSlots, sourceOf, totalOf, villagerById, xpOf } from '../sim/state';
+import { buildingById, homeCapacity, isNight, jobSlots, sourceOf, totalOf, villagerById, xpOf } from '../sim/state';
+import { SKY, skyClosedReason } from '../sim/sky';
 import { buildLimit, commonsGrants, mineGrants } from '../sim/goals';
 import { foodGlut, labourNeeded, siteNeeds } from '../sim/villager';
 import { protectedBuilding } from '../sim/founding';
@@ -686,9 +687,10 @@ function buildingAbout(game: Game, b: Building): string {
  * The rule this section exists to obey: a disabled button is not an
  * explanation. Anything the player could be waiting on has to be readable
  * *before* they are waiting on it, so a requirement nobody has met yet is shown
- * exactly like one they have — same row, different mark. The last step of the
- * commons is deliberately impossible, and it appears here as a line saying so
- * rather than as a gap where a level ought to be.
+ * exactly like one they have — same row, different mark. `UpgradeReq.impossible`
+ * is still honoured for a step nothing can satisfy, which reads as a line
+ * saying so rather than as a gap where a level ought to be; nothing sets it
+ * now that the commons and the mine both run to the top.
  */
 function improveSection(game: Game, b: Building): string {
   const g = game.state;
@@ -931,6 +933,59 @@ export function wildlifeBody(game: Game): string {
 
   return `<div class="muted tiny" style="margin-bottom:11px">${g.discovered.size} of ${SPECIES_ORDER.length} kinds seen. What turns up depends on what the land looks like.</div>
     <div class="grid">${cards}</div>${namedList}`;
+}
+
+/**
+ * The night sky, and the second collection in the kingdom's record.
+ *
+ * Deliberately the same shape as the wildlife panel above, because it is the
+ * same kind of thing: observational hints, nothing found shown as "? ? ?", and
+ * no numbers behind any of it. Ecology is mysterious and so is the sky; the
+ * economy is the transparent half of this game and neither of these is it.
+ *
+ * What it has that wildlife does not is *names*. Every line says who saw it
+ * first, because that is the whole of what an observatory produces and the
+ * reason the endgame has no completion state — a kingdom that has found
+ * everything is still a kingdom whose people found it.
+ */
+export function skyBody(game: Game): string {
+  const g = game.state;
+  const has = g.buildings.some((b) => b.def === 'observatory' && b.stage === 'done');
+  const finds = new Map(g.sky.finds.map((f) => [f.id, f]));
+
+  if (!has && g.sky.finds.length === 0) {
+    return `<div class="muted tiny" style="line-height:1.6">Nobody here has looked yet. An observatory, and somebody with a telescope of their own, and there is a good deal up there.</div>`;
+  }
+
+  const cards = SKY.map((def) => {
+    const f = finds.get(def.id);
+    if (!f)
+      return `<div class="card unknown"><div class="cn"><span>? ? ?</span></div><div class="ch">Not seen yet.</div></div>`;
+    return `<div class="card"><div class="cn"><span>${esc(f.name ?? def.name)}</span>
+        <span class="muted tiny">${cap(f.season)}, year ${f.year}</span></div>
+      <div class="ch">${esc(def.hint)}</div>
+      <div class="ch" style="margin-top:5px;opacity:.85">First seen by ${esc(f.byName)}.</div></div>`;
+  }).join('');
+
+  // Whoever is out there. Shown because the collection is made of people, and
+  // a panel that listed only the things would be a panel about the sky rather
+  // than about this kingdom's history with it.
+  const lit = g.villagers.filter((v) => v.enlightened);
+  const watchers = lit.length
+    ? `<div style="margin-top:16px"><div class="muted tiny" style="text-transform:uppercase;letter-spacing:.7px;margin-bottom:8px">Out on clear nights</div>
+      <div class="row" style="gap:6px">${lit
+        .map(
+          (v) =>
+            `<button class="tag ${(v.enlightened?.found ?? 0) > 0 ? 'accent' : ''}" data-act="select-villager" data-id="${v.id}">${esc(v.name)}</button>`,
+        )
+        .join('')}</div></div>`
+    : `<div class="muted tiny" style="margin-top:14px;line-height:1.6">Nobody has been given a telescope yet. Open somebody's card and send them one.</div>`;
+
+  const closed = skyClosedReason(g, isNight(g.dayT));
+  return `<div class="muted tiny" style="margin-bottom:11px;line-height:1.6">${g.sky.finds.length} of ${SKY.length} things recorded.${
+    closed ? ` ${esc(closed)}` : ' The dome is open.'
+  }</div>
+    <div class="grid">${cards}</div>${watchers}`;
 }
 
 export function slotsBody(game: Game): string {

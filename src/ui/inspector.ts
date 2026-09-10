@@ -26,7 +26,8 @@ import {
   rankOf,
   traitJobMul,
 } from '../sim/defs';
-import { buildingById, jobSlots, paceOf, xpOf } from '../sim/state';
+import { buildingById, jobSlots, paceOf, totalOf, xpOf } from '../sim/state';
+import { SKY_BY_ID } from '../sim/sky';
 import { fishQuality } from '../world/terrain';
 import { fmtDuration } from '../core/util';
 import type { Game } from '../game';
@@ -136,6 +137,8 @@ export function villagerCard(game: Game): string {
       ${v.carrying ? `<div class="kv"><span class="k">Carrying</span><span class="v">${icon(v.carrying.res)}${Math.round(v.carrying.qty)}</span></div>` : ''}
     </div>
 
+    ${skySection(game, v)}
+
     ${history ? `<div class="section"><div class="h">History</div>${history}</div>` : ''}
 
     <div class="actions">
@@ -165,6 +168,66 @@ export function jobOptionsFor(game: Game, v: Villager): string {
     out += `<option value="${b.id}" ${mine ? 'selected' : ''}>${meta.name} — ${esc(def.name)} (${taken}/${slots})</option>`;
   }
   return out;
+}
+
+/**
+ * The one decision the endgame asks of the player, and it is asked here rather
+ * than at the observatory because it is a decision about a *person*.
+ *
+ * Three states and no more: somebody who has one, somebody a telescope is on
+ * its way to, and somebody who could be given one. There is deliberately no
+ * recommendation and no ranking — the roster puts nobody forward, and this is
+ * the same rule. Who gets the sky is the player's to decide.
+ *
+ * The section is absent entirely until the kingdom has an observatory, because
+ * a greyed button for a building nobody has built teaches nothing.
+ */
+function skySection(game: Game, v: Villager): string {
+  const g = game.state;
+  if (!g.buildings.some((b) => b.def === 'observatory')) return '';
+
+  if (v.enlightened) {
+    const found = v.enlightened.found;
+    const mine = g.sky.finds.filter((f) => f.by === v.id);
+    return `<div class="section">
+      <div class="h">The sky</div>
+      <div class="tiny" style="line-height:1.55">Given a telescope on day ${v.enlightened.day}. Out most clear nights since.</div>
+      ${
+        found > 0
+          ? `<div class="tiny muted" style="margin-top:6px;line-height:1.55">First to see ${mine
+              .map((f) => esc(f.name ?? SKY_BY_ID[f.id]?.name ?? f.id))
+              .join(', ')}.</div>`
+          : `<div class="tiny muted" style="margin-top:6px">Has not been first to anything yet. Most people never are.</div>`
+      }
+    </div>`;
+  }
+
+  const stock = Math.floor(totalOf(g, 'telescope'));
+  if (v.wantsTelescope) {
+    return `<div class="section">
+      <div class="h">The sky</div>
+      <div class="tiny" style="line-height:1.55">${
+        stock > 0
+          ? 'Somebody is bringing a telescope over.'
+          : 'Waiting on a telescope. The observatory is building one.'
+      }</div>
+      <div class="actions" style="margin-top:8px">
+        <button class="btn small" data-act="unsend-telescope" data-id="${v.id}">Never mind</button>
+      </div>
+    </div>`;
+  }
+
+  return `<div class="section">
+    <div class="h">The sky</div>
+    <div class="tiny muted" style="line-height:1.55">${
+      stock > 0
+        ? 'There is a telescope waiting at the observatory.'
+        : 'The observatory will build one. It takes most of a day.'
+    }</div>
+    <div class="actions" style="margin-top:8px">
+      <button class="btn small" data-act="send-telescope" data-id="${v.id}">${icon('telescope')}Send them a telescope</button>
+    </div>
+  </div>`;
 }
 
 export function animalCard(game: Game): string {

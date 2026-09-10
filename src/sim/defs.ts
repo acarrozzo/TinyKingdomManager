@@ -71,6 +71,23 @@ export const DAYS_PER_SEASON = 6;
 export const GAME_MINUTE = 60;
 
 /**
+ * How much of the moon is lit tonight, 0.25 to 1, on an eight-day cycle.
+ *
+ * Deliberately never a new moon: an invisible moon is one night in eight with
+ * nothing in the sky to read the hour from, which is a worse trade than a
+ * crescent a little fuller than it ought to be.
+ *
+ * It lives here with the rest of the calendar because it is no longer only a
+ * thing to look at. `sim/sky.ts` reads it too — a bright moon washes out the
+ * faint things — so there must be exactly one of these, and `render/sky.ts`
+ * takes it from here rather than keeping its own.
+ */
+export function moonPhase(day: number): number {
+  const p = ((((day - 1) % 8) + 8) % 8) / 8;
+  return 0.25 + 0.75 * (1 - Math.abs(0.5 - p) * 2);
+}
+
+/**
  * The kingdom's day, in day-fractions. `dayT` 0 is five in the morning, so the
  * clock is `dayT × 24 + 5` — the comments are what those fractions read as.
  *
@@ -251,6 +268,9 @@ export const RESOURCE_META: Record<string, { name: string; icon: string; color: 
   steelBar: { name: 'Steel Bar', icon: '🔗', color: '#c2cbd6' },
   mithrilOre: { name: 'Mithril Ore', icon: '🔷', color: '#7fb6cf' },
   mithrilBar: { name: 'Mithril Bar', icon: '💠', color: '#a8e0f0' },
+  sand: { name: 'Sand', icon: '⏳', color: '#d8c39a' },
+  glass: { name: 'Glass', icon: '🔹', color: '#a8d8e0' },
+  telescope: { name: 'Telescope', icon: '🔭', color: '#e6d9a8' },
 };
 
 /**
@@ -307,15 +327,27 @@ export const RESOURCE_INFO: Record<string, { from: string; used: string }> = {
   },
   steelBar: {
     from: 'The forge again: one iron bar and two coal make one steel bar.',
-    used: 'Nothing yet. It piles up handsomely and waits for the kingdom to think of something.',
+    used: 'Improving the mine to its deepest, and the frame of every telescope — four to each one.',
   },
   mithrilOre: {
-    from: 'Nowhere. There is talk of a seam under the deep workings, and talk is as far as it has got.',
-    used: 'Nothing, since there is none of it.',
+    from: 'The seam under the deep workings, once the mine has been sunk as far as it goes. The same miners again; nobody new is wanted for it.',
+    used: 'Smelted into mithril bars at the forge, one ore and four coal apiece.',
   },
   mithrilBar: {
-    from: 'Nowhere yet. The forge would want one mithril ore and four coal, if there were any ore.',
-    used: 'Nothing, since there is none of it.',
+    from: 'The forge, out of one mithril ore and four coal. The coal is the expensive half — nothing else in the kingdom burns four of anything.',
+    used: 'Telescopes, two to each one, and nothing else. It is too good for anything a person would build a wall out of.',
+  },
+  sand: {
+    from: 'Dug off the beach by whoever works the glassworks, a barrow at a time. The only raw material in the kingdom that comes off neither a tree nor the rock. A patch dug over goes thin for a while and the tide puts it back.',
+    used: 'Melted into glass, three to a pane, with a measure of coal to get the furnace hot enough.',
+  },
+  glass: {
+    from: 'The glassworks, out of three sand and one coal. Slower than anything the forge does, and it cannot be hurried by wanting it more.',
+    used: 'Telescopes, six apiece. There is nothing else in the kingdom to do with it, which is either a shame or the point.',
+  },
+  telescope: {
+    from: 'Built at the observatory out of glass, mithril, steel and a good deal of wood. One person, most of a day, and a walk to four different buildings to fetch the parts.',
+    used: 'Carried to somebody and put in their hands. That is the whole of it — a telescope is not kept, it is given, and afterwards that person looks at the sky for the rest of their life.',
   },
 };
 
@@ -344,6 +376,16 @@ export const JOB_META: Record<JobId, { name: string; icon: string; desc: string 
     desc: 'Works the water within reach of the hut, and carries the catch back. Nothing eats it until a cook has had it.',
   },
   smith: { name: 'Smith', icon: '🔥', desc: 'Smelts ore into iron bars at the forge, and iron bars into steel.' },
+  glassblower: {
+    name: 'Glassblower',
+    icon: '🏺',
+    desc: 'Digs sand off the shore and melts it into glass. One trade for both halves of it.',
+  },
+  astronomer: {
+    name: 'Astronomer',
+    icon: '🌌',
+    desc: 'Builds telescopes at the observatory, and watches the sky from it after dark.',
+  },
 };
 
 /**
@@ -478,9 +520,9 @@ function standing(g: GameState, def: BuildingId): boolean {
  * told it has gone backwards.
  *
  * Nothing here may ask for something the same step unlocks, or the ladder eats
- * its own tail. The last step deliberately asks for something nothing can do
- * yet — the Kingdom Commons is the far end of the arc, written down and openly
- * out of reach rather than quietly missing.
+ * its own tail. The Kingdom Commons is the far end of the arc and is now
+ * reachable: it asks for the glassworks, which a goal opens off the first coal,
+ * so the commons never gates its own prerequisite.
  */
 const COMMONS_REQS: UpgradeReq[][] = [
   [
@@ -502,7 +544,14 @@ const COMMONS_REQS: UpgradeReq[][] = [
       met: (g) => g.buildings.some((b) => b.stage === 'done' && !!BUILDINGS[b.def].job && b.workers.length > 0),
     },
   ],
-  [{ label: 'A way of building that nobody here knows', met: () => false, impossible: true }],
+  [
+    // The endgame's front door. A Glassworks is opened by a goal on the first
+    // coal rather than by the commons, which is what keeps this from eating its
+    // own tail: the commons asks for a building it does not itself hand over.
+    { label: 'A glassworks on the shore', met: (g) => standing(g, 'glassworks') },
+    { label: 'Twenty panes of glass out of it', met: (g) => g.stats.glassMade >= 20 },
+    { label: 'Twelve people about the place', met: (g) => g.villagers.length >= 12 },
+  ],
 ];
 
 /**
@@ -515,8 +564,10 @@ const COMMONS_REQS: UpgradeReq[][] = [
  * And every requirement is an accomplishment rather than a stock level, because
  * what is in storage goes down again the moment anybody builds a cabin.
  *
- * The last step is deliberately out of reach, exactly like the Kingdom Commons.
- * Turning mithril on later is a one-line change to that predicate.
+ * The last step asks only for the settlement, because its *cost* already asks
+ * for twenty steel bars and steel needs the coal this mine's previous level
+ * brought up. The price carries the metallurgy; the requirement carries the
+ * kingdom.
  */
 const MINE_REQS: UpgradeReq[][] = [
   [
@@ -527,7 +578,15 @@ const MINE_REQS: UpgradeReq[][] = [
     { label: 'A forge, standing and lit', met: (g) => standing(g, 'forge') },
     { label: 'Twenty bars off it', met: (g) => g.stats.smelted >= 20 },
   ],
-  [{ label: 'A seam nobody here has found yet', met: () => false, impossible: true }],
+  [
+    // Only the settlement is asked for here, because the *cost* of this step
+    // already asks for twenty steel bars — and steel needs coal, which needs
+    // the Deep Mine this step is sunk from. The metallurgy proof is in the
+    // price; repeating it as a requirement would be the ladder saying the same
+    // thing twice.
+    { label: 'A Kingdom Commons to work out of', met: (g) => commonsAt(g, 4) },
+    { label: 'Two thousand stone up out of this rock', met: (g) => g.stats.mined >= 2000 },
+  ],
 ];
 
 /** The commons at a given level, for the requirements above. */
@@ -586,22 +645,29 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     h: 2,
     cost: { wood: 20 },
     labour: 45,
-    maxLevel: 3,
+    maxLevel: 4,
     // A cabin grows into a cottage rather than being replaced by one: planks
-    // and thatch, then a chimney, then stone footings and a tiled roof.
+    // and thatch, then a chimney, then stone footings and a tiled roof, and
+    // last a second storey under a dormer. The iron in that final step is
+    // deliberate — it is the only thing in the kingdom besides the mine's own
+    // ladder that wants bars, and it keeps the step genuinely late.
     upgradeCosts: [
       { wood: 45, stone: 25 },
       { wood: 90, stone: 55 },
+      { wood: 160, stone: 100, ironBar: 8 },
     ],
     order: 0,
     unlock: 'cabin',
     desc: 'A roof, a door, and somewhere dry to sleep. Sleeps two, and grows.',
-    how: 'Somewhere dry to sleep, and at first that is the whole of it — nothing is kept here. People walk home at their own bedtime and rise at their own hour, a little earlier or later than each other. Improving it adds two more beds and a good deal more building: a chimney first, then stone footings and a proper roof. Six sleep in a finished one. How many cabins the kingdom may have at once is set by the commons — one more with every step it takes — so a growing settlement is usually better served by improving the cabins it has. On the day one is finished it takes in anyone still sleeping out at the commons, and you can move people between cabins yourself from this panel.',
+    how: 'Somewhere dry to sleep, and at first that is the whole of it — nothing is kept here. People walk home at their own bedtime and rise at their own hour, a little earlier or later than each other. Improving it adds two more beds and a good deal more building: a chimney first, then stone footings and a proper roof, and last a second storey under a dormer, which wants iron as well as timber. Eight sleep in a finished one. How many cabins the kingdom may have at once is set by the commons — one more with every step it takes — so a growing settlement is usually better served by improving the cabins it has. On the day one is finished it takes in anyone still sleeping out at the commons, and you can move people between cabins yourself from this panel.',
     // One more cabin per step the commons takes. Housing is the tightest of the
     // two counts by design: a cabin that grows to six beds is worth more than a
     // second cabin of two, and this is what makes that the obvious move.
     maxCount: [1, 2, 3, 4],
-    housing: [2, 4, 6],
+    // Four cabins of eight, plus the commons' two, is a kingdom of 34. That is
+    // the ceiling and it is meant to be one: still a place where the player
+    // knows everybody's name.
+    housing: [2, 4, 6, 8],
     sheltered: true,
     light: [{ x: 1.0, y: 1.35, radius: 36, color: '#ffc06a' }],
     solid: true,
@@ -722,7 +788,7 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     upgradeCostMul: 2.0,
     order: 26,
     desc: 'Ore becomes iron, and iron becomes steel. Wants an Iron Mine behind it.',
-    how: 'One iron ore makes one iron bar, and that part wants no coal at all — the coal is for the next step, where one iron bar and two coal make one steel bar. There is a third recipe written on the wall, for mithril, and nobody here has ever seen any. The smith walks to the mine for ore and coal and keeps a working supply of each on the bench; the bars stay here, 250 of each and 1,000 once it is improved. Iron bars being kept here is why steel is easy — the smith reaches for one off the stack rather than fetching it from anywhere. Which of the two it is working on is set by the Making box on this panel; left Balanced it smelts ore into iron and only reaches for the coal once there are bars to spare. Short of something, it simply waits — nothing here is spoiled or lost by a bench running empty. There is one forge, and it can be moved, bars and all.',
+    how: 'One iron ore makes one iron bar, and that part wants no coal at all — the coal is for the next step, where one iron bar and two coal make one steel bar. There is a third recipe for mithril — one ore and four coal, the most expensive thing the kingdom burns — which waits until the mine has been sunk far enough to find any. The smith walks to the mine for ore and coal and keeps a working supply of each on the bench; the bars stay here, 250 of each and 1,000 once it is improved. Iron bars being kept here is why steel is easy — the smith reaches for one off the stack rather than fetching it from anywhere. Which of the two it is working on is set by the Making box on this panel; left Balanced it smelts ore into iron and only reaches for the coal once there are bars to spare. Short of something, it simply waits — nothing here is spoiled or lost by a bench running empty. There is one forge, and it can be moved, bars and all.',
     slots: [1, 2],
     job: 'smith',
     // Iron wants no coal. That is the one thing about this building people get
@@ -730,7 +796,11 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     recipes: [
       { inputs: { ironOre: 1 }, outputs: { ironBar: 1 }, seconds: 14 },
       { inputs: { ironBar: 1, coal: 2 }, outputs: { steelBar: 1 }, seconds: 26 },
-      { inputs: { mithrilOre: 1, coal: 4 }, outputs: { mithrilBar: 1 }, seconds: 40, locked: true },
+      // No longer locked: the Mithril Mine is reachable, so the forge can run
+      // this the moment there is ore for it. Whether it is *offered* as a focus
+      // is a question about the world rather than about the forge, and
+      // `resourceKnown` in `state.ts` answers it at the two call sites.
+      { inputs: { mithrilOre: 1, coal: 4 }, outputs: { mithrilBar: 1 }, seconds: 40 },
     ],
     focusNote:
       'Balanced smelts ore into iron and only reaches for the coal once there are bars to spare. Name one and it will favour that instead. Changing your mind costs nothing, and nothing in progress is lost.',
@@ -831,6 +901,77 @@ export const BUILDINGS: Record<BuildingId, BuildingDef> = {
     range: [10, 13],
     unique: true,
     unlock: 'fishhut',
+    solid: true,
+  },
+  /*
+   * The shore building, and the first the kingdom has ever had a reason to put
+   * anywhere but the middle. Sand is dug from the beach in its reach and melted
+   * with coal fetched up from the mine, which makes it the longest routine haul
+   * in the game and the first real argument for siting a storehouse.
+   */
+  glassworks: {
+    id: 'glassworks',
+    name: 'Glassworks',
+    category: 'production',
+    w: 2,
+    h: 2,
+    cost: { wood: 60, stone: 80, ironBar: 10 },
+    labour: 150,
+    maxLevel: 2,
+    upgradeCostMul: 2.2,
+    order: 27,
+    desc: 'Stands on dry land with beach in reach. Sand and coal go in; glass comes out.',
+    how: 'It has to stand on dry land with sand inside its reach, which means the shore — the ring drawn while you are placing it marks every patch worth digging. Glassblowers walk out with a barrow, dig, and carry it back; a patch worked over goes thin for a while and the tide puts it back, so the beach can never be dug out and a works on a thin stretch is slow rather than idle. Three sand and one coal make one pane, in about thirty seconds, which is slower than anything the forge does and cannot be hurried. The coal has to come up from the mine, and nobody here fetches it for free: this is the longest walk in the kingdom, and a storehouse somewhere along it is worth more than almost anything else you could build. Sand and glass are both kept here, 250 of each and 1,000 once it is improved. There is one glassworks, and it can be moved when the good sand is somewhere else.',
+    slots: [1, 2],
+    job: 'glassblower',
+    digsSand: true,
+    recipe: { inputs: { sand: 3, coal: 1 }, outputs: { glass: 1 }, seconds: 30 },
+    holds: ['sand', 'glass'],
+    range: [10, 13],
+    unique: true,
+    unlock: 'glassworks',
+    light: [{ x: 1.0, y: 1.3, radius: 44, color: '#ff9a4a' }],
+    solid: true,
+  },
+  /*
+   * The last building, and the only one whose output is a person.
+   *
+   * It makes telescopes to order rather than to a shelf: the throttle in
+   * `villager.ts` counts the villagers nobody has given one to yet, and when
+   * there are already that many in stock the astronomer banks the fire and goes
+   * and helps elsewhere. That is the kitchen's rule with a different noun — a
+   * decision about people, never about shelf room.
+   */
+  observatory: {
+    id: 'observatory',
+    name: 'Observatory',
+    category: 'production',
+    w: 3,
+    h: 3,
+    cost: { wood: 150, stone: 220, steelBar: 30 },
+    labour: 260,
+    maxLevel: 1,
+    order: 28,
+    desc: 'The last thing the kingdom builds. Telescopes by day; the sky by night.',
+    how: 'The largest building in the kingdom and the end of four separate chains. An astronomer works it: by day they walk to the glassworks, the forge and the lodge for the parts and put a telescope together, which takes the better part of a day once the fetching is counted; after dark they go up and watch. A telescope is not stored for its own sake — it is carried to somebody and put in their hands, and that person is changed by it for good. Because that happens once per person, the observatory knows how many are wanted: when there is one waiting for everybody who has not been given one, it stops, and the astronomer goes and helps elsewhere until somebody new arrives. Anybody at all may walk up here after dark and look, whether or not they have any business with it, and enlightened villagers will get out of bed to. Its lamps are dim and red, because you do not ruin your eyes to read a chart by. There is one observatory, and it can be moved.',
+    slots: [1],
+    job: 'astronomer',
+    /*
+     * Ten game-minutes, a third of a day, and the fetching on top of it.
+     *
+     * It was four to begin with, which measured out at four telescopes a
+     * working day once the bench was stocked — and thirty-four of them handed
+     * out inside a week is not an endgame, it is a formality. The whole of what
+     * this number is for is making the moment an occasion.
+     */
+    recipe: { inputs: { glass: 6, mithrilBar: 2, steelBar: 4, wood: 20 }, outputs: { telescope: 1 }, seconds: 600 },
+    holds: ['telescope'],
+    unique: true,
+    unlock: 'observatory',
+    // Dim and red on purpose. Every other light in the kingdom is there to make
+    // a window look warm; this one is there to not spoil anybody's night vision,
+    // and it should read as the darkest building on the map after sunset.
+    light: [{ x: 1.5, y: 1.6, radius: 30, color: '#8c2f26' }],
     solid: true,
   },
   well: {
@@ -1084,6 +1225,17 @@ export function holdsOf(def: BuildingId, level: number): ResourceId[] {
  * see `Building.cacheRetired`. Nothing else in the game passes it, because the
  * commons is the only building that has a cache to close.
  */
+/**
+ * Compartments that do not take the ordinary ladder.
+ *
+ * Only the telescope, and only because two hundred and fifty of them would be
+ * absurd: a telescope is made to order for one particular person and handed
+ * over within the day. The real governor is the observatory's throttle, which
+ * stops work when there is one waiting for everybody who has not been given
+ * one; this is a backstop, and a stock at this number means something is wrong.
+ */
+export const RESOURCE_CAP: Partial<Record<ResourceId, number>> = { telescope: 4 };
+
 const storesCache = new Map<string, Readonly<Partial<Record<ResourceId, number>>>>();
 export function storesOf(
   def: BuildingId,
@@ -1095,7 +1247,7 @@ export function storesOf(
   if (!out) {
     const cap = STORAGE_TIERS[Math.min(level, STORAGE_TIERS.length) - 1];
     const built: Partial<Record<ResourceId, number>> = {};
-    for (const res of holdsOf(def, level)) built[res] = cap;
+    for (const res of holdsOf(def, level)) built[res] = RESOURCE_CAP[res] ?? cap;
     const cache = BUILDINGS[def].cache;
     if (cache && !retired) for (const k in cache) built[k as ResourceId] = cache[k as ResourceId];
     out = built;
@@ -1114,9 +1266,15 @@ export function inputCapOf(_def: BuildingId, level: number): number {
  * per thing it can currently produce.
  *
  * Only what this *level* reaches is offered. A Quarry does not list Iron Ore it
- * cannot get at, and the forge does not list mithril; offering a choice that
- * cannot be acted on is worse than not offering it, because the player spends
- * the next ten minutes wondering why nothing happened.
+ * cannot get at; offering a choice that cannot be acted on is worse than not
+ * offering it, because the player spends the next ten minutes wondering why
+ * nothing happened.
+ *
+ * The forge's mithril is the one this cannot answer alone, because its gate is
+ * the *mine's* level rather than the forge's. This stays pure and the two
+ * callers — the focus picker and `Game.setFocus` — narrow the list with
+ * `resourceKnown`, which is the single authority on what the kingdom has heard
+ * of.
  */
 export function focusOptions(def: BuildingId, level: number): Focus[] {
   const made = outputsOf(def, level);
@@ -1143,6 +1301,8 @@ export const BALANCE_TARGET: Partial<Record<ResourceId, number>> = {
   ironBar: 30,
   steelBar: 20,
   mithrilBar: 10,
+  sand: 60,
+  glass: 20,
 };
 
 /** Default reach for a building whose workers go out to nodes. */
@@ -1219,6 +1379,34 @@ export const FISH_SEASON: Record<string, number> = {
   autumn: 1.0,
   winter: 0.8,
 };
+
+// ---------------------------------------------------------------------------
+// The shore
+// ---------------------------------------------------------------------------
+
+/**
+ * Digging sand, which is fishing's twin and is tuned against it deliberately.
+ *
+ * The beach is a ring and therefore finite, so it must never be a node that
+ * empties: a patch dug over goes thin and the tide brings it back, exactly as a
+ * fished-out pool comes back. A glassworks on a thin stretch of shore is slow
+ * and is never idle, which is the same promise the hut and the mine both make.
+ */
+export const SAND_SECONDS = 9;
+/** What one go at an undisturbed patch brings back. A barrow holds more than a rod lands. */
+export const SAND_YIELD = 4;
+/** How much of a patch's rest one go spends, and how fast it comes back — five game-minutes. */
+export const SAND_TIRE = 0.3;
+export const SAND_REST = 1 / (60 * 5);
+/** What the most-worked patch on the island still gives. Never zero. */
+export const SAND_FLOOR = 0.35;
+/**
+ * What a patch has to be worth before the works' ring marks it and the
+ * placement bar counts it. Thinner sand is still perfectly diggable.
+ */
+export const GOOD_SAND = 0.55;
+/** How close the works has to be to the beach to count as beside it. Matches `WATER_NEAR`. */
+export const SAND_NEAR = 3;
 
 // ---------------------------------------------------------------------------
 // Food

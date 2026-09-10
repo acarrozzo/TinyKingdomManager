@@ -12,6 +12,7 @@ import { JOB_META } from '../sim/defs';
 import { buildGoals } from '../sim/goals';
 import { restoreIdCounter } from '../sim/state';
 import { SURVEY_INTERVAL, newWildlifeTimers } from '../sim/wildlife';
+import { SKY_BY_ID, SKY_INTERVAL, newSkyTimers } from '../sim/sky';
 import { clamp, rng, seedGameplayRng } from '../core/util';
 
 const SLOT_INDEX = 'tkm.slots';
@@ -278,6 +279,10 @@ export function serialize(g: GameState): SavePayload {
       favoriteFood: v.favoriteFood,
       arrived: v.arrived,
       met: v.met,
+      // Somebody put a telescope in their hands. Written as its own small
+      // object rather than a flag, because it is meant to be portable.
+      enlightened: v.enlightened,
+      wantsTelescope: v.wantsTelescope,
       history: v.history,
       wakeOffset: v.wakeOffset,
       sleepOffset: v.sleepOffset,
@@ -307,6 +312,10 @@ export function serialize(g: GameState): SavePayload {
     founderId: g.founderId,
     founding: g.founding,
     wildlife: g.wildlife,
+    // The record of what this kingdom has seen, and who saw it. The single
+    // most valuable thing in a long save: a kingdom's buildings can be rebuilt
+    // and its wood re-cut, and nobody can see a comet for the first time twice.
+    sky: g.sky,
     stats: g.stats,
   };
 }
@@ -325,6 +334,8 @@ function packTiles(g: GameState) {
   // every spot back at full would make closing the tab the fastest way to
   // freshen the lake, which is the same bug the wildlife cooldowns had.
   const fish = new Uint8Array(n);
+  // …and how dug-over each patch of shore is, for exactly the same reason.
+  const sand = new Uint8Array(n);
   for (let i = 0; i < n; i++) {
     const t = g.tiles[i];
     terrain[i] = t.terrain;
@@ -336,6 +347,7 @@ function packTiles(g: GameState) {
     plot[i] = t.plot;
     blocked[i] = t.blocked ? 1 : 0;
     fish[i] = Math.round(clamp(t.fish, 0, 1) * 100);
+    sand[i] = Math.round(clamp(t.sand, 0, 1) * 100);
   }
   return {
     terrain: rle(terrain),
@@ -350,6 +362,7 @@ function packTiles(g: GameState) {
     // to almost nothing — the same reason terrain and props are run-length
     // encoded rather than written out per tile.
     fish: rle([...fish].map(String)),
+    sand: rle([...sand].map(String)),
   };
 }
 
@@ -390,6 +403,9 @@ export function deserialize(raw: unknown): GameState {
   const terrain = unrle(packed.terrain, n);
   const prop = unrle(packed.prop, n);
   const fish = packed.fish ? unrle(packed.fish, n) : null;
+  // Absent in kingdoms saved before the shore meant anything. Undug is the
+  // honest default: nobody had ever taken a barrow to it.
+  const sand = packed.sand ? unrle(packed.sand, n) : null;
 
   const tiles = new Array(n);
   for (let i = 0; i < n; i++) {
@@ -407,6 +423,7 @@ export function deserialize(raw: unknown): GameState {
       plot: packed.plot[i] ?? 0,
       claimed: 0,
       fish: fish ? clamp(Number(fish[i]) / 100, 0, 1) : 1,
+      sand: sand ? clamp(Number(sand[i]) / 100, 0, 1) : 1,
     };
   }
 
@@ -472,6 +489,7 @@ export function deserialize(raw: unknown): GameState {
     weatherKind: p.weatherKind ?? 'clear',
     claims: new Map(),
     wildlife: reviveWildlife(p.wildlife),
+    sky: reviveSky(p.sky),
     founderId: p.founderId ?? 0,
     founding: p.founding,
     // Never saved: whatever was on the water when the tab closed has landed.
@@ -485,6 +503,14 @@ export function deserialize(raw: unknown): GameState {
       arrivals: 1,
       mined: 0,
       smelted: 0,
+      // A kingdom saved before the shore and the sky existed has none of these,
+      // and nought is the truth for it: nobody had melted anything and nobody
+      // had been given a telescope. The defaults have to be listed *before* the
+      // spread, or an older save leaves them undefined and every later `+= 1`
+      // turns the count into NaN.
+      glassMade: 0,
+      telescopes: 0,
+      enlightened: 0,
       ...(p.stats ?? {}),
     },
     nameSeq: 0,
@@ -543,6 +569,48 @@ function reviveWildlife(saved: any): GameState['wildlife'] {
 }
 
 /**
+ * The night sky's record and its pacing.
+ *
+ * A kingdom saved before there was an observatory simply has none of this, and
+ * an empty record is exactly right for one: it had not seen anything, because
+ * there was nothing to see it with. No version bump is owed for that.
+ */
+function reviveSky(saved: any): GameState['sky'] {
+  const fresh = newSkyTimers();
+  if (!saved || typeof saved !== 'object') return fresh;
+  const finds = Array.isArray(saved.finds)
+    ? saved.finds
+        .filter((f: any) => f && typeof f.id === 'string' && SKY_BY_ID[f.id])
+        .map((f: any) => ({
+          id: String(f.id),
+          day: Number(f.day) || 1,
+          year: Number(f.year) || 1,
+          season: (f.season ?? 'spring') as GameState['season'],
+          by: Number(f.by) || 0,
+          byName: String(f.byName ?? 'Somebody'),
+          name: typeof f.name === 'string' ? f.name : undefined,
+        }))
+    : [];
+  const check = Number(saved.check);
+  return {
+    finds,
+    check: Number.isFinite(check) ? clamp(check, 0, SKY_INTERVAL) : SKY_INTERVAL,
+    cooldown: saved.cooldown && typeof saved.cooldown === 'object' ? { ...saved.cooldown } : {},
+  };
+}
+
+/**
+ * Enlightenment, which happens once and is never undone. Absent means it never
+ * happened, which is the truth for every kingdom saved before the observatory.
+ */
+function reviveEnlightened(saved: any): { day: number; found: number } | undefined {
+  if (!saved || typeof saved !== 'object') return undefined;
+  const day = Number(saved.day);
+  const found = Number(saved.found);
+  return { day: Number.isFinite(day) ? day : 1, found: Number.isFinite(found) ? Math.max(0, found) : 0 };
+}
+
+/**
  * The Helper became the General Worker, and the Keeper — a trade with no
  * workplace and no behaviour — went entirely. Old kingdoms are moved across
  * rather than refused: nobody loses a post they were standing in, and a Keeper
@@ -593,6 +661,8 @@ function reviveVillager(v: any): Villager {
     // met. The alternative is a settled village of twenty greeting its own
     // residents as strangers, which is worse than missing one real newcomer.
     met: v.met ?? true,
+    enlightened: reviveEnlightened(v.enlightened),
+    wantsTelescope: v.wantsTelescope === true,
     history: v.history ?? [],
     wakeOffset: v.wakeOffset ?? 0,
     sleepOffset: v.sleepOffset ?? 0,

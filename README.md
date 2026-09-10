@@ -30,9 +30,23 @@ the rocky ground a mine stands on, which does not run out.
 **The loop.** One villager → choose a campsite → fell one tree by hand → the
 Base Camp goes up on that load → Cabin → Storehouse → Woodcutter's Lodge →
 Quarry → Wheat Farm → Windmill → Bakery, and then the mine sunk deeper into an
-Iron Mine and a Deep Mine with a Forge behind it. Wheat becomes flour becomes
-bread; ore becomes iron becomes steel. Every step of that is carried across the
-map on foot by someone you can click on.
+Iron Mine, a Deep Mine and at last a Mithril Mine, with a Forge behind it.
+Wheat becomes flour becomes bread; ore becomes iron becomes steel. Every step of
+that is carried across the map on foot by someone you can click on.
+
+**And then the sky.** The first coal opens the shore: a **Glassworks** on the
+beach, where somebody digs sand by the barrow and melts it. Glass, mithril,
+steel and a good deal of wood become a **telescope** at the **Observatory** —
+the largest thing the kingdom builds, and the only one with a round roof. A
+telescope is not kept. It is carried across the kingdom and put into somebody's
+hands, and from that night on that person is out on clear evenings looking up.
+
+It happens once per person, so the observatory knows how many are wanted and
+stops when there are enough; somebody new arriving starts it again. What comes
+back is not a score — it is the kingdom's own record of the sky, fourteen things
+to find, gated on clear weather and a moon that is not too bright, each one
+written into the journal under the name of whoever saw it first. Comets take
+their finder's name.
 
 **Construction.** Nothing appears when you buy it. A placed building becomes a
 site with corner posts; villagers haul the materials over, then put in the
@@ -57,7 +71,8 @@ A full compartment stops people gathering more of that one thing, and nothing
 else. It never stops someone putting down what they are already holding, so a
 figure can read a little over its limit while the last loads come in.
 
-**Jobs and experience.** Helper, Woodcutter, Miner, Farmer, Miller, Baker, Smith.
+**Jobs and experience.** Helper, Woodcutter, Miner, Farmer, Miller, Baker,
+Smith, Glassblower, Astronomer.
 Experience accrues per profession, only from doing the work, and is kept
 forever — Novice / Adept / Journeyman / Expert / Master. Moving a master farmer
 to the mill costs you their farming output, not their farming history. Skill is
@@ -145,7 +160,9 @@ you are near it, and short one-shots for work and building.
 
 Deliberately left for later, per the brief: expeditions, domestic animals, a
 research tree, visiting merchants, aging and retirement, land expansion, and
-the wider collections. The systems they'd hang off — journal, discovery,
+the wider collections. The economy still outruns its own demand once everybody
+has a telescope — the mine and the forge keep filling compartments nothing draws
+on. That is a known, accepted resting place rather than an oversight. The systems they'd hang off — journal, discovery,
 unlocks, per-building job slots, the goal list — are all in place.
 
 ---

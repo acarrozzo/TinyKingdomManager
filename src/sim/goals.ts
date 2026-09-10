@@ -71,6 +71,10 @@ export function unlockCommonsTier(g: GameState, level: number): void {
  */
 const MINE_UNLOCKS: Record<number, string[]> = {
   2: ['forge'],
+  // The same reasoning one tier up: mithril with nowhere to take it would be a
+  // resource that did nothing, and the observatory is the only thing that wants
+  // any. The mine hands over the building that consumes what it brings up.
+  4: ['observatory'],
 };
 
 /** Called when the mine is finished or sunk deeper, with the level it now is. */
@@ -346,6 +350,95 @@ export function buildGoals(): Goal[] {
       desc: 'Change the land and different creatures turn up. Trees, water and flowers all matter.',
       done: false,
       check: (g) => g.discovered.size >= 5,
+    },
+    // --- The endgame. ---
+    //
+    // It opens off the first coal, which the Deep Mine already produces, so
+    // nothing new gates the front door. From here the arc runs shore → commons
+    // → mithril → observatory → people, and it ends on counts rather than on
+    // completeness: see `enlighten12` below.
+    {
+      id: 'coal',
+      title: 'Strike coal in the deep workings',
+      desc: 'The third thing the mine becomes turns up coal, and coal is what gets a furnace hot enough to melt sand. There is a use for the shore after all.',
+      done: false,
+      check: (g) => totalOf(g, 'coal') >= 1 || g.unlocked.has('seen:coal'),
+      unlocks: 'glassworks',
+    },
+    {
+      id: 'glassworks',
+      title: 'Raise a Glassworks on the shore',
+      desc: 'It wants dry land with beach in reach — the ring drawn while you place it marks every patch worth digging. The coal has to be carried down from the mine, which is the longest walk in the kingdom and the best argument for a storehouse you will ever get.',
+      done: false,
+      check: (g) => has(g, 'glassworks'),
+    },
+    {
+      id: 'glass',
+      title: 'Melt the first glass',
+      desc: 'Three sand and one coal. Slower than anything the forge does, and there is no hurrying it.',
+      done: false,
+      check: (g) => g.stats.glassMade >= 1,
+    },
+    {
+      id: 'kingdom',
+      title: 'Make it a Kingdom Commons',
+      desc: 'The last step the commons takes. It asks for the glassworks, twenty panes off it, and twelve people about the place — and it hands back a fourth cabin and a fourth storehouse.',
+      done: false,
+      check: (g) => has(g, 'commons', 4),
+    },
+    {
+      id: 'mithril',
+      title: 'Sink the mine to mithril',
+      desc: 'There was a seam under the deep workings after all. It costs twenty steel bars to reach, and the same miners bring it up as bring up everything else.',
+      done: false,
+      check: (g) => has(g, 'quarry', 4),
+    },
+    {
+      id: 'mithrilbar',
+      title: 'Draw the first mithril bar',
+      desc: 'One ore and four coal — the most expensive thing the kingdom burns. There is exactly one thing to do with the result.',
+      done: false,
+      check: (g) => totalOf(g, 'mithrilBar') >= 1,
+    },
+    {
+      id: 'observatory',
+      title: 'Raise the Observatory',
+      desc: 'The largest building the kingdom has, and the last. Four chains end here.',
+      done: false,
+      check: (g) => has(g, 'observatory'),
+    },
+    {
+      id: 'telescope',
+      title: 'Build the first telescope',
+      desc: 'Glass, mithril, steel and a good deal of wood, fetched from four different buildings by one person. It takes most of a day, and it is not for the observatory to keep.',
+      done: false,
+      check: (g) => g.stats.telescopes >= 1,
+    },
+    {
+      id: 'enlighten',
+      title: 'Give somebody the sky',
+      desc: 'Open anybody\u2019s card and send them the telescope. Somebody will carry it over and put it in their hands, and from that night on they will be out looking at things and writing down what they saw.',
+      done: false,
+      check: (g) => g.stats.enlightened >= 1,
+    },
+    {
+      id: 'sky5',
+      title: 'Record five things in the sky',
+      desc: 'Clear nights, and a moon that is not too bright. The rest is patience — some of it is up there every year, and some of it has never been seen by anybody.',
+      done: false,
+      check: (g) => g.sky.finds.length >= 5,
+    },
+    {
+      // A count, deliberately, and not "everybody". Enlightening the whole
+      // kingdom stops being true the moment somebody new walks in, and a
+      // requirement in this game may not un-happen. The all-enlightened state
+      // is said mechanically instead — the observatory simply stops — which is
+      // a truer way to put it than a tick in a list.
+      id: 'enlighten12',
+      title: 'Give twelve people the sky',
+      desc: 'One each, and it happens once. There is no hurrying this and nothing is lost by taking years over it.',
+      done: false,
+      check: (g) => g.stats.enlightened >= 12,
     },
   ];
 }

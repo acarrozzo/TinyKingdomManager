@@ -54,6 +54,7 @@ import {
   slotsBody,
   soundBody,
   viewBody,
+  skyBody,
   wildlifeBody,
 } from './modals';
 import {
@@ -89,6 +90,7 @@ function panelHead(parts: PanelParts): string {
 const KINGDOM_SUBS = [
   'Everything that has happened here',
   'What has been seen, and what has not',
+  'What has been seen from the observatory',
   'What the kingdom is working towards',
   'Saved kingdoms, viewing and sound',
 ];
@@ -1031,6 +1033,8 @@ export class UI {
     switch (Math.min(this.modalTab, KINGDOM_TABS.length - 1)) {
       case KTAB.wildlife:
         return wildlifeBody(this.game);
+      case KTAB.sky:
+        return skyBody(this.game);
       case KTAB.goals:
         return goalsBody(this.game);
       case KTAB.settings:
@@ -1366,6 +1370,14 @@ export class UI {
         break;
       case 'fav-villager':
         game.toggleFavorite('villager', id);
+        break;
+      // Asking for a telescope, and taking the request back. Both are free and
+      // neither reassigns anybody — see `Game.sendTelescope`.
+      case 'send-telescope':
+        game.sendTelescope(id, true);
+        break;
+      case 'unsend-telescope':
+        game.sendTelescope(id, false);
         break;
       /*
        * The roster's own controls. Both only change what is on screen, so they

@@ -28,6 +28,9 @@ import {
   MINE_YIELD,
   PERSONAL_DAY_SHIFT,
   RESOURCE_META,
+  SAND_SECONDS,
+  SAND_TIRE,
+  SAND_YIELD,
   SCHEDULE,
   SEVERE_HUNGER,
   TERRAIN_SPEED,
@@ -64,7 +67,9 @@ import {
   releaseClaim,
   roomIn,
   sourceOf,
+  isNight,
   totalOf,
+  villagerById,
   withdraw,
   xpOf,
 } from './state';
@@ -73,10 +78,13 @@ import {
   findFishingSpot,
   findNode,
   findRockFace,
+  findSandSpot,
   isWalkable,
   rockInRange,
+  sandYield,
   spotYield,
   tileAt,
+  workSand,
   workSpot,
 } from '../world/terrain';
 import { findPath, footprintApproach } from '../world/path';
@@ -589,6 +597,37 @@ function doEffect(g: GameState, v: Villager, step: Extract<Step, { t: 'effect' }
       }
       break;
     }
+    case 'dig': {
+      const x = step.x ?? Math.round(v.x);
+      const y = step.y ?? Math.round(v.y);
+      // The shore's twin of `catch`, down to the floor under it: a patch dug
+      // over and over is slow and is never empty. The beach is a ring and
+      // therefore finite, so it must never be a thing that runs out.
+      const got = Math.max(1, Math.round(SAND_YIELD * sandYield(g, x, y)));
+      workSand(g, x, y, SAND_TIRE);
+      if (v.carrying && v.carrying.res === 'sand') v.carrying.qty += got;
+      else if (!v.carrying) v.carrying = { res: 'sand', qty: got };
+      break;
+    }
+    case 'enlighten': {
+      const to = villagerById(g, step.id ?? 0);
+      // The one give in the game whose target can walk away. If they are not
+      // there to receive it the telescope stays in the carrier's arms and the
+      // planner takes it home next time it decides — `deliver` never fails.
+      if (!to || to.enlightened) break;
+      if (!v.carrying || v.carrying.res !== 'telescope' || v.carrying.qty < 1) break;
+      v.carrying.qty -= 1;
+      if (v.carrying.qty <= 0) v.carrying = null;
+      to.enlightened = { day: g.day, found: 0 };
+      to.wantsTelescope = false;
+      g.stats.enlightened += 1;
+      note(g, to.id, 'Was given a telescope, and started looking at the sky.');
+      if (v.id !== to.id) note(g, v.id, `Carried a telescope to ${to.name}.`);
+      journal(g, `${to.name} was given a telescope.`, '🔭');
+      toast(g, `${to.name} was given a telescope`, '🔭', 'good');
+      speak(to, 'Oh — thank you.');
+      break;
+    }
     case 'extract': {
       const b = buildingById(g, step.id ?? 0);
       const res = step.res;
@@ -652,6 +691,18 @@ function doEffect(g: GameState, v: Villager, step: Extract<Step, { t: 'effect' }
         // what Vibes wait on, so that a kingdom which lives on fish has got
         // exactly as far as one which lives on bread.
         if (PREPARED_FOODS.includes(res)) g.stats.cooked += made;
+        if (res === 'glass' && g.stats.glassMade === 0) {
+          journal(g, `${v.name} drew the first pane of glass out of the furnace.`, '🔹');
+          note(g, v.id, 'Melted the kingdom’s first glass.');
+        }
+        if (res === 'glass') g.stats.glassMade += made;
+        if (res === 'telescope') {
+          if (g.stats.telescopes === 0) {
+            journal(g, `${v.name} finished the first telescope.`, '🔭');
+            note(g, v.id, 'Built the kingdom’s first telescope.');
+          }
+          g.stats.telescopes += made;
+        }
         if (res === 'ironBar' || res === 'steelBar') {
           if (g.stats.smelted === 0) {
             journal(g, `${v.name} drew the first bar out of the forge.`, '🔥');
@@ -1227,6 +1278,10 @@ function planWork(g: GameState, v: Villager): boolean {
         return planFarm(g, v, workplace);
       case 'fisher':
         return planFish(g, v, workplace);
+      case 'glassblower':
+        return planGlass(g, v, workplace);
+      case 'astronomer':
+        return planObservatory(g, v, workplace);
       case 'miller':
       case 'cook':
       case 'smith':
@@ -1348,6 +1403,133 @@ function planFish(g: GameState, v: Villager, hut: Building): boolean {
   return true;
 }
 
+// ---------------------------------------------------------------------------
+// The shore
+// ---------------------------------------------------------------------------
+
+/**
+ * Glassblowers: dig sand, melt it, and do both themselves.
+ *
+ * One trade for both halves, the same way a miner both cuts the rock and
+ * carries it home. Which half they do now is simply whether there is sand on
+ * the bench: no sand means a trip to the beach, sand means the furnace. That is
+ * enough of a rule — there is no queue to keep and nothing to switch by hand.
+ *
+ * The coal is the interesting part and is deliberately not fetched here: it
+ * comes up from the mine on the ordinary restocking path that supplies every
+ * other workshop, which is what makes a storehouse between the two worth
+ * building.
+ */
+function planGlass(g: GameState, v: Villager, works: Building): boolean {
+  const recipe = liveRecipesOf(works.def)[0];
+  if (!recipe) return planGeneralWork(g, v);
+
+  // Enough on the bench to run a batch, and somewhere to put the pane: melt.
+  // The same two steps every other workshop uses; nothing here is special
+  // except where the sand came from.
+  if (hasInputs(works, recipe) && roomIn(works, 'glass') >= 1) {
+    planWalkTo(g, v, works, [
+      { t: 'act', dur: recipe.seconds, kind: 'working', xp: 'glassblower' },
+      { t: 'effect', kind: 'batch', id: works.id, res: 'glass' },
+    ]);
+    return true;
+  }
+
+  // Otherwise go and get sand — but only if sand is what is missing. Waiting on
+  // coal is somebody else's job, and standing on the beach would not fix it.
+  const needSand = (recipe.inputs.sand ?? 0) - (works.input.sand ?? 0);
+  if (needSand <= 0) return planGeneralWork(g, v);
+
+  const drop = dropFor(g, 'sand', works.x, works.y, SAND_YIELD);
+  if (!drop) {
+    noticeFull(g, 'sand', works);
+    return planGeneralWork(g, v);
+  }
+
+  const reach = rangeOf(works.def, works.level);
+  const c = buildingCentre(works);
+  const spot = findSandSpot(g, c.x, c.y, reach);
+  // No beach in reach anybody can stand on. The works is in the wrong place,
+  // which is a slow disappointment rather than a broken kingdom.
+  if (!spot) return planGeneralWork(g, v);
+  claim(g, v, 'node', spot.y * g.w + spot.x, spot.x, spot.y);
+
+  // Three barrows, which is about an armful off good sand and a short enough
+  // stint that somebody can be pulled off to more urgent work between trips.
+  const loads = 3;
+  const steps: Step[] = [{ t: 'move', x: spot.x, y: spot.y, goals: [spot] }];
+  for (let i = 0; i < loads; i++) {
+    steps.push({ t: 'act', dur: SAND_SECONDS, kind: 'digging', xp: 'glassblower' });
+    steps.push({ t: 'effect', kind: 'dig', x: spot.x, y: spot.y });
+  }
+  steps.push(...homeLeg(g, drop));
+  v.plan = steps;
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// The observatory
+// ---------------------------------------------------------------------------
+
+/**
+ * How many telescopes the kingdom actually wants right now.
+ *
+ * Everybody who has not been given one, less the ones already built and waiting.
+ * Because enlightenment happens once per person, this is the whole of demand —
+ * and when it reaches nought the astronomer banks the fire and goes to help
+ * elsewhere, exactly as the cooks do once there is comfortably enough food.
+ *
+ * A newcomer therefore wakes the observatory back up, which is the one place in
+ * the game where population growth and the endgame drive each other.
+ */
+export function telescopesWanted(g: GameState): number {
+  let unlit = 0;
+  for (const v of g.villagers) if (!v.enlightened) unlit++;
+  return Math.max(0, unlit - Math.round(totalOf(g, 'telescope')));
+}
+
+/**
+ * The astronomer: builds telescopes while any are wanted, and watches the sky
+ * after dark whether or not any are.
+ *
+ * Night work is the reason this trade exists. Everything else in the kingdom
+ * stops when the light goes; this one starts.
+ */
+function planObservatory(g: GameState, v: Villager, obs: Building): boolean {
+  if (isNight(g.dayT)) return planStargaze(g, v, obs) || planGeneralWork(g, v);
+
+  if (telescopesWanted(g) <= 0) return planGeneralWork(g, v);
+  const recipe = liveRecipesOf(obs.def)[0];
+  if (!recipe) return planGeneralWork(g, v);
+  if (roomIn(obs, 'telescope') < 1) return planGeneralWork(g, v);
+
+  // Four inputs from three corners of the island. `planProduce` already knows
+  // how to go and fetch what a bench is short of, and there is nothing special
+  // about this recipe except how far the walk is.
+  return planProduce(g, v, obs);
+}
+
+/**
+ * Standing outside after dark, looking up. Earns nothing, and is the point.
+ *
+ * `observe` is where anything is actually found, and most nights it finds
+ * nothing at all — which is what stops the catalogue being ticked off in a week.
+ */
+function planStargaze(g: GameState, v: Villager, obs: Building): boolean {
+  if (obs.stage !== 'done') return false;
+  const def = BUILDINGS[obs.def];
+  const goals = footprintApproach(g, obs.x, obs.y, def.w, def.h);
+  if (goals.length === 0) return false;
+  v.plan = [
+    { t: 'move', x: obs.x, y: obs.y, goals },
+    // No effect on the end of it. Whether anything is found is the sky's
+    // business and is paced by `updateSky`, so that thirty people looking up
+    // does not make the heavens thirty times more productive.
+    { t: 'act', dur: rng.range(30, 70), kind: 'stargazing' },
+  ];
+  return true;
+}
+
 /** Dry land next to a stretch of water, nearest to whoever is going there. */
 function bankBeside(g: GameState, x: number, y: number): { x: number; y: number } | null {
   let best: { x: number; y: number } | null = null;
@@ -1404,7 +1586,10 @@ function faceToward(from: { x: number; y: number }, to: { x: number; y: number }
  * be reached, and this is the second lock on that.
  */
 function chooseExtraction(g: GameState, b: Building): ResourceId | null {
-  const all: ResourceId[] = extractsOf(b.def, b.level).filter((r) => r !== 'mithrilOre');
+  // Everything this level reaches, mithril included. It used to be filtered out
+  // here because nothing could reach level four; the seam is real now, and
+  // `extractsOf` is once again the only thing deciding what a mine brings up.
+  const all: ResourceId[] = extractsOf(b.def, b.level);
   const open = all.filter((r) => dropFor(g, r, b.x, b.y, MINE_YIELD[r] ?? 2));
   if (open.length === 0) return null;
   const focus = b.focus;
@@ -1979,7 +2164,38 @@ function planGeneralWork(g: GameState, v: Villager): boolean {
     return true;
   }
 
-  // 5. Fell a tree, and only to keep the reserve up. Wood is the only thing
+  /*
+   * 5. Carry a telescope to whoever the player has asked for one.
+   *
+   *    The only errand in the game whose destination is a person. It is placed
+   *    below the sites and the workshops because nothing waits on it — a
+   *    telescope sitting at the observatory for another hour costs the kingdom
+   *    nothing — and above the emergency wood because it is a thing the player
+   *    actually asked for.
+   *
+   *    Nothing here can strand the carrier. The `enlighten` effect refuses
+   *    politely if the recipient has wandered or has already been given one,
+   *    and the telescope simply stays in their arms until the planner next
+   *    decides, at which point the ordinary put-down rung takes it home.
+   */
+  for (const to of g.villagers) {
+    if (!to.wantsTelescope || to.enlightened) continue;
+    if (isClaimed(g, 'telescope', to.id, v.id)) continue;
+    const from = sourceOf(g, 'telescope', v.x, v.y);
+    if (!from) break;
+    claim(g, v, 'telescope', to.id);
+    const fdef = BUILDINGS[from.def];
+    v.plan = [
+      { t: 'move', x: from.x, y: from.y, goals: footprintApproach(g, from.x, from.y, fdef.w, fdef.h) },
+      { t: 'take', res: 'telescope', qty: 1, from: 'store', id: from.id },
+      { t: 'move', x: Math.round(to.x), y: Math.round(to.y), goals: neighbours(g, Math.round(to.x), Math.round(to.y)) },
+      { t: 'act', dur: 3, kind: 'hauling' },
+      { t: 'effect', kind: 'enlighten', id: to.id },
+    ];
+    return true;
+  }
+
+  // 6. Fell a tree, and only to keep the reserve up. Wood is the only thing
   //    hands alone can fetch — stone comes out of a quarry or it does not come
   //    at all — and this is emergency stock rather than a supply: enough that a
   //    kingdom with no lodge, or a lodge nobody is standing in, can always dig
@@ -2063,6 +2279,28 @@ export function planArrivalWelcome(g: GameState, v: Villager): void {
  */
 function planLeisure(g: GameState, v: Villager, gathering = false): void {
   const r = rng;
+
+  /*
+   * Before anything else: if it is dark and this person has a telescope of
+   * their own, they are going to go and use it.
+   *
+   * This is the whole of what enlightenment does and it deliberately costs
+   * nobody a minute of sleep. Night begins at 0.7 and bedtime is 0.77, so the
+   * window is the evening leisure the kingdom already had — the hours when
+   * everybody was wandering about anyway. The schedule is untouched, which is
+   * the rule: a nature may move the ends of somebody's day, never the amount
+   * they sleep.
+   *
+   * The astronomer is here too, because it is their post and the kingdom's own
+   * instruments are inside it.
+   */
+  if (isNight(g.dayT) && (v.enlightened || v.job === 'astronomer')) {
+    const obs = g.buildings.find((b) => b.def === 'observatory' && b.stage === 'done');
+    // Not every night, and not for the whole of it — somebody who never once
+    // sat by the fire because the sky was out would stop being a person.
+    if (obs && r.chance(0.72) && planStargaze(g, v, obs)) return;
+  }
+
   const roll = r.next();
 
   if (roll < (gathering ? 0.62 : 0.34)) {

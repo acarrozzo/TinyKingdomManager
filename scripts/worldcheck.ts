@@ -18,7 +18,9 @@ import {
   generateMap,
   campSuitable,
   fishSpotsInRange,
+  nearSand,
   nearWater,
+  sandSpotsInRange,
   rockInRange,
   touchesRock,
   walkableFrom,
@@ -99,6 +101,28 @@ const HUT_H = 2;
 const HUT_RANGE = 10;
 const WANT_HUT_SPOTS = 4;
 const WANT_HUT_SITES = 3;
+
+/**
+ * Somewhere to put a glassworks.
+ *
+ * Stricter in consequence than the hut, because this one is not optional: the
+ * glassworks is the front door to the whole endgame. A Kingdom Commons asks for
+ * one, the mithril mine asks for a Kingdom Commons, and the observatory is
+ * behind the mine — so an island with nowhere to melt sand is an island whose
+ * last third silently does not exist, and the player has no way of knowing it
+ * is the island's fault.
+ *
+ * Every island generated here has a beach right round it, so this ought never
+ * to fire. That is exactly why it is worth asserting: it is cheap, and the day
+ * somebody changes how the shore is drawn it is the only thing that will say so.
+ */
+const WORKS_W = 2;
+const WORKS_H = 2;
+const WORKS_RANGE = 10;
+// The same bar the hut is held to, and for the same reason: what is being
+// asked for is a real shore rather than a puddle.
+const WANT_SAND_SPOTS = 4;
+const WANT_WORKS_SITES = 3;
 
 const count = Number(process.argv[2] ?? 10000);
 const first = Number(process.argv[3] ?? 1);
@@ -206,7 +230,58 @@ function check(seed: number, m: World): string[] {
     );
   }
 
+  // …and somewhere to melt sand, which is where the endgame starts.
+  const works = worksSites(m, reach);
+  if (works < WANT_WORKS_SITES) {
+    bad.push(
+      `${works} places a glassworks could work from (beside sand, ${WANT_SAND_SPOTS}+ good patches within ${WORKS_RANGE}), wanted ${WANT_WORKS_SITES}`,
+    );
+  }
+
   return bad;
+}
+
+/**
+ * The same sweep as `hutSites`, against the shore instead of the water. The
+ * rules used to count these must stay the rules used to place one — that is
+ * the recurring generation bug in this project, and the reason both of these
+ * call the game's own `nearSand` rather than re-deciding what "beside" means.
+ */
+function worksSites(m: World, reach: Uint8Array): number {
+  const { tiles, w, h } = m;
+  let n = 0;
+  for (let y = 1; y < h - WORKS_H; y += 2)
+    for (let x = 1; x < w - WORKS_W; x += 2) {
+      let ok = true;
+      for (let dy = 0; dy < WORKS_H && ok; dy++)
+        for (let dx = 0; dx < WORKS_W; dx++) {
+          const t = tiles[(y + dy) * w + (x + dx)];
+          if (t.terrain === 'water' || t.terrain === 'shallow' || reach[(y + dy) * w + (x + dx)] !== 1) ok = false;
+        }
+      if (!ok) continue;
+      if (!nearSand(m, x, y, WORKS_W, WORKS_H)) continue;
+      const spots = sandSpotsInRange(m, x + (WORKS_W - 1) / 2, y + (WORKS_H - 1) / 2, WORKS_RANGE);
+      if (spots.good >= WANT_SAND_SPOTS) n++;
+    }
+  return n;
+}
+
+/** The best shore any single legal glassworks site can reach. Reported, not asserted. */
+function bestWorks(m: World, reach: Uint8Array): number {
+  const { tiles, w, h } = m;
+  let best = 0;
+  for (let y = 1; y < h - WORKS_H; y += 2)
+    for (let x = 1; x < w - WORKS_W; x += 2) {
+      let ok = true;
+      for (let dy = 0; dy < WORKS_H && ok; dy++)
+        for (let dx = 0; dx < WORKS_W; dx++) {
+          const t = tiles[(y + dy) * w + (x + dx)];
+          if (t.terrain === 'water' || t.terrain === 'shallow' || reach[(y + dy) * w + (x + dx)] !== 1) ok = false;
+        }
+      if (!ok || !nearSand(m, x, y, WORKS_W, WORKS_H)) continue;
+      best = Math.max(best, sandSpotsInRange(m, x + (WORKS_W - 1) / 2, y + (WORKS_H - 1) / 2, WORKS_RANGE).good);
+    }
+  return best;
 }
 
 /**
@@ -431,6 +506,8 @@ const stats = {
   quarryBest: [Infinity, 0],
   hut: [Infinity, 0],
   hutBest: [Infinity, 0],
+  works: [Infinity, 0],
+  worksBest: [Infinity, 0],
   lake: [Infinity, 0],
 };
 let bays = 0;
@@ -480,6 +557,8 @@ for (let i = 0; i < count; i++) {
   note(stats.quarryBest, bestQuarry(m, reach));
   note(stats.hut, hutSites(m, reach));
   note(stats.hutBest, bestHut(m, reach));
+  note(stats.works, worksSites(m, reach));
+  note(stats.worksBest, bestWorks(m, reach));
   const lake = lakeSize(m);
   note(stats.lake, lake);
   if (lake < 20) bays++;
@@ -499,5 +578,7 @@ console.log(`  places a quarry could work from ${stats.quarry[0]}–${stats.quar
 console.log(`  rock reachable from the best    ${stats.quarryBest[0]}–${stats.quarryBest[1]}`);
 console.log(`  places a hut could work from    ${stats.hut[0]}–${stats.hut[1]}`);
 console.log(`  good spots from the best        ${stats.hutBest[0]}–${stats.hutBest[1]}`);
+console.log(`  places a glassworks could work  ${stats.works[0]}–${stats.works[1]}`);
+console.log(`  good sand from the best         ${stats.worksBest[0]}–${stats.worksBest[1]}`);
 console.log(`  inland lake                     ${stats.lake[0]}–${stats.lake[1]} tiles`);
 console.log(`  islands whose lake met the sea  ${bays} of ${count}`);

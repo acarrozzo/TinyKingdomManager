@@ -906,11 +906,16 @@ function shapeFor(def: BuildingId, level: number): { wall: number; roof: number;
     // A cabin grows over its three levels rather than being replaced, so the
     // walls climb and the roof deepens with each improvement.
     case 'cabin':
-      return level >= 3
-        ? { wall: 28, roof: 13, ov: 4, extra: 11 }
-        : level === 2
-          ? { wall: 22, roof: 11, ov: 4, extra: 11 }
-          : { wall: 17, roof: 9, ov: 3, extra: 0 };
+      // …and a fourth: a second storey under a dormer, which is the only step
+      // that changes the outline rather than the surface. Eight people sleep in
+      // one, and it has to look from across the map like the reason why.
+      return level >= 4
+        ? { wall: 38, roof: 14, ov: 4, extra: 13 }
+        : level === 3
+          ? { wall: 28, roof: 13, ov: 4, extra: 11 }
+          : level === 2
+            ? { wall: 22, roof: 11, ov: 4, extra: 11 }
+            : { wall: 17, roof: 9, ov: 3, extra: 0 };
     // Taller in the wall than anything else its size, because the thing being
     // read across the map is "that is a lot of room", and a barn's height is
     // the whole of how a barn says so.
@@ -926,6 +931,15 @@ function shapeFor(def: BuildingId, level: number): { wall: number; roof: number;
       return { wall: 6, roof: 7, ov: 3, extra: level >= 3 ? 34 : level === 2 ? 26 : 16 };
     case 'forge':
       return { wall: up ? 20 : 17, roof: up ? 10 : 9, ov: 3, extra: 20 };
+    // Low and wide with a big cone of a furnace on it, so it reads as a works
+    // rather than as another cottage that happens to be on the beach.
+    case 'glassworks':
+      return { wall: up ? 18 : 15, roof: up ? 9 : 8, ov: 3, extra: 26 };
+    // The tallest thing the kingdom builds, and the drum on top is most of it.
+    // Nothing else on the island has a round roof; that is the whole of how it
+    // is recognised at one pixel per art pixel.
+    case 'observatory':
+      return { wall: 26, roof: 10, ov: 3, extra: 30 };
     case 'farm':
       return { wall: 16, roof: 9, ov: 2, extra: 0 };
     case 'mill':
@@ -1205,6 +1219,24 @@ function drawFinished(
       if (level >= 2) addWindow(ctx, bx, baseY, front + 9, s.wall, pane, windows, M.window);
       if (level >= 3) addWindow(ctx, bx, baseY, bx + 12, s.wall, pane, windows, M.window);
       if (level >= 2) chimney(ctx, roof.ridgeA.x + 5, roof.ridgeA.y - 1, level >= 3 ? 9 : 7, snow);
+      /*
+       * The fourth level's whole job is the *outline*. Three cabins already
+       * differ in surface — thatch, a chimney, plaster and tile — and a fourth
+       * that only added another window would be a level the player pays for and
+       * cannot see. So this one goes up: a storey of plaster above the stone,
+       * and a dormer breaking the roofline, which is a shape nothing else on
+       * the island has.
+       */
+      if (level >= 4) {
+        const dx = bx - 6;
+        const dTop = wallFootY(bx, baseY, dx) - s.wall - s.roof + 2;
+        px(ctx, dx, dTop, M.plasterL, 12, 9);
+        px(ctx, dx, dTop, '#6f5334', 12, 1);
+        addWindow(ctx, bx, baseY, dx + 3, s.wall + s.roof - 4, 4, windows, M.window);
+        // A little gable of its own over it, or it reads as a hole.
+        for (let i = 0; i < 7; i++) px(ctx, dx + i, dTop - 1 - i, tile.near, 1, 1);
+        for (let i = 0; i < 7; i++) px(ctx, dx + 11 - i, dTop - 1 - i, tile.far, 1, 1);
+      }
       break;
     }
     case 'storehouse': {
@@ -1480,6 +1512,136 @@ function drawFinished(
         px(ctx, bx + 12, baseY - 16, '#8a6b41', 1, 15);
         px(ctx, bx + 14, baseY - 14, '#a5824f', 1, 13);
       }
+      break;
+    }
+    case 'glassworks': {
+      /*
+       * A works on a beach. Low rubble walls holding a great tapering furnace
+       * cone, which is the whole of the silhouette and the reason it does not
+       * read as a cottage that wandered down to the shore. Sand heaped at one
+       * side, finished panes stacked at the other.
+       */
+      isoWalls(ctx, ox, baseY, w, h, s.wall, { left: '#8b8074', right: '#6c6359', top: '#9c9184', texture: 'stone' }, 1);
+      gableRoof(ctx, ox, baseY, w, h, s.wall, s.roof, s.ov, slate);
+      addDoor(ctx, bx, baseY, front, 9, s.wall - 2, '#3a2c22');
+
+      /*
+       * The kiln, and it is the building. Squat and wide at the foot, tapering
+       * to a short stack — a bottle kiln rather than a chimney. The first
+       * attempt was fourteen pixels across and twenty tall, which at play zoom
+       * read as a dark spike stuck through the roof.
+       */
+      const coneH = level >= 2 ? 17 : 14;
+      const coneR = level >= 2 ? 12 : 10;
+      const coneY = baseY - s.wall - s.roof + 3;
+      for (let i = 0; i < coneH; i++) {
+        const t = i / coneH;
+        // Bulges slightly before it draws in, which is what makes it a kiln.
+        const half = Math.max(2, Math.round(coneR * (1 - t * t * 0.86)));
+        px(ctx, bx - half, coneY - i, i % 4 === 3 ? '#7d7266' : '#94897c', half * 2, 1);
+        px(ctx, bx + half - 2, coneY - i, '#6a6157', 2, 1);
+        px(ctx, bx - half, coneY - i, '#a79c8e', 2, 1);
+      }
+      // Iron hoops round it, which is the detail that says "kiln" outright.
+      for (const hy of [3, 8]) {
+        const t = hy / coneH;
+        const half = Math.max(2, Math.round(coneR * (1 - t * t * 0.86)));
+        px(ctx, bx - half, coneY - hy, '#59514a', half * 2, 1);
+      }
+      // The stoking mouth at its foot, glowing, and lit after dark like the
+      // forge's — the one part that has to read from across the map.
+      const mouthY = coneY - 3;
+      px(ctx, bx - 4, mouthY, '#ff9a4a', 8, 4);
+      px(ctx, bx - 3, mouthY + 1, '#ffd88a', 6, 2);
+      windows.push({ x: bx - 4, y: mouthY, w: 8, h: 4, dy: [0, 0, 0, 0, 0, 0, 0, 0] });
+      // A wisp of heat off the top.
+      px(ctx, bx - 1, coneY - coneH - 2, '#b9b2a6', 2, 3);
+
+      // A heap of sand on the near left, and panes stacked on the right.
+      px(ctx, g.L.x + 2, g.L.y + 5, '#d8c39a', 10, 3);
+      px(ctx, g.L.x + 4, g.L.y + 3, '#e3d1ae', 6, 2);
+      for (let i = 0; i < (level >= 2 ? 4 : 2); i++) {
+        px(ctx, g.R.x - 9 + i * 2, g.R.y + 1, '#a8d8e0', 2, 7);
+        px(ctx, g.R.x - 9 + i * 2, g.R.y + 1, '#cdeaf0', 1, 7);
+      }
+      break;
+    }
+    case 'observatory': {
+      /*
+       * The last building, and the only round roof on the island.
+       *
+       * Everything about it is that drum: it is what makes the building
+       * recognisable at one pixel per art pixel, and it is where the shutter
+       * goes. The walls underneath are deliberately plain coursed stone — the
+       * eye is meant to go straight to the top.
+       */
+      isoWalls(ctx, ox, baseY, w, h, 7, { left: M.stoneL, right: M.stoneR, texture: 'stone' }, 1);
+      isoWalls(ctx, ox, baseY - 7, w, h, s.wall - 7, {
+        left: '#b3ac9e',
+        right: '#8f8879',
+        top: '#c3bcac',
+        texture: 'plaster',
+      }, 2);
+      addDoor(ctx, bx, baseY, front, 9, s.wall - 4, '#3d2f24');
+      addWindow(ctx, bx, baseY, front - 13, s.wall - 2, 4, windows, M.window);
+      addWindow(ctx, bx, baseY, front + 11, s.wall - 2, 4, windows, M.window);
+
+      /*
+       * The drum: a half-round of narrowing courses, so it comes out as a dome
+       * rather than as a cylinder with a lid.
+       *
+       * Sized off the footprint rather than picked. At fifteen pixels on a
+       * three-by-three it read as an ornament sitting on a grey box; the dome
+       * has to be most of the building, because it is the whole of how this is
+       * recognised as an observatory and not a hall.
+       */
+      const domeR = Math.round((w + h) * HALF_W * 0.34);
+      const domeY = baseY - s.wall + 1;
+      for (let i = 0; i < domeR; i++) {
+        const t = i / domeR;
+        const half = Math.round(domeR * Math.sqrt(Math.max(0, 1 - t * t)));
+        if (half <= 0) continue;
+        px(ctx, bx - half, domeY - i, '#9aa2ab', half * 2, 1);
+        // A lit edge along the top-left, so the dome reads as round.
+        px(ctx, bx - half, domeY - i, '#c2cbd6', Math.max(1, Math.round(half * 0.5)), 1);
+        px(ctx, bx + half - 2, domeY - i, '#78808a', 2, 1);
+      }
+      // A course line round the foot of the dome, which is what stops it
+      // looking like a boulder that landed on a house.
+      px(ctx, bx - domeR, domeY + 1, '#6d747d', domeR * 2, 2);
+      px(ctx, bx - domeR, domeY + 3, '#565d66', domeR * 2, 1);
+      // Ribs running up it, the way a real dome's segments do. They are what
+      // keeps a large flat curve from reading as a bald hemisphere.
+      for (const t of [-0.62, -0.3, 0.3, 0.62]) {
+        for (let i = 0; i < domeR; i++) {
+          const yy = i / domeR;
+          const half = domeR * Math.sqrt(Math.max(0, 1 - yy * yy));
+          const rx = Math.round(bx + t * half);
+          if (half < 2) continue;
+          px(ctx, rx, domeY - i, '#7b838d', 1, 1);
+        }
+      }
+
+      /*
+       * The shutter, standing open — a dark slot up the face of the dome with
+       * the telescope's barrel showing in it. This is the one thing on the
+       * building that says what it is *for*, so it is drawn open always: a
+       * closed dome is a silo.
+       */
+      const slotW = 7;
+      px(ctx, bx - Math.floor(slotW / 2), domeY - domeR + 2, '#1b2028', slotW, domeR - 1);
+      // …and the barrel showing in it, angled up the way the tool is.
+      for (let i = 0; i < 9; i++) {
+        px(ctx, bx - 2 + Math.round(i * 0.35), domeY - domeR + 6 + i, '#5b636e', 3, 1);
+      }
+      px(ctx, bx + 1, domeY - domeR + 5, '#9aa2ab', 3, 2);
+
+      /*
+       * Its lamps are dim and red, and that is not decoration: you do not ruin
+       * your night vision to read a chart by. This is the only building in the
+       * kingdom that is darker after dark than the ones around it, and the
+       * window list is what carries that into the light buffer.
+       */
       break;
     }
     case 'well': {

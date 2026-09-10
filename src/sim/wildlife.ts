@@ -229,8 +229,10 @@ function checkNoticed(g: GameState, a: Animal): void {
   const def = SPECIES[a.species];
   g.discovered.add(a.species);
   const article = /^[aeiou]/i.test(def.name) ? 'An' : 'A';
-  journal(g, `${article} ${def.name.toLowerCase()} was seen in the kingdom for the first time.`, '🔭');
-  toast(g, `New wildlife: ${def.name}`, '🔭', 'good');
+  // Was a telescope, back when nothing in the kingdom was one. It is a real
+  // object now, so noticing a fox borrows a different mark.
+  journal(g, `${article} ${def.name.toLowerCase()} was seen in the kingdom for the first time.`, '🔍');
+  toast(g, `New wildlife: ${def.name}`, '🔍', 'good');
 }
 
 function updateAnimal(g: GameState, a: Animal, dt: number): void {

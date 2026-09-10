@@ -33,6 +33,7 @@ import { generateMap, tileAt } from '../world/terrain';
 import { makeName } from './names';
 import { buildGoals } from './goals';
 import { newWildlifeTimers } from './wildlife';
+import { newSkyTimers } from './sky';
 
 const SKIN = ['#f0c9a0', '#e0ad84', '#c98e63', '#a9714a', '#8a5836', '#6b4228', '#f6dcc0'];
 const HAIR = ['#3a2a1e', '#59402a', '#8a6134', '#b98b4a', '#d9c08a', '#6e6e72', '#c4c0b8', '#8a3f2a'];
@@ -160,10 +161,23 @@ export function newGame(seed = Math.floor(Math.random() * 1e9)): GameState {
     weatherKind: 'clear',
     claims: new Map(),
     wildlife: newWildlifeTimers(),
+    sky: newSkyTimers(),
     founderId: 0,
     founding: { stage: 'arriving', x: map.start.x, y: map.start.y },
     splashes: [],
-    stats: { built: 0, harvested: 0, baked: 0, cooked: 0, caught: 0, arrivals: 1, mined: 0, smelted: 0 },
+    stats: {
+      built: 0,
+      harvested: 0,
+      baked: 0,
+      cooked: 0,
+      caught: 0,
+      arrivals: 1,
+      mined: 0,
+      smelted: 0,
+      glassMade: 0,
+      telescopes: 0,
+      enlightened: 0,
+    },
     nameSeq: 0,
   };
   g.goals = buildGoals();
@@ -253,6 +267,58 @@ export function overflowRoomIn(b: Building, res: ResourceId): number {
  *
  * It is deliberately not what the top bar shows. See `storedOf`.
  */
+/**
+ * Has the kingdom ever heard of this resource?
+ *
+ * The single authority for it, and it answers three questions that used to be
+ * answered separately: which chips the top bar draws, which compartments a
+ * building's panel names, and which recipes the forge offers as a focus. A row
+ * reading "Mithril Bar 0/250" in a kingdom that has never sunk a deep mine is
+ * the interface inventing a problem, and so is a focus setting that does
+ * nothing when you pick it.
+ *
+ * The rule everywhere is the same: it appears once the kingdom can actually
+ * produce it, and once it has appeared it stays. Nothing here may be a *stock*
+ * check on its own — stock goes down again — which is why each case names a
+ * building that stands or a thing that was done.
+ */
+export function resourceKnown(g: GameState, res: ResourceId): boolean {
+  const has = (def: BuildingId) => g.buildings.some((b) => b.def === def);
+  const mineAt = (level: number) =>
+    g.buildings.some((b) => b.def === 'quarry' && (b.stage === 'done' || b.upgrading) && b.level >= level);
+  switch (res) {
+    case 'wheat':
+      return g.stats.harvested > 0;
+    case 'flour':
+      return has('mill');
+    case 'bread':
+      return g.stats.baked > 0;
+    case 'fish':
+      return has('fishhut') || g.stats.caught > 0;
+    case 'cookedFish':
+      return totalOf(g, 'cookedFish') > 0 || g.unlocked.has('seen:cookedFish');
+    case 'ironOre':
+      return mineAt(2);
+    case 'coal':
+      return mineAt(3);
+    case 'ironBar':
+    case 'steelBar':
+      return has('forge');
+    // Both halves of mithril arrive together: the seam and the recipe that
+    // wants it are the same moment as far as the player is concerned.
+    case 'mithrilOre':
+    case 'mithrilBar':
+      return mineAt(4);
+    case 'sand':
+    case 'glass':
+      return has('glassworks');
+    case 'telescope':
+      return has('observatory');
+    default:
+      return true;
+  }
+}
+
 export function totalOf(g: GameState, res: ResourceId): number {
   let n = 0;
   for (const b of g.buildings) {
