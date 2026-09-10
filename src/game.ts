@@ -51,6 +51,7 @@ import {
   seasonForDay,
   setHome as setVillagerHome,
   storedOf,
+  resourceKnown,
   totalOf,
   villagerById,
 } from './sim/state';
@@ -63,15 +64,18 @@ import {
   protectedBuilding,
 } from './sim/founding';
 import { updateWildlife, rebuildHabitat } from './sim/wildlife';
+import { updateSky } from './sim/sky';
 import { updatePopulation } from './sim/population';
 import { updateGoals, availableToBuild, atBuildLimit, buildLimit } from './sim/goals';
 import { journal, toast, updateToasts } from './sim/journal';
 import {
   fishQuality,
   fishSpotsInRange,
+  nearSand,
   nearWater,
   rockInRange,
   tileAt,
+  sandSpotsInRange,
   touchesRock,
   updateTerrain,
 } from './world/terrain';
@@ -406,6 +410,7 @@ export class Game {
 
     updateVillagers(g, dt);
     updateWildlife(g, dt);
+    updateSky(g, dt);
     updatePopulation(g, dt);
     updateTerrain(g, dt);
     this.updateWeather(dt);
@@ -607,13 +612,15 @@ export class Game {
     // lodge marks the trees its people will walk to, a mine marks the rock its
     // seam runs through, and a hut marks the water worth casting into.
     // Everything else has no reach worth showing.
-    if (!d.harvests && !d.extracts && !d.fishes) return null;
+    if (!d.harvests && !d.extracts && !d.fishes && !d.digsSand) return null;
     return {
       cx: spot.x + (d.w - 1) / 2,
       cy: spot.y + (d.h - 1) / 2,
       radius: rangeOf(def, level),
       prop: d.harvests ?? null,
-      terrain: d.extracts ? 'rocky' : null,
+      // A glassworks marks the beach the way a mine marks the rock: the ground
+      // itself is the resource, so the terrain is what gets shaded.
+      terrain: d.extracts ? 'rocky' : d.digsSand ? 'sand' : null,
       spots: !!d.fishes,
     };
   }
@@ -632,6 +639,7 @@ export class Game {
     const r = rangeOf(def, level);
     if (d.extracts) return rockInRange(g, cx, cy, r);
     if (d.fishes) return this.spotsInRange(def, level, x, y).good;
+    if (d.digsSand) return sandSpotsInRange(g, cx, cy, r).good;
     if (!d.harvests) return 0;
     let n = 0;
     for (let ty = Math.max(0, Math.floor(cy - r)); ty <= Math.min(g.h - 1, Math.ceil(cy + r)); ty++)
@@ -693,7 +701,12 @@ export class Game {
   setFocus(id: number, focus: string): void {
     const b = buildingById(this.state, id);
     if (!b) return;
-    const allowed = focusOptions(b.def, b.level);
+    // Narrowed by what the kingdom has actually heard of: the forge can make
+    // mithril, but offering it as a setting before any seam has been found is
+    // a choice that does nothing when you pick it.
+    const allowed = focusOptions(b.def, b.level).filter(
+      (f) => f === 'balanced' || resourceKnown(this.state, f),
+    );
     if (!allowed.includes(focus as Focus)) return;
     b.focus = focus as Focus;
     // Everybody there re-decides at once, or the change does not visibly happen
@@ -918,7 +931,7 @@ export class Game {
     // mine has quietly been doing since its ring was added.
     const counts = (def: BuildingId) => {
       const d = BUILDINGS[def];
-      return !!d.harvests || !!d.extracts || !!d.fishes;
+      return !!d.harvests || !!d.extracts || !!d.fishes || !!d.digsSand;
     };
     if (this.tool.kind === 'build') return counts(this.tool.def);
     if (this.tool.kind === 'relocate') {
@@ -1228,7 +1241,47 @@ export class Game {
     if (d.fishes && !nearWater(g, x, y, d.w, d.h)) {
       return 'No water within reach of this. It wants to stand on the bank — the lake or the coast, either one.';
     }
+    // The third of the three, and the reason the beach is worth anything at
+    // all. Same shape, same voice: what is wrong with this spot rather than
+    // what the rule is.
+    if (d.digsSand && !nearSand(g, x, y, d.w, d.h)) {
+      return 'No sand within reach of this. It wants to stand on the shore, where somebody can get a barrow to the beach.';
+    }
     return null;
+  }
+
+  /**
+   * Ask for a telescope to be carried to somebody.
+   *
+   * A request rather than an order: nobody is reassigned, nothing is reserved,
+   * and it simply waits until there is a telescope and a spare pair of hands.
+   * It can be taken back at no cost, like every other setting in this game.
+   *
+   * Who gets one is the player's decision and is the only decision the endgame
+   * asks for. Nothing in the simulation ever makes it for them.
+   */
+  sendTelescope(villagerId: number, want = true): void {
+    const v = villagerById(this.state, villagerId);
+    if (!v || v.enlightened) return;
+    v.wantsTelescope = want;
+    if (!want) {
+      // Whoever was carrying it out to them re-decides, and the ordinary
+      // put-down rung takes the telescope home.
+      for (const o of this.state.villagers) {
+        if (o.claim?.kind === 'telescope' && o.claim.id === villagerId) abandonPlan(this.state, o);
+      }
+    }
+    this.notify();
+  }
+
+  /**
+   * A telescope built and nobody named to receive it. The Observatory wears an
+   * attention mark while this is true, because the one thing the endgame asks
+   * of the player is easy to miss otherwise.
+   */
+  telescopeWaiting(): boolean {
+    if (totalOf(this.state, 'telescope') < 1) return false;
+    return !this.state.villagers.some((v) => v.wantsTelescope && !v.enlightened);
   }
 
   /** Whether the kingdom can actually cover a cost, in the words the player reads. */

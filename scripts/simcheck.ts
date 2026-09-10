@@ -31,14 +31,19 @@ import { severelyHungry, vibesOf } from '../src/sim/vibes';
 import { arrivalEta, arrivalWindow } from '../src/sim/population';
 import { completeConstruction, updateVillagers } from '../src/sim/villager';
 import { updateWildlife } from '../src/sim/wildlife';
+import { updateSky } from '../src/sim/sky';
 import { updatePopulation } from '../src/sim/population';
 import { atBuildLimit, availableToBuild, buildLimit, updateGoals } from '../src/sim/goals';
 import { chooseCamp, suggestCamp } from '../src/sim/founding';
-import { updateTerrain, fishQuality, nearWater, tileAt, touchesRock } from '../src/world/terrain';
+import { updateTerrain, fishQuality, nearWater, tileAt, touchesRock,
+  sandQuality,
+} from '../src/world/terrain';
+import { SKY_BY_ID } from '../src/sim/sky';
 import {
   BUILDINGS,
   CARRY_CAPACITY,
   DAY_LENGTH,
+  GOOD_SAND,
   GOOD_SPOT,
   SCHEDULE,
   SPECIES,
@@ -258,6 +263,7 @@ function autoplay(state: GameState): void {
    * go and put somebody on the thing that makes what it is waiting for.
    */
   staff(state);
+  giveTelescopes(state);
 
   const building = state.buildings.some((b) => b.stage === 'building');
   if (building) return;
@@ -314,6 +320,15 @@ function autoplay(state: GameState): void {
   if (!has('mill')) wants.push('mill');
   if (!has('kitchen')) wants.push('kitchen');
   if (!has('forge')) wants.push('forge');
+  /*
+   * The endgame, in the order a player meets it. The glassworks opens on the
+   * first coal and is the front door: the Kingdom Commons asks for one, the
+   * mithril seam asks for a Kingdom Commons, and the observatory sits behind
+   * the seam. A run that never builds one is a run that stops where the old
+   * game stopped, which is precisely what this arc exists to fix.
+   */
+  if (!has('glassworks')) wants.push('glassworks');
+  if (!has('observatory')) wants.push('observatory');
   if (beds - state.villagers.length < 2 && !improve(state, 'cabin')) wants.push('cabin');
   /*
    * Once bread is coming out of an oven a player starts making the place nice,
@@ -379,6 +394,24 @@ function autoplay(state: GameState): void {
     // Woodcutters want trees; the mine wants rocky ground under it, which is a
     // terrain now rather than a prop — the boulders lying on it are scenery.
     let near = { x: fire.x, y: fire.y };
+    if (def === 'glassworks') {
+      // Straight for the best beach, exactly as a player reading the ring
+      // would. Anything else and the run never exercises a works on real sand.
+      let best: { x: number; y: number } | null = null;
+      let bestScore = 0;
+      for (let y = 0; y < state.h; y++)
+        for (let x = 0; x < state.w; x++) {
+          if (state.tiles[y * state.w + x].terrain !== 'sand') continue;
+          const q = sandQuality(state, x, y);
+          if (q < GOOD_SAND) continue;
+          // Nearest good sand, so the coal haul from the mine stays sane.
+          const score = q - Math.sqrt((x - fire.x) ** 2 + (y - fire.y) ** 2) * 0.01;
+          if (score <= bestScore) continue;
+          bestScore = score;
+          best = { x, y };
+        }
+      if (best) near = best;
+    }
     if (def === 'lodge' || def === 'quarry' || def === 'fishhut') {
       let best: { x: number; y: number } | null = null;
       let bestD = Infinity;
@@ -426,7 +459,10 @@ function autoplay(state: GameState): void {
     // The four that follow a resource sit as close to it as they can; every-
     // thing else wants elbow room round the commons rather than crowding the
     // ground people walk through.
-    const minR = def === 'lodge' || def === 'quarry' || def === 'fishhut' || def === 'storehouse' ? 2 : 4;
+    const minR =
+      def === 'lodge' || def === 'quarry' || def === 'fishhut' || def === 'storehouse' || def === 'glassworks'
+        ? 2
+        : 4;
     const spot = findSpot(def, near, minR);
     if (spot) place(def, spot.x, spot.y);
     break;
@@ -447,7 +483,20 @@ function autoplay(state: GameState): void {
  * building out of an emergency float. The forge comes last, because nothing is
  * yet waiting on a bar.
  */
-const PRIORITY: BuildingId[] = ['quarry', 'lodge', 'kitchen', 'fishhut', 'mill', 'farm', 'forge'];
+const PRIORITY: BuildingId[] = [
+  'quarry',
+  'lodge',
+  'kitchen',
+  'fishhut',
+  'mill',
+  'farm',
+  'forge',
+  // Both last, and deliberately: nothing upstream waits on either, and putting
+  // hands here before the kitchen is staffed would be modelling a player who
+  // would rather look at the sky than eat.
+  'glassworks',
+  'observatory',
+];
 const SOFT_CAP: Partial<Record<BuildingId, number>> = {
   // One woodcutter early rather than two: wood is now the cost every building
   // shares, so a player puts somebody on the lodge the moment it stands — but
@@ -463,7 +512,36 @@ const SOFT_CAP: Partial<Record<BuildingId, number>> = {
   // exist would test the building and not the trade-off.
   fishhut: 1,
   forge: 1,
+  glassworks: 1,
+  // One is all the building has, and one is the point of it.
+  observatory: 1,
 };
+
+/*
+ * Hand out telescopes, which is the one decision the endgame asks of a player
+ * and the only thing that ever consumes one.
+ *
+ * The harness plays it the plainest way there is: whoever has been here longest
+ * without one goes next. That is not a recommendation the game makes — the
+ * roster puts nobody forward and is not going to — it is simply *a* policy, so
+ * that the run exercises the handover, the throttle and the enlightenment at
+ * all. Without this the observatory fills its four shelves and stops, and the
+ * whole last tier of the game goes unchecked.
+ *
+ * One request at a time, deliberately: a queue of thirty would test a queue,
+ * and what wants testing is a telescope being carried across a kingdom and put
+ * into somebody's hands.
+ */
+function giveTelescopes(state: GameState): void {
+  if (totalOf(state, 'telescope') < 1) return;
+  if (state.villagers.some((v) => v.wantsTelescope && !v.enlightened)) return;
+  let next: (typeof state.villagers)[number] | null = null;
+  for (const v of state.villagers) {
+    if (v.enlightened) continue;
+    if (!next || v.arrived < next.arrived) next = v;
+  }
+  if (next) next.wantsTelescope = true;
+}
 
 function staff(state: GameState): void {
   for (const def of PRIORITY) {
@@ -570,6 +648,7 @@ for (let i = 0; i < totalSteps; i++) {
   }
   updateVillagers(g, DT);
   updateWildlife(g, DT);
+  updateSky(g, DT);
   updatePopulation(g, DT);
   updateTerrain(g, DT);
 
@@ -728,6 +807,19 @@ for (const v of g.villagers) {
     `  ${v.name.padEnd(22)} ${v.job.padEnd(12)} ${v.activity.padEnd(11)} home=${(home?.def ?? 'none').padEnd(11)} ${xp || '—'}`,
   );
 }
+
+/*
+ * The endgame, reported as its own block because none of it shows in the
+ * storage line: a telescope is consumed the moment it is handed over, and what
+ * it turns into is a person and a line in the journal.
+ */
+const lit = g.villagers.filter((v) => v.enlightened);
+const watchers = lit.filter((v) => (v.enlightened?.found ?? 0) > 0).length;
+line(`\nSky: ${lit.length}/${g.villagers.length} given a telescope, ${watchers} of them have found something`);
+for (const f of g.sky.finds.slice(0, 12)) {
+  line(`  Y${f.year} ${f.season} d${String(f.day).padStart(2)}  ${(f.name ?? SKY_BY_ID[f.id]?.name ?? f.id).padEnd(24)} ${f.byName}`);
+}
+if (g.sky.finds.length > 12) line(`  …and ${g.sky.finds.length - 12} more`);
 
 line(`\nWildlife: ${g.animals.length} about, ${g.discovered.size} kinds discovered`);
 for (const e of g.journal.filter((j) => j.icon === '🔭')) line(`  day ${String(e.day).padStart(2)}  ${e.text}`);
@@ -911,8 +1003,18 @@ if (!g.buildings.some((b) => b.def === 'quarry') && totalOf(g, 'stone') > 0) {
 
 // Mithril is written down and nothing produces it. If any ever turns up, the
 // level-4 gate or the extraction filter has come undone.
-if (totalOf(g, 'mithrilOre') > 0 || totalOf(g, 'mithrilBar') > 0) {
-  problems.push('mithril exists, and it is not supposed to');
+/*
+ * Mithril used to be the thing that must never appear. It is reachable now, and
+ * the invariant inverts: a mine that has been sunk to the seam has to actually
+ * be bringing some up, or the last tier is a level the kingdom paid for and got
+ * nothing from.
+ */
+const seam = g.buildings.find((b) => b.def === 'quarry' && b.stage === 'done' && b.level >= 4);
+if (seam && g.villagers.some((v) => v.job === 'miner') && totalOf(g, 'mithrilOre') <= 0) {
+  problems.push('the mine reached the mithril seam and has brought up none of it');
+}
+if (!seam && (totalOf(g, 'mithrilOre') > 0 || totalOf(g, 'mithrilBar') > 0)) {
+  problems.push('mithril exists without a mine deep enough to have found any');
 }
 
 // Boulders never come back. A tile holding rubble with a regrow timer on it

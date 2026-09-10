@@ -34,7 +34,7 @@ const HAT_COLORS = ['#8a5b3a', '#6a7f5a', '#7a6a8a', '#b5893f'];
  * both "working", and the point of drawing a tool at all is that you should not
  * have to click on them to find out which.
  */
-type Tool = 'axe' | 'pick' | 'hoe' | 'rod' | 'ladle' | 'hammer' | 'sack' | 'tongs' | null;
+type Tool = 'axe' | 'pick' | 'hoe' | 'rod' | 'ladle' | 'hammer' | 'sack' | 'tongs' | 'pipe' | 'scope' | 'shovel' | null;
 
 function toolFor(v: Villager): Tool {
   switch (v.activity) {
@@ -48,6 +48,10 @@ function toolFor(v: Villager): Tool {
       return 'rod';
     case 'cooking':
       return 'ladle';
+    case 'digging':
+      return 'shovel';
+    case 'stargazing':
+      return 'scope';
     case 'gathering':
       return v.job === 'miner' ? 'pick' : 'axe';
     case 'working':
@@ -64,6 +68,8 @@ function toolFor(v: Villager): Tool {
     cook: 'ladle',
     fisher: 'rod',
     smith: 'tongs',
+    glassblower: 'pipe',
+    astronomer: 'scope',
   };
   return byJob[v.job] ?? null;
 }
@@ -123,6 +129,25 @@ function drawTool(ctx: Ctx, tool: Tool, gx: number, gy: number, dir: number): vo
       px(ctx, gx, gy - 4, dull, 1, 5);
       px(ctx, gx + dir, gy - 5, dull, 1, 2);
       px(ctx, gx + dir * 2, gy - 6, '#ff8a3c', 2, 2);
+      break;
+    case 'shovel':
+      // Blade at the bottom and wider than a hoe's, because it is being pushed
+      // into sand rather than dragged through soil.
+      px(ctx, gx, gy - 6, haft, 1, 7);
+      px(ctx, gx + dir - (dir < 0 ? 1 : 0), gy + 1, dull, 2, 3);
+      break;
+    case 'pipe':
+      // A blowpipe with a gather of hot glass on the end of it. The glow is the
+      // whole read: without it this is a person holding a straight line.
+      for (let i = 0; i < 6; i++) px(ctx, gx + dir * i, gy - 3 - i, dull);
+      px(ctx, gx + dir * 6, gy - 10, '#ff9a4a', 2, 2);
+      px(ctx, gx + dir * 6, gy - 10, '#ffd88a', 1, 1);
+      break;
+    case 'scope':
+      // Held up and angled at the sky, which is the only tool in the kingdom
+      // pointed at something that is not in front of the person holding it.
+      for (let i = 0; i < 5; i++) px(ctx, gx + dir * i, gy - 5 - i * 2, '#8f8478', 2, 2);
+      px(ctx, gx + dir * 4, gy - 14, '#cdeaf0', 2, 2);
       break;
     default:
       break;
@@ -547,6 +572,10 @@ const GLYPHS: Record<string, string[]> = {
   sails: ['X.....X', '.X...X.', '..X.X..', '...X...', '..X.X..', '.X...X.', 'X.....X'],
   bread: ['.......', '..XXX..', '.XXXXX.', 'XX#X#XX', 'XXXXXXX', '.XXXXX.', '.......'],
   crate: ['.......', 'XXXXXXX', 'X#####X', 'XXXXXXX', 'X#####X', 'XXXXXXX', '.......'],
+  // A heap being shovelled, for whoever is down on the beach.
+  dig: ['.......', '...#...', '...X...', '..XXX..', '.XXXXX.', 'XXXXXXX', 'X#####X'],
+  // The telescope, which is the one badge in the kingdom pointed at the sky.
+  scope: ['.....XX', '....X#.', '...XX..', '..XX...', '.XX....', 'XX.....', 'X......'],
   basket: ['..XXX..', '.X...X.', 'XXXXXXX', 'X#####X', 'X#####X', '.XXXXX.', '.......'],
   zzz: ['XXXXXXX', '.....X.', '....X..', '...X...', '..X....', '.X.....', 'XXXXXXX'],
   steps: ['.XX....', '.XXX...', '.XX....', '.......', '...XX..', '...XXX.', '...XX..'],
@@ -576,6 +605,10 @@ const GLYPH_COLORS: Record<string, [string, string]> = {
   fish: ['#8fc0d2', '#2e3a42'],
   pot: ['#8c8f96', '#d8a86a'],
   star: ['#ffd77a', '#ffd77a'],
+  dig: ['#d8c39a', '#8a7a58'],
+  // Warm, because it is the one badge that only ever appears after dark and
+  // has to hold its own against a night-tinted village.
+  scope: ['#ffe7a8', '#5a4a2c'],
 };
 
 /** The tool that stands for a trade, wherever a trade wants a picture. */
@@ -642,6 +675,10 @@ function activityGlyph(g: GameState, v: Villager): string | null {
       return 'eye';
     case 'fishing':
       return 'fish';
+    case 'digging':
+      return 'dig';
+    case 'stargazing':
+      return 'scope';
     case 'arriving':
       return 'star';
     default:

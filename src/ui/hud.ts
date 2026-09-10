@@ -34,7 +34,7 @@
 import type { GameState, ResourceId } from '../types';
 import { PREPARED_FOODS } from '../types';
 import { GAME_MINUTE, RESOURCE_INFO, RESOURCE_META, VIBE_MAX, buildingName } from '../sim/defs';
-import { bedSources, bedsFree, housingCapacity, preparedFood, totalOf } from '../sim/state';
+import { bedSources, bedsFree, housingCapacity, preparedFood, resourceKnown } from '../sim/state';
 import { arrivalEta } from '../sim/population';
 import { vibesOf } from '../sim/vibes';
 import { foundingDone } from '../sim/founding';
@@ -88,8 +88,8 @@ export const STRIP: StripEntry[] = [
     kind: 'group',
     label: 'Goods',
     art: 'goods',
-    members: ['ironOre', 'coal', 'ironBar', 'steelBar', 'mithrilOre', 'mithrilBar'],
-    note: 'What comes out of the mine, and what the forge makes of it.',
+    members: ['ironOre', 'coal', 'ironBar', 'steelBar', 'mithrilOre', 'mithrilBar', 'sand', 'glass', 'telescope'],
+    note: 'What comes out of the mine and the shore, and what is made of it.',
   },
 ];
 
@@ -644,38 +644,15 @@ export function storesBody(game: Game): string {
  * Whether this resource has any business being on the strip yet.
  *
  * A chip for something the kingdom has never had and has no way of getting is
- * noise, and there are eleven of them now. The rule is the same one everywhere:
- * a resource appears once the kingdom can actually produce it, and once it has
- * appeared it stays. Mithril appears for nobody, because nothing produces it.
+ * noise, and there are sixteen of them now. The rule is the same one
+ * everywhere: a resource appears once the kingdom can actually produce it, and
+ * once it has appeared it stays.
+ *
+ * `resourceKnown` in `state.ts` is the authority, and this is the one-line
+ * delegation to it. It used to be a second copy of the same switch; the day
+ * mithril became reachable the two disagreed, and the strip went on hiding a
+ * resource the kingdom was actively digging up.
  */
 function everSeen(game: Game, res: ResourceId): boolean {
-  const g = game.state;
-  const mineAt = (level: number) =>
-    g.buildings.some((b) => b.def === 'quarry' && (b.stage === 'done' || b.upgrading) && b.level >= level);
-  switch (res) {
-    case 'wheat':
-      return g.stats.harvested > 0;
-    case 'flour':
-      return g.buildings.some((b) => b.def === 'mill');
-    case 'bread':
-      return g.stats.baked > 0;
-    // A chip for fish the moment there is somewhere to catch them, and one for
-    // supper the moment there is somewhere to cook it. Both stay once shown.
-    case 'fish':
-      return g.buildings.some((b) => b.def === 'fishhut') || g.stats.caught > 0;
-    case 'cookedFish':
-      return totalOf(g, 'cookedFish') > 0 || g.unlocked.has('seen:cookedFish');
-    case 'ironOre':
-      return mineAt(2);
-    case 'coal':
-      return mineAt(3);
-    case 'ironBar':
-    case 'steelBar':
-      return g.buildings.some((b) => b.def === 'forge');
-    case 'mithrilOre':
-    case 'mithrilBar':
-      return false;
-    default:
-      return true;
-  }
+  return resourceKnown(game.state, res);
 }

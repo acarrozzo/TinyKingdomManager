@@ -74,6 +74,8 @@ const PALETTE: Record<string, string> = {
   h: '#a6d27a', // leaf, lit
   p: '#c98ecb', // petal
   t: '#5c98b3', // water
+  n: '#d8c39a', // sand
+  m: '#efe0bd', // sand, lit
 };
 
 /**
@@ -266,6 +268,53 @@ const ART: Record<string, string[]> = {
     '............',
     '............',
     '............',
+  ],
+
+  // A heap of it, because sand is the one raw material with no shape of its own.
+  sand: [
+    '............',
+    '............',
+    '............',
+    '.....K......',
+    '....KmK.....',
+    '...KmmmK....',
+    '..KmmnnnK...',
+    '.KmmnnnnnK..',
+    '.KnnnnnnnnK.',
+    'KnnnnnnnnnnK',
+    'KKKKKKKKKKKK',
+    '............',
+  ],
+  // A pane seen at a slight angle, with the light running down one edge. Kept
+  // deliberately empty in the middle — glass is the thing you look through.
+  glass: [
+    '............',
+    '..KKKKKKKK..',
+    '.KLttttttLK.',
+    '.KtLtttttLK.',
+    '.KttLttttLK.',
+    '.KtttLtttLK.',
+    '.KttttLttLK.',
+    '.KtttttLtLK.',
+    '.KttttttLLK.',
+    '.KLLLLLLLLK.',
+    '..KKKKKKKK..',
+    '............',
+  ],
+  // The telescope, on its tripod. The only icon in the set pointed at the sky.
+  telescope: [
+    '.........KK.',
+    '........KPPK',
+    '.......KMMPK',
+    '......KMMMK.',
+    '.....KMMMK..',
+    '....KMMMK...',
+    '...KMMMK....',
+    '..KKMMK.....',
+    '..KWKKK.....',
+    '.KW.K.WK....',
+    'KW..K..WK...',
+    'K...K...K...',
   ],
 
   // -------------------------------------------------------- resource families
@@ -968,6 +1017,37 @@ const GLYPH: Record<string, string[]> = {
     '.......###..',
     '............',
   ],
+  // A blowpipe held at an angle with a gather of glass on the end of it.
+  glassblower: [
+    '............',
+    '.........##.',
+    '........####',
+    '.......####.',
+    '......##....',
+    '.....##.....',
+    '....##......',
+    '...##.......',
+    '..##........',
+    '.##.........',
+    '##..........',
+    '............',
+  ],
+  // A telescope on its tripod, which is the only trade in the kingdom whose
+  // tool points away from the person holding it.
+  astronomer: [
+    '.........##.',
+    '........###.',
+    '.......###..',
+    '......###...',
+    '.....###....',
+    '....###.....',
+    '...###......',
+    '..####......',
+    '..#.##......',
+    '.##..##.....',
+    '##....##....',
+    '............',
+  ],
   smith: [
     '............',
     '.....##.....',
@@ -1108,6 +1188,9 @@ const FROM_GLYPH: Record<string, string> = {
   '🔗': 'steelBar',
   '🔷': 'mithrilOre',
   '💠': 'mithrilBar',
+  '⏳': 'sand',
+  '🔹': 'glass',
+  '🔭': 'telescope',
   '🏠': 'housing',
   '📦': 'storage',
   '⚙️': 'production',
@@ -1124,7 +1207,6 @@ const FROM_GLYPH: Record<string, string> = {
   '🔨': 'build',
   '👥': 'people',
   '📖': 'journal',
-  '🔭': 'wildlife',
   '👁': 'eye',
   '🍃': 'leaf',
   '✦': 'vibes',
@@ -1157,6 +1239,10 @@ const FROM_GLYPH: Record<string, string> = {
   '👩‍🍳': 'cook',
   '🍳': 'cook',
   '🎣': 'fisher',
+  '🏺': 'glassblower',
+  // Not the telescope: that emoji is the *resource*, and a job icon is a
+  // silhouette a button can tint while an art icon keeps its own colours.
+  '🌌': 'astronomer',
   '🌿': 'leaf',
   '🐇': 'rabbit',
   '🔍': 'search',

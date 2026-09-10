@@ -2,7 +2,17 @@
 
 import { RNG, fbm, hash2, clamp, mix32 } from '../core/util';
 import type { GameState, PropId, Tile, TerrainId } from '../types';
-import { FISH_FLOOR, FISH_REST, GOOD_SPOT, TERRAIN_SPEED, WATER_NEAR } from '../sim/defs';
+import {
+  FISH_FLOOR,
+  FISH_REST,
+  GOOD_SAND,
+  GOOD_SPOT,
+  SAND_FLOOR,
+  SAND_NEAR,
+  SAND_REST,
+  TERRAIN_SPEED,
+  WATER_NEAR,
+} from '../sim/defs';
 
 export const MAP_W = 44;
 export const MAP_H = 44;
@@ -177,6 +187,8 @@ function blankTile(terrain: TerrainId): Tile {
     blocked: false,
     plot: 0,
     claimed: 0,
+    // …and every stretch of shore, for the same reason: nothing has been dug.
+    sand: 1,
     // Every stretch of water starts undisturbed. Nothing has been fished yet.
     fish: 1,
   };
@@ -806,6 +818,7 @@ export function updateTerrain(g: GameState, dt: number): void {
       }
     }
     if (t.fish < 1) t.fish = Math.min(1, t.fish + FISH_REST * dt * stride);
+    if (t.sand < 1) t.sand = Math.min(1, t.sand + SAND_REST * dt * stride);
   }
 }
 
@@ -819,6 +832,13 @@ export function workSpot(g: GameState, x: number, y: number, tire: number): void
   const t = tileAt(g, x, y);
   if (!t) return;
   t.fish = Math.max(0, t.fish - tire);
+}
+
+/** The same, for a barrow-load off the beach. */
+export function workSand(g: GameState, x: number, y: number, tire: number): void {
+  const t = tileAt(g, x, y);
+  if (!t) return;
+  t.sand = Math.max(0, t.sand - tire);
 }
 
 /**
@@ -1071,6 +1091,158 @@ function hasWalkableNeighbour(g: GameState, x: number, y: number): boolean {
       if (isWalkable(g, x + dx, y + dy)) return true;
     }
   return false;
+}
+
+// ---------------------------------------------------------------------------
+// The shore
+// ---------------------------------------------------------------------------
+
+/**
+ * A tile worth taking a barrow to. Sand and nothing else: the beach is the one
+ * place the kingdom digs, and a works inland has nowhere to send anybody.
+ */
+export function isDiggable(t: Tile | null): boolean {
+  return !!t && t.terrain === 'sand';
+}
+
+/**
+ * How good a patch of shore is, before its rest is counted.
+ *
+ * A broad beach is better than a spit. The measure is simply how much sand
+ * surrounds this tile: on a wide strand nearly everything nearby is more sand,
+ * and on a thin tongue between grass and water it is not. That is deliberately
+ * something the player can see from the map before deciding where the works
+ * goes, exactly as reeds and lily pads are for the hut.
+ */
+export function sandQuality(g: { tiles: Tile[]; w: number; h: number }, x: number, y: number): number {
+  if (!isDiggable(g.tiles[y * g.w + x])) return 0;
+  let sand = 0;
+  let seen = 0;
+  for (let dy = -2; dy <= 2; dy++)
+    for (let dx = -2; dx <= 2; dx++) {
+      const tx = x + dx;
+      const ty = y + dy;
+      if (!inBounds(g, tx, ty)) continue;
+      seen++;
+      if (g.tiles[ty * g.w + tx].terrain === 'sand') sand++;
+    }
+  if (seen === 0) return 0;
+  /*
+   * The band is set against the beach this island actually draws, which is a
+   * ring about two tiles wide. In a five-by-five window that is around two
+   * fifths sand, and *that* has to read as good — the ring is the resource, and
+   * a measure that called the ordinary shore poor would be measuring the wrong
+   * thing. A one-tile spit is what scores badly, and a wide strand or the
+   * inside of a cove is what scores top.
+   *
+   * Calibrated across seeds rather than against one. Seed 1 has an unusually
+   * broad strand and reaches 0.53 of the window in sand; seed 6190 is a thin
+   * ring the whole way round and never passes 0.40. Both have to be workable —
+   * the first curve was fitted to seed 1 and called the whole of 6190 poor,
+   * which failed `worldcheck` on an island with a hundred and eighty-three
+   * perfectly good beach tiles on it.
+   *
+   * So: a two-tile ring is the ordinary case and reads as good; a one-tile
+   * tongue is what reads as thin.
+   */
+  return clamp(0.25 + 0.75 * clamp((sand / seen - 0.12) / 0.38, 0, 1), 0, 1);
+}
+
+/**
+ * What one go at this patch would actually bring back: how good the sand is,
+ * times how rested it is. Never nought, for the same reason a fished-out pool
+ * still gives something — a glassblower standing over dead beach would be a
+ * punishment for a decision made an hour ago.
+ */
+export function sandYield(g: GameState, x: number, y: number): number {
+  const t = tileAt(g, x, y);
+  if (!isDiggable(t)) return 0;
+  return sandQuality(g, x, y) * Math.max(SAND_FLOOR, t!.sand);
+}
+
+/**
+ * The shore inside a works' reach: how much of it there is and how much is
+ * worth walking to. Said out loud on the placement bar, exactly as the hut's
+ * water is, because the ring runs off the screen at any sensible zoom.
+ */
+export function sandSpotsInRange(
+  g: { tiles: Tile[]; w: number; h: number },
+  cx: number,
+  cy: number,
+  radius: number,
+): { total: number; good: number } {
+  let total = 0;
+  let good = 0;
+  const r2 = radius * radius;
+  const x0 = clamp(Math.floor(cx - radius), 0, g.w - 1);
+  const x1 = clamp(Math.ceil(cx + radius), 0, g.w - 1);
+  const y0 = clamp(Math.floor(cy - radius), 0, g.h - 1);
+  const y1 = clamp(Math.ceil(cy + radius), 0, g.h - 1);
+  for (let y = y0; y <= y1; y++)
+    for (let x = x0; x <= x1; x++) {
+      if (!isDiggable(g.tiles[y * g.w + x])) continue;
+      if ((x - cx) ** 2 + (y - cy) ** 2 > r2) continue;
+      total++;
+      if (sandQuality(g, x, y) >= GOOD_SAND) good++;
+    }
+  return { total, good };
+}
+
+/**
+ * Whether a footprint here is close enough to the beach to be a glassworks.
+ * The counterpart of `nearWater`, and the same slack for the same reason: the
+ * last dry tile before a strand is often one nobody can put a two-by-two on.
+ */
+export function nearSand(
+  g: { tiles: Tile[]; w: number; h: number },
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  near = SAND_NEAR,
+): boolean {
+  for (let ty = y - near; ty < y + h + near; ty++)
+    for (let tx = x - near; tx < x + w + near; tx++) {
+      if (!inBounds(g, tx, ty)) continue;
+      if (isDiggable(g.tiles[ty * g.w + tx])) return true;
+    }
+  return false;
+}
+
+/**
+ * The patch a glassblower should walk to: the best sand inside the works' reach
+ * that somebody can actually stand on, nudged toward the near ones.
+ *
+ * Unlike water, the tile being worked is the tile being stood on — you dig the
+ * sand you are standing in — so this wants a walkable tile rather than one with
+ * a walkable neighbour.
+ */
+export function findSandSpot(
+  g: GameState,
+  cx: number,
+  cy: number,
+  radius: number,
+): { x: number; y: number } | null {
+  let best: { x: number; y: number } | null = null;
+  let bestScore = 0;
+  const r2 = radius * radius;
+  const x0 = clamp(Math.floor(cx - radius), 0, g.w - 1);
+  const x1 = clamp(Math.ceil(cx + radius), 0, g.w - 1);
+  const y0 = clamp(Math.floor(cy - radius), 0, g.h - 1);
+  const y1 = clamp(Math.ceil(cy + radius), 0, g.h - 1);
+  for (let y = y0; y <= y1; y++)
+    for (let x = x0; x <= x1; x++) {
+      const t = g.tiles[y * g.w + x];
+      if (!isDiggable(t) || t.claimed) continue;
+      const d2 = (x - cx) ** 2 + (y - cy) ** 2;
+      if (d2 > r2) continue;
+      const score = sandYield(g, x, y) - Math.sqrt(d2) * 0.012;
+      if (score <= bestScore) continue;
+      if (!isWalkable(g, x, y)) continue;
+      bestScore = score;
+      best = { x, y };
+    }
+  return best;
 }
 
 /**

@@ -36,10 +36,16 @@ import { esc } from './context';
 export type ModalKind = 'people' | 'kingdom' | 'building' | 'stores' | 'population' | null;
 
 /** The tabs inside the Kingdom panel, in the order they are shown. */
-export const KINGDOM_TABS = ['Journal', 'Wildlife', 'Next', 'Settings'];
+/*
+ * Five now. The sky is a second discovery collection and belongs beside the
+ * first: it is a matter of record rather than a matter of doing, which is the
+ * rule for what lives behind the Kingdom door. It is not a fourth destination
+ * and does not want to be one.
+ */
+export const KINGDOM_TABS = ['Journal', 'Wildlife', 'Sky', 'Next', 'Settings'];
 
 /** So callers can say which tab they mean without counting. */
-export const KTAB = { journal: 0, wildlife: 1, goals: 2, settings: 3 } as const;
+export const KTAB = { journal: 0, wildlife: 1, sky: 2, goals: 3, settings: 4 } as const;
 
 export interface NavState {
   /** Whether the list itself is up — what `aria-expanded` is actually about. */

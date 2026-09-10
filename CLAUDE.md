@@ -56,6 +56,7 @@ Match the check to the change. Do not run every harness for every edit.
 | Population, Vibes or beds | Typecheck and `npm run popcheck` |
 | Storage capacity, the camp woodpile or storage copy | Typecheck and `npm run woodcheck` |
 | Saving, loading or persistent fields | Typecheck and `npm run roundtrip` |
+| The shore, the Observatory, telescopes or the sky | Typecheck, `npm run worldcheck` and a 1200–1400 minute simulation |
 | Visuals, layout or input | Typecheck and relevant screenshots |
 | Broad refactor or finished feature | `npm run build` plus the affected harnesses |
 
@@ -73,9 +74,11 @@ TKM_DUMP=k.json npm run sim -- 600
 
 Use this for simulation logic and tuning. A run of 600–1000 game-minutes is normally useful. Under roughly 300 minutes, later production will not have come online; beyond roughly 1200, the kingdom has usually plateaued.
 
-The run reports population, beds, Vibes, arrivals, storage, experience, wildlife, goals, the journal and the daily routine. It also enforces world invariants such as:
+The run reports population, beds, Vibes, arrivals, storage, experience, wildlife, the sky, goals, the journal and the daily routine.
 
-- resources only appearing after their required production building exists;
+The endgame needs a longer run than the rest of the game: 1200–1400 minutes, because the Glassworks does not open until the Deep Mine turns up coal, and the Observatory sits three tiers behind that. A 600-minute run reaches none of it. It also enforces world invariants such as:
+
+- resources only appearing after their required production building exists, mithril included — and, once the seam is reached, mithril actually being brought up;
 - resources living only in buildings that can hold them;
 - no idle villager remaining stuck with a carried load;
 - storage remaining within the allowed delivery overshoot;
@@ -225,6 +228,7 @@ src/
     vibes.ts          Vibes calculation
     goals.ts          progression, limits and unlocks
     journal.ts        kingdom history and toasts
+    sky.ts            the night sky, its catalogue and what was seen
     names.ts          names and chatter
 
   render/
@@ -414,17 +418,17 @@ The commons is the kingdom’s progression spine.
 | Base Camp | Founding | Cabin, Lodge and Quarry |
 | Settled Camp | Cabin, Quarry and three people | Second Cabin and Well |
 | Village Commons | Cooked food, six people and a trained worker | Third Cabin and Standing Stone |
-| Kingdom Commons | Deliberately unreachable in the current build | Future horizon |
+| Kingdom Commons | Cooked food, twelve people, a Glassworks and twenty glass off it | Fourth Cabin and Storehouse |
 
 No level may require something that the level itself unlocks.
+
+Every level of both ladders is reachable. The Kingdom Commons asks for a Glassworks, which a goal opens off the first coal — not for anything the commons itself hands over. `UpgradeReq.impossible` still exists for a horizon written down before it is built, but nothing sets it.
 
 Requirements should describe accomplishments that cannot later become false.
 
 Every reachable cost must fit inside the storage available before it is paid. Before a Woodcutter’s Lodge exists, the Base Camp’s 100 wood is the absolute reachable limit for a wood cost.
 
 The panel must show the full material cost, requirements and rewards before the action becomes available. A disabled button alone is not an explanation.
-
-The final Commons level and Mithril Mine are visible horizons, not currently reachable content.
 
 ### Stone and mining
 
@@ -438,7 +442,9 @@ Stone comes from the Quarry and nowhere else.
 
 The mine works the rocky ground in its range, not boulder nodes. Rock richness affects speed but must never reduce production to zero.
 
-The mining ladder is Quarry → Iron Mine → Deep Mine → Mithril Mine. Improving a mine adds materials without removing earlier ones.
+The mining ladder is Quarry → Iron Mine → Deep Mine → Mithril Mine, and all four are reachable. Improving a mine adds materials without removing earlier ones.
+
+The Mithril Mine asks only for a Kingdom Commons and two thousand stone, because its *cost* already asks for twenty steel bars — and steel needs the coal the Deep Mine brings up. The price carries the metallurgy; the requirement carries the settlement.
 
 One Miner trade operates the whole mine. Do not add separate workers or tools for individual materials.
 
@@ -458,6 +464,38 @@ Favorite food is personality only. It must never gate eating, production, Vibes 
 Fishing is an early, low-staff branch whose water rests after use. Bread requires more buildings and workers but scales further.
 
 Water quality may affect yield, but water must never be exhausted. Fishing and wildlife remain separate systems; fish are not wildlife animals and habitat spawning does not determine catches.
+
+### The shore, the sky, and the endgame
+
+The last tier of the game is one chain ending in a person.
+
+```text
+beach sand ─┐
+            ├─► Glassworks ─► glass ─┐
+Deep Mine ──┘   (coastal)            │
+   coal                              ├─► Observatory ─► telescope ─► somebody
+Mithril Mine ─► forge ─► mithril bar ┤
+                      └► steel bar ──┤
+Lodge ────────────────────► wood ────┘
+```
+
+**Sand rests, it does not deplete.** The beach is a finite ring, so it must never be a node that empties. `Tile.sand` is the exact twin of `Tile.fish`, down to a floor under it (`SAND_FLOOR`): a patch dug over is slow and comes back, and a Glassworks on thin shore is slow rather than idle. `digsSand` is the third placement rule beside `needsRock` and `fishes`, and `worldcheck` guarantees sites for it with a deterministic fallback.
+
+**`resourceKnown()` in `state.ts` is the single authority** on whether the kingdom has heard of a resource. Three places ask it: the resource strip, a building's compartment rows, and the focus picker. It used to be a second copy of the same switch living in `hud.ts`, and the day mithril became reachable the two disagreed.
+
+**The Observatory builds to order.** `telescopesWanted()` counts the people nobody has given one to, less the ones already built. At nought the astronomer banks the fire and falls through to General Worker tasks — the kitchen's rule with a different noun, and a decision about people rather than shelf room. A newcomer therefore wakes the Observatory back up.
+
+**Enlightenment happens once.** One telescope per person, permanently, and `Villager.enlightened` is written as a self-contained fact about a person rather than a pointer into this kingdom — the direction of travel is that somebody one day carries it out of here. It has no work multiplier and never will: mastery is the most earned thing in this game and must not be purchasable.
+
+**A telescope's destination is a person.** The only `give` in the game whose target is a villager. It must never strand the carrier: if the recipient has wandered or has already been given one, the `enlighten` effect declines and the ordinary put-down rung takes the telescope home. The telescope is *consumed* by the giving — it is not an object anybody keeps, which is what keeps personal inventories closed.
+
+**The sky is paced by the sky.** `updateSky` takes one chance every `SKY_INTERVAL` and credits whoever is stargazing, rather than rolling per watcher — thirty people looking up do not make the heavens thirty times more productive, and rolling per person swept the whole catalogue in nine days. A failed look must not spend a cooldown, exactly as with wildlife.
+
+The conditions are three things the game already simulated and previously wasted: **weather** (rain shuts the dome), **moon phase** (a bright moon washes out the faint things), and **season** (constellations belong to theirs). Night is only about 0.7–0.77 of the day for somebody awake, so the window is narrow and the interval has to be short against it.
+
+**What the Observatory produces is journal entries with names on them.** Not a number. If it ever becomes a score, the game has become a spreadsheet with a nice sky. Comets recur and take the finder's surname; everything else is found once and remembers who saw it.
+
+Its lamps are dim and red, because you do not ruin your night vision to read a chart. It is the only building in the kingdom that is darker after dark than its neighbours, and that should stay legible from across the map.
 
 ### Working ranges
 
@@ -951,11 +989,11 @@ The following original-brief systems are not currently built:
 - achievements and wider collections;
 - villager requests.
 
-There is currently no Carpenter, Scholar, Merchant or Animal Keeper profession.
+There is currently no Carpenter, Scholar, Merchant or Animal Keeper profession. The trades are General Worker, Woodcutter, Miner, Farmer, Miller, Cook, Fisher, Smith, Glassblower and Astronomer.
 
-Iron and steel bars currently have no consumer beyond their production chain.
+Every resource now has a consumer. Steel bars build the Observatory and frame every telescope; iron bars pay for a Cabin's fourth level and the Deep Mine; mithril is real and is smelted for telescopes.
 
-Mithril definitions exist as a future horizon but are unreachable. The simulation should fail if mithril appears in a normal kingdom.
+The simulation now fails the other way round: a mine sunk to the seam that brings up *no* mithril is the failure, and mithril appearing without a mine deep enough to have found any is the other.
 
 Deferred does not mean automatically approved. Any of these systems still needs to fit the terrarium principles and current implementation.
 
@@ -978,7 +1016,6 @@ These are resolved design decisions, not missing work.
 | Unlimited decorations | Comfort limits define the 60 decoration Vibes |
 | Arrival chance rolls | A free bed guarantees an arrival within a window |
 | Player-built roads and paths | Natural terrain affects movement; players cannot buy faster routes |
-| Reachable Kingdom Commons and Mithril Mine | Their final levels remain visible but deliberately unreachable |
 
 Do not reintroduce one of these as a tidy-up or convenience. Reopening one is a product decision.
 
@@ -1003,9 +1040,9 @@ Exact tuning belongs in `defs.ts`. These figures describe the current shape of t
 | Season | 6 game-days |
 | Year | 24 game-days |
 | Workday | Morning work, midday break, afternoon work, evening leisure |
-| Population cap | Beds only |
+| Population cap | Beds only — 34 at the top (4 cabins of 8, plus the commons' 2) |
 | Commons beds | 2 at every level |
-| Cabin beds | 2, 4 or 6 by level |
+| Cabin beds | 2, 4, 6 or 8 by level |
 | Cabins allowed | One per Commons level |
 | Arrival pacing | Guaranteed within a population-based window when a bed is free |
 | Vibes | 60 decoration + 30 food + 10 wellbeing |
@@ -1013,6 +1050,8 @@ Exact tuning belongs in `defs.ts`. These figures describe the current shape of t
 | Produced-resource storage | Separate compartment per resource |
 | Workshop inputs | Small working buffers, separate from permanent storage |
 | Production buildings | One of each principal building |
+| Telescopes | One per person, ever; the Observatory builds to that demand and stops |
+| The sky | 14 things to find; comets recur and take the finder's name |
 | Mastery | Roughly 10–15 real hours in one trade |
 | Founding | Roughly a minute and a half at 1× |
 
